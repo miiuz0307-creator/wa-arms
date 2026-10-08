@@ -145,12 +145,15 @@ function Arms() {
                     <dt className="text-[11px] text-slate-500">קבוצות</dt>
                     <dd className="font-semibold tabular-nums">{groups[a.id] || 0}</dd>
                   </div>
-                  <div className="rounded-xl bg-slate-50 py-2">
+                  <div className={`rounded-xl py-2 ${a.sent_day === today && a.sent_today >= a.daily_limit ? 'bg-rose-50' : 'bg-slate-50'}`}>
                     <dt className="text-[11px] text-slate-500">היום</dt>
                     <dd className="font-semibold tabular-nums">
                       {a.sent_day === today ? a.sent_today : 0}
-                      <span className="text-xs font-normal text-slate-400">/{a.daily_limit}</span>
+                      <span className="text-xs font-normal text-slate-400">/{a.daily_limit >= 100000 ? '∞' : a.daily_limit}</span>
                     </dd>
+                    {a.sent_day === today && a.sent_today >= a.daily_limit && (
+                      <div className="text-[11px] font-semibold text-rose-700">הגיעה למגבלה – לא שולחת</div>
+                    )}
                   </div>
                   <div className="rounded-xl bg-slate-50 py-2">
                     <dt className="text-[11px] text-slate-500">סה״כ נשלחו</dt>
@@ -299,14 +302,14 @@ function EditArm({ arm, onClose }: { arm: any; onClose: () => void }) {
           <Input type="number" min={1} value={limit} onChange={(e) => setLimit(Number(e.target.value))} />
         </Field>
         <div className="flex flex-wrap gap-2">
-          {[300, 500, 750, 1000].map((n) => (
+          {[300, 500, 1000, 2000, 5000, 1000000].map((n) => (
             <button
               key={n}
               type="button"
               onClick={() => setLimit(n)}
               className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${limit === n ? 'border-indigo-300 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-600'}`}
             >
-              {n}
+              {n === 1000000 ? 'ללא הגבלה' : n}
             </button>
           ))}
         </div>
