@@ -137,6 +137,8 @@ class Arm {
       // can leave Baileys buffering every new message forever, so skip it entirely.
       shouldSyncHistoryMessage: () => false,
       generateHighQualityLinkPreview: false,
+      // answer group-metadata lookups from memory instead of asking WhatsApp every time
+      cachedGroupMetadata: async (jid) => this.groupMeta?.get(jid),
     });
     this.sock = sock;
     await this.update({ status: 'connecting' });
@@ -187,8 +189,9 @@ class Arm {
       }
     });
 
-    sock.ev.on('groups.upsert', () => this.syncGroups().catch(() => {}));
-    sock.ev.on('groups.update', () => this.syncGroups().catch(() => {}));
+    // group changes arrive in bursts – refresh the list at most once every 2 minutes
+    sock.ev.on('groups.upsert', () => this.scheduleGroupSync());
+    sock.ev.on('groups.update', () => this.scheduleGroupSync());
   }
 
   async onConnectionUpdate(sock, u) {
@@ -255,9 +258,20 @@ class Arm {
     this.reconnectTimer = setTimeout(() => this.start(), delay);
   }
 
+  scheduleGroupSync() {
+    if (this.groupSyncTimer) return;
+    const wait = Math.max(0, 120_000 - (Date.now() - (this.lastGroupSync || 0)));
+    this.groupSyncTimer = setTimeout(() => {
+      this.groupSyncTimer = null;
+      this.syncGroups().catch((e) => log.warn({ arm: this.name, err: e.message }, 'group sync failed'));
+    }, wait);
+  }
+
   async syncGroups() {
+    this.lastGroupSync = Date.now();
     if (!this.sock || !this.online) return;
     const all = await this.sock.groupFetchAllParticipating();
+    this.groupMeta = new Map(Object.entries(all));
     const groups = Object.values(all);
     const now = new Date().toISOString();
     const rows = groups.map((g) => ({
