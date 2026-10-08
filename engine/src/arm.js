@@ -289,17 +289,29 @@ class Arm {
     log.info({ arm: this.name, groups: rows.length }, 'groups synced');
   }
 
-  /** React to a message with an emoji ('' removes the reaction). */
+  /**
+   * React to a message with an emoji ('' removes the reaction).
+   * In groups the sender may be addressed by hidden ID (LID) or by phone; WhatsApp only shows the
+   * reaction when the key matches how the message was stored, so we send it for every known form.
+   */
   async react(key, emoji) {
     if (!this.sock || !this.online || !key?.remoteJid || !key?.id) return false;
-    try {
-      const sent = await this.sock.sendMessage(key.remoteJid, { react: { text: emoji, key } });
-      this.rememberSent(sent?.key?.id);
-      return true;
-    } catch (e) {
-      log.warn({ arm: this.name, err: e.message }, 'reaction failed');
-      return false;
+    const variants = [key];
+    if (key.participantPn && key.participantPn !== key.participant) {
+      variants.push({ ...key, participant: key.participantPn });
     }
+    let ok = false;
+    for (const k of variants) {
+      const clean = { remoteJid: k.remoteJid, id: k.id, fromMe: !!k.fromMe, ...(k.participant ? { participant: k.participant } : {}) };
+      try {
+        const sent = await this.sock.sendMessage(clean.remoteJid, { react: { text: emoji, key: clean } });
+        this.rememberSent(sent?.key?.id);
+        ok = true;
+      } catch (e) {
+        log.warn({ arm: this.name, err: e.message }, 'reaction failed');
+      }
+    }
+    return ok;
   }
 
   async send(jid, text) {

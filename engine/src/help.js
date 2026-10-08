@@ -125,6 +125,14 @@ async function onMessage(arm, m) {
   }
 
   const requester = await resolveRequester(arm, m);
+  const pnDigits = requester.phone ? requester.phone.replace(/\D/g, '').replace(/^0/, '972') : null;
+  const triggerKey = {
+    remoteJid: groupJid,
+    id: m.key.id,
+    fromMe: false,
+    ...(m.key.participant ? { participant: m.key.participant } : {}),
+    ...(pnDigits ? { participantPn: `${pnDigits}@s.whatsapp.net` } : {}),
+  };
 
   const [lg, la] = await Promise.all([
     db.from('list_groups').select('wa_group_id,group_name').eq('list_id', trigger.list_id),
@@ -152,14 +160,14 @@ async function onMessage(arm, m) {
       trigger_id: trigger.id,
       list_id: trigger.list_id,
       total: targets.length,
-      trigger_key: { remoteJid: groupJid, id: m.key.id, participant: m.key.participant || undefined },
+      trigger_key: triggerKey,
       trigger_arm_id: arm.id,
     })
     .select()
     .single();
   if (error) throw error;
 
-  await arm.react({ remoteJid: groupJid, id: m.key.id, ...(m.key.participant ? { participant: m.key.participant } : {}) }, '⏳');
+  await arm.react(triggerKey, '⏳');
 
   if (armIds.length) {
     await db.from('campaign_arms').insert(armIds.map((arm_id) => ({ campaign_id: campaign.id, arm_id })));

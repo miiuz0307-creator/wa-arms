@@ -209,7 +209,14 @@ async function handleGroup(arm, m) {
   if (!chat) return true;
 
   // ⏳ on the "עזרה" message: request received
-  const triggerKey = { remoteJid: groupJid, id: m.key.id, fromMe, ...(m.key.participant ? { participant: m.key.participant } : {}) };
+  const pnParticipant = fromMe ? null : op?.wa_jid || [m.key.participantPn, m.key.participantAlt].find((j) => j?.endsWith('@s.whatsapp.net')) || null;
+  const triggerKey = {
+    remoteJid: groupJid,
+    id: m.key.id,
+    fromMe,
+    ...(m.key.participant ? { participant: m.key.participant } : {}),
+    ...(pnParticipant ? { participantPn: pnParticipant } : {}),
+  };
   await arm.react(triggerKey, '⏳');
 
   const original = extractText(unwrap(ctx.quotedMessage));
