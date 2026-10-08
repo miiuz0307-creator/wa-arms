@@ -228,7 +228,6 @@ async function handleGroup(arm, m) {
     .eq('status', 'selecting');
 
   const quotedId = ctx.stanzaId || null;
-  let dupNote = null;
   if (quotedId) {
     const { data: prev } = await db
       .from('quote_sessions')
@@ -239,8 +238,16 @@ async function handleGroup(arm, m) {
       .limit(1);
     if (prev?.length) {
       const t = new Date(prev[0].created_at).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jerusalem' });
-      dupNote = `⚠️ *שים לב:* הנסיעה הזו כבר הופצה היום ב-${t}. כתיבת *הפץ* תשלח אותה שוב.`;
+      await reply(arm, chat, `ℹ️ הנסיעה הזו כבר הופצה ב-${t}. לא שלחתי אותה שוב.`);
+      return true;
     }
+  }
+
+  // target lists: the trigger's list if set, otherwise every distribution list
+  let listIds = trigger.list_id ? [trigger.list_id] : [];
+  if (!listIds.length) {
+    const { data: all } = await db.from('distribution_lists').select('id');
+    listIds = (all || []).map((l) => l.id);
   }
 
   const { data: groupRow } = await db.from('groups').select('name').eq('wa_group_id', groupJid).limit(1);
@@ -262,15 +269,22 @@ async function handleGroup(arm, m) {
       removed_phones: s.removed.length,
       needs_review: reasons.length > 0,
       review_reason: reasons.join(' · ') || null,
+      selected_list_ids: listIds,
     })
     .select()
     .single();
   if (error) throw error;
+  await activity('quote_received', session.id, { operator: opName, group: session.source_group_name, removed: s.removed.length });
 
-  const menu = await renderMenu(session, dupNote);
+  // safe and complete → send right away, no questions
+  if (!reasons.length) {
+    return distribute(arm, chat, session, phoneShown ? [phoneShown] : [], { quiet: true });
+  }
+
+  // something is missing (requester phone unknown / possible customer phone left) → ask in private
+  const menu = await renderMenu(session, '⏸️ *ההפצה ממתינה לך* – לא שלחתי כי:');
   const ok = await reply(arm, chat, menu.text);
   if (!ok && alt) await reply(arm, alt, menu.text);
-  await activity('quote_received', session.id, { operator: opName, group: session.source_group_name, removed: s.removed.length });
   return true;
 }
 
@@ -406,6 +420,10 @@ async function handleDM(arm, m) {
       review_reason: reasons.join(' · ') || null,
     });
     if (session.operator_id) await db.from('wa_operators').update({ phone: shown }).eq('id', session.operator_id);
+    if (!session.needs_review && session.selected_list_ids.length) {
+      await reply(arm, chat, `📞 המספר שלך נשמר: ${shown}. מפיץ עכשיו.`);
+      return distribute(arm, chat, session, [shown], { quiet: true });
+    }
     await reply(arm, chat, (await renderMenu(session, `📞 המספר שלך נשמר: ${shown}`)).text);
     return true;
   }
@@ -421,6 +439,10 @@ async function handleDM(arm, m) {
     }
     session = await update(session, { needs_review: false, review_reason: null });
     await activity('quote_manual_approved', session.id, { operator: session.operator_name });
+    if (session.selected_list_ids.length) {
+      await reply(arm, chat, '👍 אושר. מפיץ עכשיו.');
+      return distribute(arm, chat, session, allow, { quiet: true });
+    }
     await reply(arm, chat, (await renderMenu(session, '👍 אושר ידנית.')).text);
     return true;
   }
@@ -448,7 +470,7 @@ async function handleDM(arm, m) {
   return true;
 }
 
-async function distribute(arm, chat, session, allow) {
+async function distribute(arm, chat, session, allow, opts = {}) {
   if (!session.selected_list_ids.length) {
     await reply(arm, chat, '⚠️ לא נבחרה אף רשימה. שלח מספר מהתפריט או *הכל*.');
     return true;
@@ -509,11 +531,13 @@ async function distribute(arm, chat, session, allow) {
   }
   await update(session, { status: 'sending', campaign_id: campaign.id });
   await activity('quote_distributed', session.id, { campaign: campaign.id, groups: groups.length, arms: armIds.length });
-  await reply(
-    arm,
-    chat,
-    `🚀 *ההפצה התחילה*\n${groups.length} קבוצות דרך ${armIds.length} זרועות.\nאעדכן כשהיא תסתיים. בכל רגע אפשר לכתוב *סטטוס*.`,
-  );
+  if (!opts.quiet) {
+    await reply(
+      arm,
+      chat,
+      `🚀 *ההפצה התחילה*\n${groups.length} קבוצות דרך ${armIds.length} זרועות.\nאעדכן כשהיא תסתיים. בכל רגע אפשר לכתוב *סטטוס*.`,
+    );
+  }
   return true;
 }
 
