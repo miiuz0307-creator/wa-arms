@@ -85,9 +85,12 @@ async function refreshSettings() {
 }
 
 const MAX_IN_FLIGHT = 12; // parallel sends per arm in "messages per minute" mode
+const MAX_REQUEUES = 8; // a group refused by WhatsApp goes back to the queue up to this many times
 
-// WhatsApp refusals that are temporary (too fast, slow network, missing device keys) – worth retrying
-const TRANSIENT = /not-acceptable|timed out|timeout|rate-overlimit|no sessions|connection closed|internal-server-error|ECONN|socket/i;
+// WhatsApp refusals that usually mean "too fast / try later"
+const THROTTLED = /not-acceptable|rate-overlimit/i;
+// short network/encryption hiccups – retry right away a couple of times
+const HICCUP = /timed out|timeout|no sessions|connection closed|internal-server-error|ECONN|socket/i;
 
 function adminOnlyBlocked(arm, jid) {
   const meta = arm.groupMeta?.get(jid);
@@ -95,6 +98,21 @@ function adminOnlyBlocked(arm, jid) {
   const mine = new Set(arm.ownJids());
   const me = (meta.participants || []).find((p) => mine.has(String(p.id).replace(/:\d+(?=@)/, '')));
   return !(me && (me.admin === 'admin' || me.admin === 'superadmin'));
+}
+
+// Adaptive speed per arm: every refusal doubles the pause, every 5 successes in a row ease it back
+function slowDown(arm) {
+  arm.penalty = Math.min(32, (arm.penalty || 1) * 2);
+  arm.okStreak = 0;
+  arm.nextSendAt = Math.max(arm.nextSendAt || 0, Date.now() + 3000 * arm.penalty);
+  log.warn({ arm: arm.name, penalty: arm.penalty }, 'WhatsApp refused – slowing this arm down');
+}
+function speedUp(arm) {
+  arm.okStreak = (arm.okStreak || 0) + 1;
+  if ((arm.penalty || 1) > 1 && arm.okStreak >= 5) {
+    arm.penalty = Math.max(1, arm.penalty / 2);
+    arm.okStreak = 0;
+  }
 }
 
 async function sendOne(arm) {
@@ -114,35 +132,54 @@ async function sendOne(arm) {
 
   let ok = false;
   let errText = null;
-  // retry temporary refusals right here, with short growing pauses (up to 5 tries)
-  for (let attempt = 1; attempt <= 5; attempt++) {
+  for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       await arm.send(job.wa_group_id, job.final_text);
       ok = true;
       break;
     } catch (e) {
       errText = e?.message || 'שגיאת שליחה';
-      if (!TRANSIENT.test(errText) || attempt === 5) break;
-      await sleep(1500 * attempt);
+      if (!HICCUP.test(errText) || attempt === 3) break;
+      await sleep(1000 * attempt);
     }
   }
-  if (!ok && /not-acceptable/i.test(errText || '') && adminOnlyBlocked(arm, job.wa_group_id)) {
-    errText = 'רק מנהלים יכולים לשלוח בקבוצה הזו';
+
+  if (ok) {
+    speedUp(arm);
+    await db.rpc('target_result_engine', { p_id: job.target_id, p_arm: arm.id, p_ok: true, p_error: null });
+    return true;
   }
-  await db.rpc('target_result_engine', { p_id: job.target_id, p_arm: arm.id, p_ok: ok, p_error: errText });
-  if (!ok) log.warn({ arm: arm.name, group: job.wa_group_id, err: errText }, 'send failed');
+
+  // refused for now → slow down and put the group back in the queue instead of failing it
+  if (THROTTLED.test(errText) || HICCUP.test(errText)) {
+    if (THROTTLED.test(errText)) slowDown(arm);
+    const { data: row } = await db.from('campaign_targets').select('attempts').eq('id', job.target_id).single();
+    if ((row?.attempts || 0) < MAX_REQUEUES) {
+      await db
+        .from('campaign_targets')
+        .update({ status: 'pending', error: `${errText} – ממתין לניסיון נוסף`, claimed_at: null })
+        .eq('id', job.target_id);
+      return true;
+    }
+  }
+
+  await db.rpc('target_result_engine', { p_id: job.target_id, p_arm: arm.id, p_ok: false, p_error: errText });
+  log.warn({ arm: arm.name, group: job.wa_group_id, err: errText }, 'send failed');
   return true;
 }
 
 async function sendTick(arm) {
   if (!arm.online || Date.now() < arm.nextSendAt) return;
   const rate = Number(settings.rate_per_minute) || 0;
+  const penalty = arm.penalty || 1;
 
   if (rate > 0) {
-    // "N messages per minute": start a send every 60/N seconds (±15%), several may run at once
+    // "N messages per minute": start a send every 60/N seconds (±15%), several may run at once.
+    // After a refusal (penalty > 1) the arm sends one at a time, more slowly.
     arm.inFlight = arm.inFlight || 0;
-    if (arm.inFlight >= MAX_IN_FLIGHT || arm.claiming) return;
-    const interval = 60_000 / rate;
+    const maxInFlight = penalty > 1 ? 1 : MAX_IN_FLIGHT;
+    if (arm.inFlight >= maxInFlight || arm.claiming) return;
+    const interval = (60_000 / rate) * penalty;
     arm.claiming = true;
     arm.nextSendAt = Date.now() + interval * (0.85 + Math.random() * 0.3);
     arm.inFlight += 1;
@@ -157,7 +194,6 @@ async function sendTick(arm) {
       .finally(() => {
         arm.inFlight -= 1;
       });
-    // the claim itself is quick; release the claim lock right away so the next start is on schedule
     setTimeout(() => {
       arm.claiming = false;
     }, 50);
@@ -171,7 +207,7 @@ async function sendTick(arm) {
     await sendOne(arm);
     const min = Math.max(0, Number(settings.min_delay_sec) || 0) * 1000;
     const max = Math.max(min, (Number(settings.max_delay_sec) || 0) * 1000);
-    arm.nextSendAt = Date.now() + randomBetween(min, max);
+    arm.nextSendAt = Math.max(arm.nextSendAt || 0, Date.now() + randomBetween(min, max) * (arm.penalty || 1));
   } catch (e) {
     log.error({ arm: arm.name, err: e.message }, 'send tick failed');
     arm.nextSendAt = Date.now() + 5000;
