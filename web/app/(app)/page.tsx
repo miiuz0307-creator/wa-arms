@@ -26,6 +26,23 @@ export default function Dashboard() {
         .gte('sent_at', new Date(Date.now() - 86400000).toISOString()),
       can('admin') ? sb().from('activity_log').select('*').order('created_at', { ascending: false }).limit(8) : Promise.resolve({ data: [] }),
     ]);
+    // groups with no permission in the last day that are still in a distribution list
+    const np = await sb()
+      .from('campaign_targets')
+      .select('wa_group_id, campaign_id, sent_at, claimed_at')
+      .in('status', ['skipped', 'failed'])
+      .or('error.ilike.%הרשאה%,error.ilike.%not-acceptable%')
+      .gte('claimed_at', new Date(Date.now() - 86400000).toISOString())
+      .order('claimed_at', { ascending: false })
+      .limit(500);
+    const npIds = [...new Set((np.data || []).map((r: any) => r.wa_group_id))];
+    let noPerm = { count: 0, campaign: null as string | null };
+    if (npIds.length) {
+      const { data: listed } = await sb().from('list_groups').select('wa_group_id').in('wa_group_id', npIds);
+      const still = new Set((listed || []).map((r: any) => r.wa_group_id));
+      noPerm = { count: still.size, campaign: (np.data || []).find((r: any) => still.has(r.wa_group_id))?.campaign_id || null };
+    }
+
     const perArm: Record<string, number> = {};
     const distinct = new Set<string>();
     for (const g of groups.data || []) {
@@ -43,6 +60,7 @@ export default function Dashboard() {
       pendingPhone: pendingPhone.count || 0,
       recentFailed: recentFailed.count || 0,
       log: log.data || [],
+      noPerm,
     });
   }, [can]);
 
@@ -82,7 +100,7 @@ export default function Dashboard() {
         <Stat label="הפצות פעילות" value={d.active.length} icon={<Radio className="h-5 w-5" />} tone="pink" />
       </div>
 
-      {(problems.length > 0 || d.pendingPhone > 0 || d.recentFailed > 0) && (
+      {(problems.length > 0 || d.pendingPhone > 0 || d.recentFailed > 0 || d.noPerm.count > 0) && (
         <Card className="mt-4 border-amber-200 bg-amber-50/60 p-4">
           <div className="mb-2 flex items-center gap-2 font-semibold text-amber-900">
             <AlertTriangle className="h-4 w-4" />
@@ -105,6 +123,13 @@ export default function Dashboard() {
               </li>
             )}
             {d.recentFailed > 0 && <li>{d.recentFailed} שליחות נכשלו ב-24 השעות האחרונות</li>}
+            {d.noPerm.count > 0 && d.noPerm.campaign && (
+              <li>
+                <Link href={`/history/${d.noPerm.campaign}`} className="font-medium hover:underline">
+                  ב-{d.noPerm.count} קבוצות שברשימות ההפצה אין לזרוע הרשאה לשלוח – לבדיקה והסרה
+                </Link>
+              </li>
+            )}
           </ul>
         </Card>
       )}

@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowRight, Pause, Play, XCircle, RotateCcw } from 'lucide-react';
+import { ArrowRight, Pause, Play, XCircle, RotateCcw, ShieldAlert } from 'lucide-react';
 import { sb, logAct } from '@/lib/supabase';
 import { useRealtime } from '@/lib/hooks';
 import { useAuth } from '@/lib/auth';
@@ -151,6 +151,8 @@ export default function CampaignPage() {
         </Card>
       </div>
 
+      {!active && can('operator') && <NoPermissionReview targets={targets} />}
+
       <Card className="mt-4">
         <div className="scroll-thin flex gap-1 overflow-x-auto border-b border-slate-100 p-2">
           {[['', 'הכול', targets.length], ...Object.entries(TARGET_STATUS).map(([k, v]) => [k, v.label, counts[k] || 0])].map(([k, label, n]) => (
@@ -210,5 +212,92 @@ function Info({ label, value }: { label: string; value: React.ReactNode }) {
       <dt className="text-slate-500">{label}:</dt>
       <dd className="font-medium">{value || '—'}</dd>
     </div>
+  );
+}
+
+const isNoPermission = (t: any) => /אין הרשאה|not-acceptable|רק מנהלים/i.test(t.error || '') && t.status !== 'sent';
+
+function NoPermissionReview({ targets }: { targets: any[] }) {
+  const groups = useMemo(() => {
+    const m = new Map<string, any>();
+    for (const t of targets) if (isNoPermission(t) && !m.has(t.wa_group_id)) m.set(t.wa_group_id, t);
+    return [...m.values()];
+  }, [targets]);
+  const [inLists, setInLists] = useState<Record<string, string[]>>({});
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+
+  useEffect(() => {
+    if (!groups.length) return;
+    const ids = groups.map((g) => g.wa_group_id);
+    sb()
+      .from('list_groups')
+      .select('wa_group_id, distribution_lists(name)')
+      .in('wa_group_id', ids)
+      .then(({ data }) => {
+        const m: Record<string, string[]> = {};
+        for (const r of (data as any[]) || []) (m[r.wa_group_id] ||= []).push(r.distribution_lists?.name || '');
+        setInLists(m);
+        setSel(new Set(Object.keys(m)));
+      });
+  }, [groups]);
+
+  const stillListed = groups.filter((g) => inLists[g.wa_group_id]?.length);
+  if (done || !stillListed.length) return null;
+
+  async function remove() {
+    if (!sel.size) return;
+    setBusy(true);
+    const { error } = await sb().from('list_groups').delete().in('wa_group_id', [...sel]);
+    setBusy(false);
+    if (error) return toast(error.message, 'error');
+    await logAct('list_saved', 'list', null as any, { removed_no_permission: sel.size });
+    toast(`${sel.size} קבוצות הוסרו מרשימות ההפצה`);
+    setDone(true);
+  }
+
+  return (
+    <Card className="mt-4 border-amber-200">
+      <div className="flex items-start gap-3 border-b border-amber-100 bg-amber-50/70 px-5 py-4">
+        <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+        <div>
+          <div className="font-semibold text-amber-900">
+            ב-{stillListed.length} קבוצות אין לזרוע הרשאה לשלוח
+          </div>
+          <div className="text-sm text-amber-800">להסיר אותן מרשימות ההפצה, כדי שההפצות הבאות יהיו מהירות ובלי כישלונות?</div>
+        </div>
+      </div>
+      <ul className="divide-y divide-slate-100">
+        {stillListed.map((g) => (
+          <li key={g.wa_group_id}>
+            <label className="flex cursor-pointer items-center gap-3 px-5 py-3">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-indigo-600"
+                checked={sel.has(g.wa_group_id)}
+                onChange={(e) => {
+                  const n = new Set(sel);
+                  e.target.checked ? n.add(g.wa_group_id) : n.delete(g.wa_group_id);
+                  setSel(n);
+                }}
+              />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-medium">{g.group_name || g.wa_group_id}</div>
+                <div className="truncate text-xs text-slate-500">ברשימות: {inLists[g.wa_group_id].join(', ')}</div>
+              </div>
+            </label>
+          </li>
+        ))}
+      </ul>
+      <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 p-3">
+        <Button variant="ghost" onClick={() => setDone(true)}>
+          השאר אותן
+        </Button>
+        <Button onClick={remove} loading={busy} disabled={!sel.size}>
+          הסר {sel.size} מרשימות ההפצה
+        </Button>
+      </div>
+    </Card>
   );
 }

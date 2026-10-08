@@ -87,8 +87,11 @@ async function refreshSettings() {
 const MAX_IN_FLIGHT = 12; // parallel sends per arm in "messages per minute" mode
 const MAX_REQUEUES = 8; // a group refused by WhatsApp goes back to the queue up to this many times
 
-// WhatsApp refusals that usually mean "too fast / try later"
-const THROTTLED = /not-acceptable|rate-overlimit/i;
+// "not-acceptable" = the arm has no permission to write in that group – no point retrying
+const NO_PERMISSION = /not-acceptable|forbidden|not-authorized/i;
+// WhatsApp refusals that mean "too fast / try later"
+const THROTTLED = /rate-overlimit/i;
+const NO_PERMISSION_TEXT = 'אין הרשאה לשלוח בקבוצה';
 // short network/encryption hiccups – retry right away a couple of times
 const HICCUP = /timed out|timeout|no sessions|connection closed|internal-server-error|ECONN|socket/i;
 
@@ -125,7 +128,7 @@ async function sendOne(arm) {
   if (adminOnlyBlocked(arm, job.wa_group_id)) {
     await db
       .from('campaign_targets')
-      .update({ status: 'skipped', error: 'רק מנהלים יכולים לשלוח בקבוצה הזו' })
+      .update({ status: 'skipped', error: `${NO_PERMISSION_TEXT} (רק מנהלים)` })
       .eq('id', job.target_id);
     return true;
   }
@@ -147,6 +150,16 @@ async function sendOne(arm) {
   if (ok) {
     speedUp(arm);
     await db.rpc('target_result_engine', { p_id: job.target_id, p_arm: arm.id, p_ok: true, p_error: null });
+    return true;
+  }
+
+  // no permission in this group → mark it (shown on the website after the distribution, with an option to remove it)
+  if (NO_PERMISSION.test(errText)) {
+    await db
+      .from('campaign_targets')
+      .update({ status: 'skipped', error: `${NO_PERMISSION_TEXT} (${errText})` })
+      .eq('id', job.target_id);
+    log.warn({ arm: arm.name, group: job.wa_group_id }, 'no permission in group');
     return true;
   }
 
