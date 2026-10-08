@@ -32,6 +32,7 @@ function Settings() {
   if (!s) return <Spinner />;
 
   async function save() {
+    if (s.min_delay_sec < 5) return toast('המינימום הוא 5 שניות בין הודעות – פחות מזה מסכן את המספר בחסימה', 'error');
     if (s.max_delay_sec < s.min_delay_sec) return toast('ההמתנה המקסימלית קטנה מהמינימלית', 'error');
     setBusy(true);
     const patch = {
@@ -59,8 +60,8 @@ function Settings() {
           קצב ושליחה
         </div>
         <div className="grid gap-5 md:grid-cols-2">
-          <Field label="המתנה מינימלית בין הודעות (שניות)" hint="לכל זרוע בנפרד">
-            <Input type="number" min={1} value={s.min_delay_sec} onChange={set('min_delay_sec')} />
+          <Field label="המתנה מינימלית בין הודעות (שניות)" hint="לכל זרוע בנפרד. מינימום 5 – פחות מזה מסכן את המספר בחסימה">
+            <Input type="number" min={5} value={s.min_delay_sec} onChange={set('min_delay_sec')} />
           </Field>
           <Field label="המתנה מקסימלית בין הודעות (שניות)" hint="המערכת בוחרת זמן אקראי בטווח – נראה טבעי יותר">
             <Input type="number" min={1} value={s.max_delay_sec} onChange={set('max_delay_sec')} />

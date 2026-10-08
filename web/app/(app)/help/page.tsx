@@ -348,7 +348,7 @@ function QuoteHowTo() {
         <li>הבוט שואל בפרטי רק אם חסר משהו: לא זוהה המספר של המבקש, או שנשאר משהו שאולי מספר לקוח.</li>
       </ol>
       <p className="mt-2 text-xs text-slate-500">
-        כל מי שכותב "עזרה" מפעיל את זה – אין צורך באישור. מספר שחסמת למטה לא יקבל תשובה. אם הבוט לא מזהה את המספר של המבקש, הוא שואל אותו בפרטי.
+        רק מספרים <b>מאושרים</b> ברשימה למטה (או המספר של אחת הזרועות) מפעילים הפצה. מישהו אחר שכותב "עזרה" – הבוט מתעלם ממנו, והוא מופיע למטה כ"ממתין לאישור".
         אם הבקשה נשלחת מהמספר של זרוע, התפריט מגיע ל"הודעה לעצמי". מילות הטריגר והתבנית הן אלה שמוגדרות בהמשך העמוד.
       </p>
     </Card>
@@ -394,7 +394,7 @@ function Operators({ d, reload }: any) {
   }
 
   return (
-    <Section icon={<UserCheck className="h-5 w-5" />} title="מבקשי הפצה בוואטסאפ" text="כל מי שכתב עזרה מופיע כאן. אפשר לחסום מספר או לתקן את הטלפון שלו">
+    <Section icon={<UserCheck className="h-5 w-5" />} title="מפעילים מורשים בוואטסאפ" text="רק מספרים מאושרים כאן יכולים להפעיל הפצה עם עזרה">
       <div className="mb-4 flex flex-wrap gap-2">
         <Input placeholder="שם" value={name} onChange={(e) => setName(e.target.value)} className="w-40" />
         <Input placeholder="050-0000000" dir="ltr" value={phone} onChange={(e) => setPhone(e.target.value)} className="w-44" />

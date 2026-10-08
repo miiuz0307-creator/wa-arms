@@ -103,7 +103,8 @@ async function sendTick(arm) {
       errText = e?.message || 'שגיאת שליחה';
     }
     await db.rpc('target_result_engine', { p_id: job.target_id, p_arm: arm.id, p_ok: ok, p_error: errText });
-    const min = Math.max(1, settings.min_delay_sec) * 1000;
+    // never faster than one message per 5 seconds per arm – faster gets numbers blocked
+    const min = Math.max(5, settings.min_delay_sec) * 1000;
     const max = Math.max(min, settings.max_delay_sec * 1000);
     arm.nextSendAt = Date.now() + randomBetween(min, max);
     if (!ok) log.warn({ arm: arm.name, group: job.wa_group_id, err: errText }, 'send failed');

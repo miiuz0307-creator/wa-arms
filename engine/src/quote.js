@@ -88,7 +88,7 @@ async function resolveOperator(arm, m) {
   } else {
     const { data } = await db
       .from('wa_operators')
-      .insert({ name: m.pushName || null, phone: phone ? formatPhone(phone) : null, wa_jid: pnJid, wa_lid: lid, status: 'approved' })
+      .insert({ name: m.pushName || null, phone: phone ? formatPhone(phone) : null, wa_jid: pnJid, wa_lid: lid, status: 'pending' })
       .select()
       .single();
     op = data;
@@ -197,7 +197,11 @@ async function handleGroup(arm, m) {
     op = r.op;
     chat = r.chat;
     alt = r.alt;
-    if (op?.status === 'blocked') return true; // blocked numbers are ignored
+    if (!op || op.status !== 'approved') {
+      // only approved numbers may trigger a mass distribution – others are ignored silently
+      if (op?.status === 'pending') await activity('quote_operator_pending', op.id, { name: m.pushName, group: groupJid });
+      return false;
+    }
     opName = op?.name || m.pushName || 'מבקש';
     opPhone = op?.phone ? normalize(op.phone) : null;
   }
@@ -216,7 +220,16 @@ async function handleGroup(arm, m) {
   // template (same as the trigger's template), operator phone allowed to stay
   let template = null;
   if (trigger.template_id) template = (await db.from('templates').select('*').eq('id', trigger.template_id).maybeSingle()).data;
+  // no template set → still add the requester's number
+  if (!template) template = { prefix: '', suffix: '📞 לבקשה במספר: {PHONE}' };
   const s = sanitize(original, { allow: opPhone ? [opPhone] : [] });
+  // the quoted message must be an actual ride, not just a word
+  const bare = s.text.replace(/[\s\p{P}\p{S}]/gu, '');
+  if (bare.length < 6 || getTriggers().some((t) => s.text.trim() === t.keyword)) {
+    log.info({ arm: arm.name, text: s.text.slice(0, 30) }, 'quote: quoted text is not a ride, ignored');
+    await arm.react(triggerKey, '');
+    return true;
+  }
   const phoneShown = opPhone ? formatPhone(opPhone) : '';
   const fill = (x) => (phoneShown ? (x || '').split('{PHONE}').join(phoneShown) : x || '');
   const parts = [];
