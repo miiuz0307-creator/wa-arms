@@ -246,7 +246,7 @@ class Arm {
   // messages queued behind it — including new "עזרה" requests — never arrive. After it has come back
   // once, confirm it as delivered so WhatsApp moves on (its content is lost either way).
   clearStuck(sock, m, type) {
-    if (m.message || m.messageStubType !== 2 || !m.key?.id || m.key.fromMe) return;
+    if (m.message || m.messageStubType !== 2 || !m.key?.id) return;
     this.stuckSeen = this.stuckSeen || new Map();
     const n = (this.stuckSeen.get(m.key.id) || 0) + 1;
     this.stuckSeen.set(m.key.id, n);
