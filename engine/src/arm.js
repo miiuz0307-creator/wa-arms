@@ -182,6 +182,16 @@ class Arm {
 
     sock.ev.on('creds.update', saveCreds);
 
+    // Baileys 6.7.24: once its event buffer is switched on during message processing,
+    // nothing switches it off again, so new messages are never emitted. Release it ourselves.
+    clearInterval(this.flushTimer);
+    this.flushTimer = setInterval(() => {
+      if (this.sock !== sock) return clearInterval(this.flushTimer);
+      try {
+        if (sock.ev.isBuffering?.()) sock.ev.flush();
+      } catch {}
+    }, 100);
+
     // WhatsApp can accept a message on the socket and reject it afterwards – log those
     sock.ev.on('messages.update', (updates) => {
       for (const u of updates || []) {
