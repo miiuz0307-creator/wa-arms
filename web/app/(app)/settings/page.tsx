@@ -19,6 +19,21 @@ export default function SettingsPage() {
 function Settings() {
   const [s, setS] = useState<any>(null);
   const [busy, setBusy] = useState(false);
+  const [mode, setMode] = useState<'minutes' | 'rate' | 'seconds'>('minutes');
+  const [minutes, setMinutes] = useState(1);
+  const [load, setLoad] = useState({ groups: 0, arms: 1 });
+
+  useEffect(() => {
+    (async () => {
+      const [lg, a] = await Promise.all([
+        sb().from('list_groups').select('list_id'),
+        sb().from('arms').select('id').eq('status', 'online'),
+      ]);
+      const per: Record<string, number> = {};
+      for (const r of lg.data || []) per[r.list_id] = (per[r.list_id] || 0) + 1;
+      setLoad({ groups: Math.max(0, ...Object.values(per)), arms: Math.max(1, (a.data || []).length) });
+    })();
+  }, []);
 
   useEffect(() => {
     sb()
@@ -26,20 +41,25 @@ function Settings() {
       .select('*')
       .eq('id', 1)
       .single()
-      .then(({ data }) => setS(data));
+      .then(({ data }) => {
+        setS(data);
+        setMode(data?.rate_per_minute ? 'rate' : 'seconds');
+      });
   }, []);
+
+  const minutesRate = Math.min(600, Math.max(1, Math.ceil(load.groups / Math.max(0.1, minutes) / load.arms)));
 
   if (!s) return <Spinner />;
 
   async function save() {
-    if (s.rate_per_minute != null && (s.rate_per_minute < 1 || s.rate_per_minute > 600)) return toast('קצב בין 1 ל-600 הודעות בדקה', 'error');
+    if (mode === 'rate' && (s.rate_per_minute < 1 || s.rate_per_minute > 600)) return toast('קצב בין 1 ל-600 הודעות בדקה', 'error');
     if (s.min_delay_sec < 0) return toast('ההמתנה לא יכולה להיות שלילית', 'error');
     if (s.max_delay_sec < s.min_delay_sec) return toast('ההמתנה המקסימלית קטנה מהמינימלית', 'error');
     setBusy(true);
     const patch = {
       min_delay_sec: s.min_delay_sec,
       max_delay_sec: s.max_delay_sec,
-      rate_per_minute: s.rate_per_minute ? Number(s.rate_per_minute) : null,
+      rate_per_minute: mode === 'minutes' ? minutesRate : mode === 'rate' ? Number(s.rate_per_minute) || 10 : null,
       per_arm_group_limit: s.per_arm_group_limit,
       distribution_mode: s.distribution_mode,
       updated_at: new Date().toISOString(),
@@ -63,25 +83,57 @@ function Settings() {
         </div>
         <div className="mb-5">
           <div className="mb-2 text-sm font-medium text-slate-700">איך לקבוע את הקצב</div>
-          <div className="inline-flex rounded-xl bg-slate-100 p-1">
-            <button
-              type="button"
-              onClick={() => setS({ ...s, rate_per_minute: s.rate_per_minute || 50 })}
-              className={`rounded-lg px-4 py-2 text-sm font-medium ${s.rate_per_minute ? 'bg-white shadow-sm' : 'text-slate-500'}`}
-            >
-              הודעות בדקה
-            </button>
-            <button
-              type="button"
-              onClick={() => setS({ ...s, rate_per_minute: null })}
-              className={`rounded-lg px-4 py-2 text-sm font-medium ${!s.rate_per_minute ? 'bg-white shadow-sm' : 'text-slate-500'}`}
-            >
-              שניות בין הודעות
-            </button>
+          <div className="inline-flex flex-wrap rounded-xl bg-slate-100 p-1">
+            {[
+              ['minutes', 'זמן להפצה (דקות)'],
+              ['rate', 'הודעות בדקה'],
+              ['seconds', 'שניות בין הודעות'],
+            ].map(([k, label]) => (
+              <button
+                key={k}
+                type="button"
+                onClick={() => {
+                  setMode(k as any);
+                  if (k === 'rate' && !s.rate_per_minute) setS({ ...s, rate_per_minute: 15 });
+                }}
+                className={`rounded-lg px-4 py-2 text-sm font-medium ${mode === k ? 'bg-white shadow-sm' : 'text-slate-500'}`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
         </div>
 
-        {s.rate_per_minute ? (
+        {mode === 'minutes' && (
+          <div className="mb-5">
+            <Field label="תוך כמה דקות לסיים הפצה" hint="המערכת מחשבת לבד כמה מהר כל זרוע שולחת">
+              <Input type="number" min={0.5} step={0.5} value={minutes} onChange={(e) => setMinutes(Number(e.target.value))} className="max-w-40" />
+            </Field>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {[1, 2, 3, 5, 10].map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => setMinutes(n)}
+                  className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${minutes === n ? 'border-indigo-300 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-600'}`}
+                >
+                  {n} דק׳
+                </button>
+              ))}
+            </div>
+            <p className="mt-3 rounded-xl bg-slate-50 p-3 text-sm text-slate-700">
+              {load.groups} קבוצות ברשימה הגדולה · {load.arms} זרועות מחוברות → כל זרוע תשלח <b>{minutesRate} הודעות בדקה</b>.
+            </p>
+            {minutesRate > 12 && (
+              <p className="mt-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">
+                ⚠️ {minutesRate} הודעות בדקה ממספר אחד – WhatsApp עלול לדחות חלק מההודעות ולחסום את המספר. כדי לעמוד בזמן בבטחה צריך בערך{' '}
+                {Math.ceil(load.groups / Math.max(0.1, minutes) / 12)} זרועות שחברות באותן קבוצות.
+              </p>
+            )}
+          </div>
+        )}
+
+        {mode === 'rate' ? (
           <div className="mb-5">
             <Field label="כמה הודעות בדקה (לכל זרוע)" hint="בחר מהכפתורים או הקלד כל מספר. כמה זרועות = הקצב מוכפל">
               <Input type="number" min={1} max={600} value={s.rate_per_minute} onChange={set('rate_per_minute')} className="max-w-40" />
@@ -112,7 +164,7 @@ function Settings() {
         ) : null}
 
         <div className="grid gap-5 md:grid-cols-2">
-          {!s.rate_per_minute && (
+          {mode === 'seconds' && (
             <>
               <Field label="המתנה מינימלית בין הודעות (שניות)" hint="לכל זרוע בנפרד. 0 = בלי המתנה">
                 <Input type="number" min={0} value={s.min_delay_sec} onChange={set('min_delay_sec')} />
@@ -134,7 +186,7 @@ function Settings() {
             </Field>
           )}
         </div>
-        {!s.rate_per_minute && s.min_delay_sec < 5 && (
+        {mode === 'seconds' && s.min_delay_sec < 5 && (
           <p className="mt-4 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">
             ⚠️ פחות מ-5 שניות בין הודעות מעלה מאוד את הסיכון ש-WhatsApp יחסום את המספר. ההחלטה שלך.
           </p>

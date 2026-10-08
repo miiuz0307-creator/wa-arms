@@ -84,20 +84,50 @@ async function refreshSettings() {
   if (data) settings = data;
 }
 
-const MAX_IN_FLIGHT = 8; // parallel sends per arm in "messages per minute" mode
+const MAX_IN_FLIGHT = 12; // parallel sends per arm in "messages per minute" mode
+
+// WhatsApp refusals that are temporary (too fast, slow network, missing device keys) – worth retrying
+const TRANSIENT = /not-acceptable|timed out|timeout|rate-overlimit|no sessions|connection closed|internal-server-error|ECONN|socket/i;
+
+function adminOnlyBlocked(arm, jid) {
+  const meta = arm.groupMeta?.get(jid);
+  if (!meta?.announce) return false; // "only admins can send" is off
+  const mine = new Set(arm.ownJids());
+  const me = (meta.participants || []).find((p) => mine.has(String(p.id).replace(/:\d+(?=@)/, '')));
+  return !(me && (me.admin === 'admin' || me.admin === 'superadmin'));
+}
 
 async function sendOne(arm) {
   const { data, error } = await db.rpc('claim_target_engine', { p_arm: arm.id });
   if (error) throw error;
   const job = data?.[0];
   if (!job) return false;
-  let ok = true;
+
+  // groups where only admins may write: skip up front instead of failing
+  if (adminOnlyBlocked(arm, job.wa_group_id)) {
+    await db
+      .from('campaign_targets')
+      .update({ status: 'skipped', error: 'רק מנהלים יכולים לשלוח בקבוצה הזו' })
+      .eq('id', job.target_id);
+    return true;
+  }
+
+  let ok = false;
   let errText = null;
-  try {
-    await arm.send(job.wa_group_id, job.final_text);
-  } catch (e) {
-    ok = false;
-    errText = e?.message || 'שגיאת שליחה';
+  // retry temporary refusals right here, with short growing pauses (up to 5 tries)
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      await arm.send(job.wa_group_id, job.final_text);
+      ok = true;
+      break;
+    } catch (e) {
+      errText = e?.message || 'שגיאת שליחה';
+      if (!TRANSIENT.test(errText) || attempt === 5) break;
+      await sleep(1500 * attempt);
+    }
+  }
+  if (!ok && /not-acceptable/i.test(errText || '') && adminOnlyBlocked(arm, job.wa_group_id)) {
+    errText = 'רק מנהלים יכולים לשלוח בקבוצה הזו';
   }
   await db.rpc('target_result_engine', { p_id: job.target_id, p_arm: arm.id, p_ok: ok, p_error: errText });
   if (!ok) log.warn({ arm: arm.name, group: job.wa_group_id, err: errText }, 'send failed');
