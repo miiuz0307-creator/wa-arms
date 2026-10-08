@@ -140,6 +140,20 @@ class Arm {
 
     sock.ev.on('creds.update', saveCreds);
 
+    // diagnostics: raw message nodes reaching the socket vs. events emitted
+    this.raw = 0;
+    this.upserts = 0;
+    sock.ws.on('CB:message', () => {
+      this.raw += 1;
+    });
+    if (!this.rawTimer) {
+      this.rawTimer = setInterval(() => {
+        if (this.raw || this.upserts) log.info({ arm: this.name, rawMessages: this.raw, upsertEvents: this.upserts }, 'socket traffic (last minute)');
+        this.raw = 0;
+        this.upserts = 0;
+      }, 60_000);
+    }
+
     sock.ev.on('connection.update', (u) => {
       this.onConnectionUpdate(sock, u).catch((e) =>
         log.error({ arm: this.name, err: e.message }, 'connection.update handler failed'),
@@ -147,6 +161,8 @@ class Arm {
     });
 
     sock.ev.on('messages.upsert', ({ messages, type }) => {
+      this.upserts += 1;
+      if (this.upserts <= 3) log.info({ arm: this.name, type, n: messages.length, first: Object.keys(messages[0]?.message || {}).join(',') }, 'upsert event');
       this.stat(type, messages);
       if (type !== 'notify' && type !== 'append') return;
       for (const m of messages) {

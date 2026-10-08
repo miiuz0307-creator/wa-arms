@@ -149,7 +149,11 @@ async function acquireLock() {
 }
 
 async function main() {
-  log.info('arms engine starting');
+  let bv = '?';
+  try {
+    bv = require('@whiskeysockets/baileys/package.json').version;
+  } catch {}
+  log.info({ baileys: bv, node: process.version }, 'arms engine starting');
   await acquireLock();
   log.info('engine lock acquired');
   every(5_000, async () => {
