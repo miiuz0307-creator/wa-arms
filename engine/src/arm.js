@@ -228,7 +228,7 @@ class Arm {
       if (type !== 'notify' && type !== 'append') return;
       for (const m of messages) {
         this.trace(m, type);
-        this.clearStuck(sock, m);
+        this.clearStuck(sock, m, type);
         // learn our own LID from our own group messages
         if (m.key?.fromMe && m.key?.participant?.endsWith('@lid')) this.learnedLid = m.key.participant.replace(/:\d+(?=@)/, '');
         this.onMessage(this, m, type).catch((e) =>
@@ -245,15 +245,22 @@ class Arm {
   // A message we can't decrypt is redelivered by WhatsApp again and again (every minute), and the
   // messages queued behind it — including new "עזרה" requests — never arrive. After it has come back
   // once, confirm it as delivered so WhatsApp moves on (its content is lost either way).
-  clearStuck(sock, m) {
+  clearStuck(sock, m, type) {
     if (m.message || m.messageStubType !== 2 || !m.key?.id || m.key.fromMe) return;
     this.stuckSeen = this.stuckSeen || new Map();
     const n = (this.stuckSeen.get(m.key.id) || 0) + 1;
     this.stuckSeen.set(m.key.id, n);
     if (this.stuckSeen.size > 5000) this.stuckSeen.delete(this.stuckSeen.keys().next().value);
-    if (n < 2) return;
+    if (n < 2 && type !== 'append') return; // offline backlog: confirm right away, WhatsApp waits for it
     this.clearedStuck = (this.clearedStuck || 0) + 1;
-    Promise.resolve(sock.sendReceipt?.(m.key.remoteJid, m.key.participant, [m.key.id], undefined)).catch(() => {});
+    if (typeof sock.sendReceipt !== 'function') {
+      if (!this.noReceiptWarned) log.warn({ arm: this.name }, 'sendReceipt not available');
+      this.noReceiptWarned = true;
+      return;
+    }
+    sock.sendReceipt(m.key.remoteJid, m.key.participant, [m.key.id], undefined).catch((e) =>
+      log.warn({ arm: this.name, err: e?.message }, 'confirm stuck message failed'),
+    );
     if (this.clearedStuck % 20 === 1) log.info({ arm: this.name, cleared: this.clearedStuck }, 'confirmed undecryptable messages so the queue moves on');
   }
 
