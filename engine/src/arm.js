@@ -205,9 +205,26 @@ class Arm {
     // diagnostics: raw message nodes reaching the socket vs. events emitted
     this.raw = 0;
     this.upserts = 0;
+    this.lastRawAt = Date.now();
     sock.ws.on('CB:message', () => {
       this.raw += 1;
+      this.lastRawAt = Date.now();
     });
+    // Watchdog: in 90 busy groups silence means WhatsApp stopped delivering to this socket
+    // (it happens after reconnects). Reconnecting makes it deliver again.
+    clearInterval(this.watchdog);
+    this.watchdog = setInterval(() => {
+      if (this.sock !== sock) return clearInterval(this.watchdog);
+      if (!this.online) return;
+      const quiet = Date.now() - Math.max(this.lastRawAt || 0, this.onlineAt || 0);
+      if (quiet > 150_000) {
+        log.warn({ arm: this.name, quietSec: Math.round(quiet / 1000) }, 'no incoming messages – reconnecting to unblock');
+        this.lastRawAt = Date.now();
+        try {
+          sock.end(new Error('incoming stalled'));
+        } catch {}
+      }
+    }, 30_000);
     if (!this.rawTimer) {
       this.rawTimer = setInterval(() => {
         if (this.raw || this.upserts) log.info({ arm: this.name, rawMessages: this.raw, upsertEvents: this.upserts }, 'socket traffic (last minute)');
@@ -284,6 +301,7 @@ class Arm {
         last_seen_at: new Date().toISOString(),
         last_error: null,
       });
+      this.onlineAt = Date.now();
       log.info({ arm: this.name, phone }, 'arm online');
       await this.syncGroups().catch((e) => log.error({ arm: this.name, err: e.message }, 'group sync failed'));
     }
