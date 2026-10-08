@@ -10,10 +10,10 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
     "lucide-react": "^0.460.0",
-    "next": "15.5.4",
+    "next": "^15.5.9",
     "qrcode.react": "^4.2.0",
-    "react": "19.1.0",
-    "react-dom": "19.1.0"
+    "react": "^19.1.2",
+    "react-dom": "^19.1.2"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.0",
@@ -22,5 +22,8 @@
     "@types/react-dom": "^19",
     "tailwindcss": "^4.1.0",
     "typescript": "^5"
+  },
+  "engines": {
+    "node": "22.x"
   }
 }
