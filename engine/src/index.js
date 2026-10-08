@@ -153,8 +153,25 @@ async function sendOne(arm) {
     return true;
   }
 
+  // "not-acceptable" in a group this arm already sent to = WhatsApp refusing because it is too fast
+  let noPermission = NO_PERMISSION.test(errText);
+  if (noPermission) {
+    const { data: okBefore } = await db
+      .from('campaign_targets')
+      .select('id')
+      .eq('wa_group_id', job.wa_group_id)
+      .eq('arm_id', arm.id)
+      .eq('status', 'sent')
+      .limit(1);
+    if (okBefore?.length) {
+      noPermission = false;
+      errText = `${errText} – WhatsApp דחה (מהר מדי)`;
+      slowDown(arm);
+    }
+  }
+
   // no permission in this group → mark it (shown on the website after the distribution, with an option to remove it)
-  if (NO_PERMISSION.test(errText)) {
+  if (noPermission) {
     await db
       .from('campaign_targets')
       .update({ status: 'skipped', error: `${NO_PERMISSION_TEXT} (${errText})` })
@@ -164,7 +181,7 @@ async function sendOne(arm) {
   }
 
   // refused for now → slow down and put the group back in the queue instead of failing it
-  if (THROTTLED.test(errText) || HICCUP.test(errText)) {
+  if (THROTTLED.test(errText) || HICCUP.test(errText) || NO_PERMISSION.test(errText)) {
     if (THROTTLED.test(errText)) slowDown(arm);
     const { data: row } = await db.from('campaign_targets').select('attempts').eq('id', job.target_id).single();
     if ((row?.attempts || 0) < MAX_REQUEUES) {

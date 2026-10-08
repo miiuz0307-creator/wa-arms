@@ -3,6 +3,7 @@
 const { db, log } = require('./config');
 const { extractText, containsKeyword, formatPhone, jidUser, buildHelpText } = require('./util');
 const quote = require('./quote');
+const { assignArms } = require('./assign');
 
 const state = {
   settings: { auto_distribution_enabled: false },
@@ -144,6 +145,8 @@ async function onMessage(arm, m) {
     const { data } = await db.from('arms').select('id').eq('is_active', true);
     armIds = (data || []).map((r) => r.id);
   }
+  const plan = await assignArms(armIds, targets.map((t) => t.wa_group_id));
+  armIds = plan.armIds;
 
   const { data: campaign, error } = await db
     .from('campaigns')
@@ -178,6 +181,7 @@ async function onMessage(arm, m) {
         campaign_id: campaign.id,
         wa_group_id: t.wa_group_id,
         group_name: t.group_name,
+        tried_arms: plan.exclude(t.wa_group_id),
       })),
     );
   }

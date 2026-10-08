@@ -215,7 +215,7 @@ function Info({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-const isNoPermission = (t: any) => /אין הרשאה|not-acceptable|רק מנהלים/i.test(t.error || '') && t.status !== 'sent';
+const isNoPermission = (t: any) => /אין הרשאה|רק מנהלים/i.test(t.error || '') && t.status !== 'sent';
 
 function NoPermissionReview({ targets }: { targets: any[] }) {
   const groups = useMemo(() => {

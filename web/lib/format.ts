@@ -79,6 +79,7 @@ export const ACTION_LABEL: Record<string, string> = {
   quote_blocked: 'הפצה מציטוט לא יצאה (❌)',
   quote_cancelled: 'הפצה בוטלה מוואטסאפ (🛑)',
   quote_cancel_denied: 'ניסיון ביטול ממספר לא מורשה',
+  quote_duplicate: 'נסיעה שכבר הופצה – לא נשלחה שוב (🔁)',
 };
 
 export const KIND_LABEL: Record<string, string> = {

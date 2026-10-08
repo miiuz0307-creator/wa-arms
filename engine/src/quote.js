@@ -4,6 +4,7 @@
 //   numbered list of distribution lists, edit, "הפץ", live status.
 const { db, log } = require('./config');
 const { extractText, jidUser } = require('./util');
+const { assignArms } = require('./assign');
 const { sanitize, verifyNoCustomerPhone, normalize, formatPhone } = require('./phones');
 
 const SESSION_TTL_MS = 30 * 60 * 1000;
@@ -368,18 +369,27 @@ async function handleGroup(arm, m) {
 
   const quotedId = ctx.stanzaId || null;
   if (quotedId) {
+    // the same ride is still being distributed, or was fully distributed in the last 30 minutes → don't send it twice.
+    // A cancelled distribution can be started again.
     const { data: prev } = await db
       .from('quote_sessions')
-      .select('created_at')
+      .select('campaign_id')
       .eq('source_message_id', quotedId)
-      .in('status', ['sending', 'done'])
+      .not('campaign_id', 'is', null)
       .order('created_at', { ascending: false })
-      .limit(1);
-    if (prev?.length) {
-      const t = new Date(prev[0].created_at).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jerusalem' });
-      await reply(arm, chat, `ℹ️ הנסיעה הזו כבר הופצה ב-${t}. לא שלחתי אותה שוב.`);
-      await arm.react(triggerKey, '✅');
-      return true;
+      .limit(5);
+    const ids = (prev || []).map((p) => p.campaign_id);
+    if (ids.length) {
+      const { data: camps } = await db.from('campaigns').select('id,status,finished_at').in('id', ids);
+      const busy = (camps || []).find(
+        (c) => ['queued', 'running'].includes(c.status) || (c.status === 'completed' && Date.now() - new Date(c.finished_at).getTime() < 30 * 60 * 1000),
+      );
+      if (busy) {
+        log.info({ arm: arm.name, campaign: busy.id, status: busy.status }, 'quote: this ride was already distributed');
+        await arm.react(triggerKey, '🔁');
+        await activity('quote_duplicate', busy.id, { operator: opName });
+        return true;
+      }
     }
   }
 
@@ -643,6 +653,8 @@ async function distribute(arm, chat, session, allow, opts = {}) {
     const { data } = await db.from('arms').select('id').eq('is_active', true);
     armIds = (data || []).map((r) => r.id);
   }
+  const plan = await assignArms(armIds, groups.map((g) => g.wa_group_id));
+  armIds = plan.armIds;
 
   const { data: campaign, error } = await db
     .from('campaigns')
@@ -667,7 +679,12 @@ async function distribute(arm, chat, session, allow, opts = {}) {
   await db.from('campaign_arms').insert(armIds.map((arm_id) => ({ campaign_id: campaign.id, arm_id })));
   for (let i = 0; i < groups.length; i += 500) {
     await db.from('campaign_targets').insert(
-      groups.slice(i, i + 500).map((g) => ({ campaign_id: campaign.id, wa_group_id: g.wa_group_id, group_name: g.group_name })),
+      groups.slice(i, i + 500).map((g) => ({
+        campaign_id: campaign.id,
+        wa_group_id: g.wa_group_id,
+        group_name: g.group_name,
+        tried_arms: plan.exclude(g.wa_group_id),
+      })),
     );
   }
   await update(session, { status: 'sending', campaign_id: campaign.id });

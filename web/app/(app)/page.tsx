@@ -31,7 +31,7 @@ export default function Dashboard() {
       .from('campaign_targets')
       .select('wa_group_id, campaign_id, sent_at, claimed_at')
       .in('status', ['skipped', 'failed'])
-      .or('error.ilike.%הרשאה%,error.ilike.%not-acceptable%')
+      .ilike('error', '%הרשאה%')
       .gte('claimed_at', new Date(Date.now() - 86400000).toISOString())
       .order('claimed_at', { ascending: false })
       .limit(500);
