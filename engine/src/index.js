@@ -84,7 +84,7 @@ async function refreshSettings() {
   if (data) settings = data;
 }
 
-const MAX_IN_FLIGHT = 4; // parallel sends per arm in "messages per minute" mode (more just queues inside WhatsApp and stalls)
+const MAX_IN_FLIGHT = 12; // parallel sends per arm in "messages per minute" mode
 const MAX_REQUEUES = 8; // a group refused by WhatsApp goes back to the queue up to this many times
 
 // "not-acceptable" = the arm has no permission to write in that group – no point retrying
@@ -104,11 +104,11 @@ function adminOnlyBlocked(arm, jid) {
 }
 
 // Adaptive speed per arm: every refusal doubles the pause, every 5 successes in a row ease it back
+// The owner chose the speed and accepts the risk: a refusal does NOT slow the arm down,
+// the group just goes back to the queue and is retried at the configured speed.
 function slowDown(arm) {
-  arm.penalty = Math.min(32, (arm.penalty || 1) * 2);
-  arm.okStreak = 0;
-  arm.nextSendAt = Math.max(arm.nextSendAt || 0, Date.now() + 3000 * arm.penalty);
-  log.warn({ arm: arm.name, penalty: arm.penalty }, 'WhatsApp refused – slowing this arm down');
+  arm.penalty = 1;
+  log.warn({ arm: arm.name }, 'WhatsApp refused – group requeued, speed unchanged');
 }
 function speedUp(arm) {
   arm.okStreak = (arm.okStreak || 0) + 1;
