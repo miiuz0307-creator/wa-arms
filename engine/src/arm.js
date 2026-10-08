@@ -228,6 +228,7 @@ class Arm {
       if (type !== 'notify' && type !== 'append') return;
       for (const m of messages) {
         this.trace(m, type);
+        this.clearStuck(sock, m);
         // learn our own LID from our own group messages
         if (m.key?.fromMe && m.key?.participant?.endsWith('@lid')) this.learnedLid = m.key.participant.replace(/:\d+(?=@)/, '');
         this.onMessage(this, m, type).catch((e) =>
@@ -239,6 +240,21 @@ class Arm {
     // group changes arrive in bursts – refresh the list at most once every 2 minutes
     sock.ev.on('groups.upsert', () => this.scheduleGroupSync());
     sock.ev.on('groups.update', () => this.scheduleGroupSync());
+  }
+
+  // A message we can't decrypt is redelivered by WhatsApp again and again (every minute), and the
+  // messages queued behind it — including new "עזרה" requests — never arrive. After it has come back
+  // once, confirm it as delivered so WhatsApp moves on (its content is lost either way).
+  clearStuck(sock, m) {
+    if (m.message || m.messageStubType !== 2 || !m.key?.id || m.key.fromMe) return;
+    this.stuckSeen = this.stuckSeen || new Map();
+    const n = (this.stuckSeen.get(m.key.id) || 0) + 1;
+    this.stuckSeen.set(m.key.id, n);
+    if (this.stuckSeen.size > 5000) this.stuckSeen.delete(this.stuckSeen.keys().next().value);
+    if (n < 2) return;
+    this.clearedStuck = (this.clearedStuck || 0) + 1;
+    Promise.resolve(sock.sendReceipt?.(m.key.remoteJid, m.key.participant, [m.key.id], undefined)).catch(() => {});
+    if (this.clearedStuck % 20 === 1) log.info({ arm: this.name, cleared: this.clearedStuck }, 'confirmed undecryptable messages so the queue moves on');
   }
 
   async onConnectionUpdate(sock, u) {
