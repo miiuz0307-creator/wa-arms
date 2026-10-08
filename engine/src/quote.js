@@ -88,7 +88,7 @@ async function resolveOperator(arm, m) {
   } else {
     const { data } = await db
       .from('wa_operators')
-      .insert({ name: m.pushName || null, phone: phone ? formatPhone(phone) : null, wa_jid: pnJid, wa_lid: lid, status: 'pending' })
+      .insert({ name: m.pushName || null, phone: phone ? formatPhone(phone) : null, wa_jid: pnJid, wa_lid: lid, status: 'approved' })
       .select()
       .single();
     op = data;
@@ -190,13 +190,9 @@ async function handleGroup(arm, m) {
     op = r.op;
     chat = r.chat;
     alt = r.alt;
-    if (!op || op.status !== 'approved') {
-      // anyone in the group may write "עזרה" – stay silent, just list them for approval
-      if (op && op.status === 'pending') await activity('quote_operator_pending', op.id, { name: m.pushName, group: groupJid });
-      return false; // let the regular source-group flow decide
-    }
-    opName = op.name || m.pushName || 'מפעיל';
-    opPhone = op.phone ? normalize(op.phone) : null;
+    if (op?.status === 'blocked') return true; // blocked numbers are ignored
+    opName = op?.name || m.pushName || 'מבקש';
+    opPhone = op?.phone ? normalize(op.phone) : null;
   }
   if (!chat) return true;
 
@@ -211,17 +207,17 @@ async function handleGroup(arm, m) {
   if (trigger.template_id) template = (await db.from('templates').select('*').eq('id', trigger.template_id).maybeSingle()).data;
   const s = sanitize(original, { allow: opPhone ? [opPhone] : [] });
   const phoneShown = opPhone ? formatPhone(opPhone) : '';
-  const fill = (x) => (x || '').split('{PHONE}').join(phoneShown);
-  const usesPhone = (template?.prefix || '').includes('{PHONE}') || (template?.suffix || '').includes('{PHONE}');
+  const fill = (x) => (phoneShown ? (x || '').split('{PHONE}').join(phoneShown) : x || '');
   const parts = [];
   if (template?.prefix?.trim()) parts.push(fill(template.prefix).trim());
   parts.push(s.text);
-  if (template?.suffix?.trim() && (!usesPhone || phoneShown)) parts.push(fill(template.suffix).trim());
+  if (template?.suffix?.trim()) parts.push(fill(template.suffix).trim());
   const clean = parts.join('\n\n');
 
   const reasons = [];
   if (s.suspicious.length) reasons.push(`נמצא רצף מספרים שעשוי להיות טלפון: ${s.suspicious.join(', ')}`);
   if (!s.text.trim()) reasons.push('אחרי הסרת המספרים לא נשאר טקסט');
+  if (clean.includes('{PHONE}')) reasons.push('לא זיהיתי את המספר שלך. שלח *מספר* ואחריו המספר שלך, למשל: מספר 050-1234567');
 
   // cancel older open session in this chat
   await db
@@ -391,9 +387,36 @@ async function handleDM(arm, m) {
     return true;
   }
 
+  const phoneCmd = cmd.match(/^(?:מספר|הטלפון שלי|טלפון)?[:\s]*(\+?[\d\s\-]{9,16})$/);
+  if (phoneCmd && phoneCmd[1].replace(/\D/g, '').length >= 9) {
+    const p = normalize(phoneCmd[1]);
+    if (!/^0\d{8,9}$/.test(p)) {
+      await reply(arm, chat, '⚠️ המספר לא תקין. נסה שוב, למשל: מספר 050-1234567');
+      return true;
+    }
+    const shown = formatPhone(p);
+    const newText = session.clean_text.split('{PHONE}').join(shown);
+    const reasons = (session.review_reason || '')
+      .split(' · ')
+      .filter((r) => r && !r.startsWith('לא זיהיתי את המספר שלך'));
+    session = await update(session, {
+      operator_phone: shown,
+      clean_text: newText,
+      needs_review: reasons.length > 0,
+      review_reason: reasons.join(' · ') || null,
+    });
+    if (session.operator_id) await db.from('wa_operators').update({ phone: shown }).eq('id', session.operator_id);
+    await reply(arm, chat, (await renderMenu(session, `📞 המספר שלך נשמר: ${shown}`)).text);
+    return true;
+  }
+
   if (/^אשר$/.test(cmd)) {
     if (!session.needs_review) {
       await reply(arm, chat, 'אין מה לאשר. כתוב *הפץ* כדי לשלוח.');
+      return true;
+    }
+    if (session.clean_text.includes('{PHONE}')) {
+      await reply(arm, chat, 'קודם שלח את המספר שלך: *מספר* ואחריו המספר, למשל: מספר 050-1234567');
       return true;
     }
     session = await update(session, { needs_review: false, review_reason: null });
@@ -428,6 +451,10 @@ async function handleDM(arm, m) {
 async function distribute(arm, chat, session, allow) {
   if (!session.selected_list_ids.length) {
     await reply(arm, chat, '⚠️ לא נבחרה אף רשימה. שלח מספר מהתפריט או *הכל*.');
+    return true;
+  }
+  if (session.clean_text.includes('{PHONE}')) {
+    await reply(arm, chat, '⛔ חסר המספר שלך בהודעה. שלח *מספר* ואחריו המספר שלך, למשל: מספר 050-1234567');
     return true;
   }
   if (session.needs_review) {
