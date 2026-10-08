@@ -103,9 +103,9 @@ async function sendTick(arm) {
       errText = e?.message || 'שגיאת שליחה';
     }
     await db.rpc('target_result_engine', { p_id: job.target_id, p_arm: arm.id, p_ok: ok, p_error: errText });
-    // never faster than one message per 5 seconds per arm – faster gets numbers blocked
-    const min = Math.max(5, settings.min_delay_sec) * 1000;
-    const max = Math.max(min, settings.max_delay_sec * 1000);
+    // the owner decides the speed (0 = no pause between messages)
+    const min = Math.max(0, Number(settings.min_delay_sec) || 0) * 1000;
+    const max = Math.max(min, (Number(settings.max_delay_sec) || 0) * 1000);
     arm.nextSendAt = Date.now() + randomBetween(min, max);
     if (!ok) log.warn({ arm: arm.name, group: job.wa_group_id, err: errText }, 'send failed');
   } catch (e) {
@@ -183,7 +183,7 @@ async function main() {
   every(30_000, heartbeat, 'heartbeat');
   every(5_000, () => quote.notifyFinished(arms), 'quote-notify');
   every(5_000, () => help.reactFinished(arms), 'help-react');
-  every(1_000, async () => {
+  every(250, async () => {
     await Promise.all([...arms.values()].map(sendTick));
   }, 'send');
 }

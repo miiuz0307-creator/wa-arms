@@ -32,7 +32,7 @@ function Settings() {
   if (!s) return <Spinner />;
 
   async function save() {
-    if (s.min_delay_sec < 5) return toast('המינימום הוא 5 שניות בין הודעות – פחות מזה מסכן את המספר בחסימה', 'error');
+    if (s.min_delay_sec < 0) return toast('ההמתנה לא יכולה להיות שלילית', 'error');
     if (s.max_delay_sec < s.min_delay_sec) return toast('ההמתנה המקסימלית קטנה מהמינימלית', 'error');
     setBusy(true);
     const patch = {
@@ -60,11 +60,11 @@ function Settings() {
           קצב ושליחה
         </div>
         <div className="grid gap-5 md:grid-cols-2">
-          <Field label="המתנה מינימלית בין הודעות (שניות)" hint="לכל זרוע בנפרד. מינימום 5 – פחות מזה מסכן את המספר בחסימה">
-            <Input type="number" min={5} value={s.min_delay_sec} onChange={set('min_delay_sec')} />
+          <Field label="המתנה מינימלית בין הודעות (שניות)" hint="לכל זרוע בנפרד. 0 = בלי המתנה">
+            <Input type="number" min={0} value={s.min_delay_sec} onChange={set('min_delay_sec')} />
           </Field>
           <Field label="המתנה מקסימלית בין הודעות (שניות)" hint="המערכת בוחרת זמן אקראי בטווח – נראה טבעי יותר">
-            <Input type="number" min={1} value={s.max_delay_sec} onChange={set('max_delay_sec')} />
+            <Input type="number" min={0} value={s.max_delay_sec} onChange={set('max_delay_sec')} />
           </Field>
           <Field label="חלוקת העבודה בין הזרועות">
             <Select value={s.distribution_mode} onChange={set('distribution_mode')}>
@@ -78,6 +78,11 @@ function Settings() {
             </Field>
           )}
         </div>
+        {s.min_delay_sec < 5 && (
+          <p className="mt-4 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">
+            ⚠️ פחות מ-5 שניות בין הודעות מעלה מאוד את הסיכון ש-WhatsApp יחסום את המספר. ההחלטה שלך.
+          </p>
+        )}
         <p className="mt-4 rounded-xl bg-slate-50 p-3 text-sm text-slate-600">
           המגבלה היומית של כל זרוע מוגדרת במסך "חיבור זרועות". כשזרוע נכשלת בשליחה לקבוצה, המערכת מנסה דרך זרוע אחרת שחברה באותה קבוצה.
         </p>
