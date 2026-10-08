@@ -4,6 +4,16 @@ const crypto = require('crypto');
 const { initAuthCreds, BufferJSON, proto } = require('@whiskeysockets/baileys');
 const { db, log } = require('./config');
 
+// Baileys after 6.7.16 keeps sender keys as raw JSON bytes
+const WANTS_BYTES = (() => {
+  try {
+    const [a, b, c] = require('@whiskeysockets/baileys/package.json').version.split('.').map(Number);
+    return a > 6 || (a === 6 && (b > 7 || (b === 7 && c > 16)));
+  } catch {
+    return true;
+  }
+})();
+
 const deriveKey = (secret) => crypto.createHash('sha256').update(secret).digest();
 
 function encrypt(key, text) {
@@ -111,10 +121,13 @@ async function useDbAuthState(armId, secret) {
             if (type === 'app-state-sync-key' && v) {
               v = proto.Message.AppStateSyncKeyData.fromObject(v);
             }
-            // sender keys saved by newer Baileys are raw JSON bytes; 6.7.16 expects the parsed structure
-            if (type === 'sender-key' && v && (Buffer.isBuffer(v) || v instanceof Uint8Array)) {
+            // Sender-key format differs between Baileys versions: 6.7.16 wants the parsed structure,
+            // newer versions want the raw JSON bytes. Convert whatever is stored to what this version reads.
+            if (type === 'sender-key' && v) {
+              const isBytes = Buffer.isBuffer(v) || v instanceof Uint8Array;
               try {
-                v = JSON.parse(Buffer.from(v).toString('utf8'), BufferJSON.reviver);
+                if (WANTS_BYTES && !isBytes) v = Buffer.from(JSON.stringify(v, BufferJSON.replacer), 'utf8');
+                else if (!WANTS_BYTES && isBytes) v = JSON.parse(Buffer.from(v).toString('utf8'), BufferJSON.reviver);
               } catch {
                 v = null;
               }
