@@ -35,6 +35,30 @@ class Arm {
     this.sentIds = new Set(); // ids of messages the bot itself sent (never treat as commands)
   }
 
+  // diagnostics: one summary line per minute of everything the arm receives
+  stat(type, messages) {
+    const st = (this.stats = this.stats || { events: 0, byType: {}, groups: 0, dms: 0, stub: 0, text: 0, samples: [] });
+    st.events += 1;
+    st.byType[type] = (st.byType[type] || 0) + messages.length;
+    for (const m of messages) {
+      const jid = m.key?.remoteJid || '';
+      if (jid.endsWith('@g.us')) st.groups += 1;
+      else st.dms += 1;
+      if (!m.message) st.stub += 1;
+      else {
+        st.text += 1;
+        if (st.samples.length < 3) st.samples.push(Object.keys(m.message).join(','));
+      }
+    }
+    if (!this.statTimer) {
+      this.statTimer = setTimeout(() => {
+        log.info({ arm: this.name, ...this.stats }, 'received in the last minute');
+        this.stats = null;
+        this.statTimer = null;
+      }, 60_000);
+    }
+  }
+
   // diagnostics: count undecryptable messages, log anything that looks like a help request
   trace(m, type) {
     const jid = m.key?.remoteJid || '';
@@ -123,6 +147,7 @@ class Arm {
     });
 
     sock.ev.on('messages.upsert', ({ messages, type }) => {
+      this.stat(type, messages);
       if (type !== 'notify' && type !== 'append') return;
       for (const m of messages) {
         this.trace(m, type);
