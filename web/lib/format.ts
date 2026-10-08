@@ -76,6 +76,7 @@ export const ACTION_LABEL: Record<string, string> = {
   quote_manual_approved: 'אישר ידנית טקסט שנחשד כמכיל מספר',
   quote_operator_pending: 'מספר לא מאושר ביקש הפצה מציטוט',
   operator_updated: 'עדכן מפעיל מורשה',
+  quote_blocked: 'הפצה מציטוט לא יצאה (❌)',
 };
 
 export const KIND_LABEL: Record<string, string> = {

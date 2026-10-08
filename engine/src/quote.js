@@ -38,14 +38,15 @@ function contextOf(msg) {
   );
 }
 
-async function reply(arm, jid, text) {
-  try {
-    await arm.send(jid, text);
-    return true;
-  } catch (e) {
-    log.warn({ arm: arm.name, jid, err: e.message }, 'quote reply failed');
-    return false;
-  }
+// Private messages are disabled on purpose: requesters get only reactions on their "עזרה" message
+// (⏳ received, ✅ distributed, ❌ not distributed). Details are on the website.
+async function reply() {
+  return true;
+}
+
+async function fail(arm, key, sessionId, reason) {
+  if (key) await arm.react(key, '❌');
+  await activity('quote_blocked', sessionId, { reason });
 }
 
 async function activity(action, entityId, details) {
@@ -213,7 +214,7 @@ async function handleGroup(arm, m) {
 
   const original = extractText(unwrap(ctx.quotedMessage));
   if (!original) {
-    await reply(arm, chat, '⚠️ לא מצאתי טקסט בהודעה שציטטת. אפשר להפיץ רק הודעות טקסט (או תמונה עם כיתוב).');
+    await fail(arm, triggerKey, null, 'בהודעה המצוטטת אין טקסט');
     return true;
   }
 
@@ -307,10 +308,9 @@ async function handleGroup(arm, m) {
     return distribute(arm, chat, session, phoneShown ? [phoneShown] : [], { quiet: true });
   }
 
-  // something is missing (requester phone unknown / possible customer phone left) → ask in private
-  const menu = await renderMenu(session, '⏸️ *ההפצה ממתינה לך* – לא שלחתי כי:');
-  const ok = await reply(arm, chat, menu.text);
-  if (!ok && alt) await reply(arm, alt, menu.text);
+  // something is missing (requester phone unknown / possible customer phone left) → not sent, ❌
+  await update(session, { status: 'cancelled' });
+  await fail(arm, triggerKey, session.id, session.review_reason);
   return true;
 }
 
@@ -499,28 +499,28 @@ async function handleDM(arm, m) {
 
 async function distribute(arm, chat, session, allow, opts = {}) {
   if (!session.selected_list_ids.length) {
-    await reply(arm, chat, '⚠️ לא נבחרה אף רשימה. שלח מספר מהתפריט או *הכל*.');
+    await fail(arm, session.trigger_key, session.id, '⚠️ לא נבחרה אף רשימה. שלח מספר מהתפריט או *הכל*.');
     return true;
   }
   if (session.clean_text.includes('{PHONE}')) {
-    await reply(arm, chat, '⛔ חסר המספר שלך בהודעה. שלח *מספר* ואחריו המספר שלך, למשל: מספר 050-1234567');
+    await fail(arm, session.trigger_key, session.id, '⛔ חסר המספר שלך בהודעה. שלח *מספר* ואחריו המספר שלך, למשל: מספר 050-1234567');
     return true;
   }
   if (session.needs_review) {
-    await reply(arm, chat, `⛔ ההפצה עצורה: ${session.review_reason}\nבדוק את הטקסט וכתוב *אשר*, או שלח *עריכה* עם טקסט מתוקן.`);
+    await fail(arm, session.trigger_key, session.id, session.review_reason);
     return true;
   }
   // final safety check – no customer phone may leave
   const problems = verifyNoCustomerPhone(session.clean_text, allow);
   if (problems.length) {
     await update(session, { needs_review: true, review_reason: `נשאר מספר טלפון בטקסט: ${problems.join(', ')}` });
-    await reply(arm, chat, `⛔ ההפצה עצורה: נמצא מספר טלפון בטקסט (${problems.join(', ')}).\nשלח *עריכה* עם טקסט בלי המספר.`);
+    await fail(arm, session.trigger_key, session.id, `נשאר מספר טלפון בטקסט: ${problems.join(', ')}`);
     return true;
   }
 
   const groups = await selectedGroups(session.selected_list_ids, session.source_group_id);
   if (!groups.length) {
-    await reply(arm, chat, '⚠️ ברשימות שנבחרו אין קבוצות.');
+    await fail(arm, session.trigger_key, session.id, '⚠️ ברשימות שנבחרו אין קבוצות.');
     return true;
   }
   const { data: la } = await db.from('list_arms').select('arm_id').in('list_id', session.selected_list_ids);
@@ -547,7 +547,7 @@ async function distribute(arm, chat, session, allow, opts = {}) {
     .select()
     .single();
   if (error) {
-    await reply(arm, chat, `❌ שגיאה ביצירת ההפצה: ${error.message}`);
+    await fail(arm, session.trigger_key, session.id, `שגיאה ביצירת ההפצה: ${error.message}`);
     return true;
   }
   await db.from('campaign_arms').insert(armIds.map((arm_id) => ({ campaign_id: campaign.id, arm_id })));
@@ -613,7 +613,7 @@ async function handle(arm, m) {
   }
   const jid = m.key?.remoteJid || '';
   if (jid.endsWith('@g.us')) return handleGroup(arm, m);
-  if (jid.endsWith('@s.whatsapp.net') || jid.endsWith('@lid')) return handleDM(arm, m);
+  // private chats are not used (no menu, no commands)
   return false;
 }
 
