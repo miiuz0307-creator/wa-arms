@@ -6,6 +6,7 @@ import { sb } from '@/lib/supabase';
 import { useRealtime } from '@/lib/hooks';
 import { CAMPAIGN_STATUS, firstLine, fmtTime } from '@/lib/format';
 import { Badge, Card, Empty, Input, PageHeader, Progress, Select, Spinner } from '@/components/ui';
+import { fmtDuration, loadSpeedHistory, quickStats, speedAt, SettingsSnap } from '@/lib/speed';
 
 export default function HistoryPage() {
   const [rows, setRows] = useState<any[] | null>(null);
@@ -13,6 +14,10 @@ export default function HistoryPage() {
   const [status, setStatus] = useState('');
   const [from, setFrom] = useState('');
   const [q, setQ] = useState('');
+  const [hist, setHist] = useState<SettingsSnap[]>([]);
+  useEffect(() => {
+    loadSpeedHistory().then(setHist);
+  }, []);
 
   const load = useCallback(async () => {
     let query = sb().from('campaigns').select('*, campaign_arms(count)').order('created_at', { ascending: false }).limit(200);
@@ -86,6 +91,16 @@ export default function HistoryPage() {
                         )}
                         <span>זרועות: {c.campaign_arms?.[0]?.count ?? 0}</span>
                         <span>יעדים: {c.total}</span>
+                        <span>מהירות שהוגדרה: {speedAt(hist, c.created_at)}</span>
+                        {(() => {
+                          const qs = quickStats(c);
+                          return (
+                            <>
+                              <span>משך: {fmtDuration(qs.sec)}</span>
+                              <span>בפועל: {qs.perMin != null ? `${qs.perMin.toFixed(1)} בדקה` : '—'}</span>
+                            </>
+                          );
+                        })()}
                       </div>
                     </div>
                   </div>

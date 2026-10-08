@@ -2,7 +2,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowRight, Pause, Play, XCircle, RotateCcw, ShieldAlert } from 'lucide-react';
+import { ArrowRight, Pause, Play, XCircle, RotateCcw, ShieldAlert, Gauge } from 'lucide-react';
+import { explain, fmtDuration, fullStats, loadSpeedHistory, speedAt, SettingsSnap } from '@/lib/speed';
 import { sb, logAct } from '@/lib/supabase';
 import { useRealtime } from '@/lib/hooks';
 import { useAuth } from '@/lib/auth';
@@ -150,6 +151,8 @@ export default function CampaignPage() {
           )}
         </Card>
       </div>
+
+      <SpeedSummary c={c} targets={targets} arms={arms} />
 
       {!active && can('operator') && <NoPermissionReview targets={targets} />}
 
@@ -299,5 +302,95 @@ function NoPermissionReview({ targets }: { targets: any[] }) {
         </Button>
       </div>
     </Card>
+  );
+}
+
+function SpeedSummary({ c, targets, arms }: { c: any; targets: any[]; arms: Record<string, string> }) {
+  const [hist, setHist] = useState<SettingsSnap[]>([]);
+  useEffect(() => {
+    loadSpeedHistory().then(setHist);
+  }, []);
+  const s = useMemo(() => fullStats(c, targets), [c, targets]);
+  const why = useMemo(() => explain(c, s, targets), [c, s, targets]);
+  const perArm = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const t of targets) if (t.status === 'sent' && t.arm_id) m[t.arm_id] = (m[t.arm_id] || 0) + 1;
+    return Object.entries(m);
+  }, [targets]);
+  const maxBar = Math.max(1, ...s.perMinute.map((p) => p.n));
+
+  return (
+    <Card className="mt-4 p-5">
+      <div className="mb-4 flex items-center gap-2 font-semibold">
+        <Gauge className="h-5 w-5 text-indigo-500" />
+        סיכום מהירות
+      </div>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        <Mini label="מהירות שהוגדרה" value={speedAt(hist, c.created_at)} />
+        <Mini label="מהירות בפועל" value={s.perMin != null ? `${s.perMin.toFixed(1)} בדקה` : '—'} />
+        <Mini label="זמן שליחה" value={fmtDuration(s.sendSec)} hint="מההודעה הראשונה עד האחרונה" />
+        <Mini label="המתנה בתור" value={fmtDuration(s.waitSec)} hint="מהבקשה עד תחילת השליחה" />
+        <Mini label="זמן כולל" value={fmtDuration(s.totalSec)} />
+        <Mini label="ניסיונות חוזרים" value={s.retries} />
+      </div>
+
+      {perArm.length > 0 && (
+        <div className="mt-4 text-sm text-slate-600">
+          לפי זרוע: {perArm.map(([id, n]) => `${arms[id] || 'זרוע'} – ${n}`).join(' · ')}
+        </div>
+      )}
+
+      {s.perMinute.length > 1 && (
+        <div className="mt-5">
+          <div className="mb-2 text-xs font-medium text-slate-500">הודעות שיצאו בכל דקה</div>
+          <div className="flex h-24 items-end gap-1" dir="ltr">
+            {s.perMinute.map((p) => (
+              <div key={p.label} className="flex flex-1 flex-col items-center justify-end" title={`דקה ${p.label}: ${p.n}`}>
+                <span className="mb-0.5 text-[10px] tabular-nums text-slate-500">{p.n || ''}</span>
+                <div className="w-full rounded-t bg-indigo-400" style={{ height: `${(p.n / maxBar) * 72}px`, minHeight: p.n ? 2 : 0 }} />
+              </div>
+            ))}
+          </div>
+          <div className="mt-1 flex justify-between text-[10px] text-slate-400" dir="ltr">
+            <span>דקה 1</span>
+            <span>דקה {s.perMinute.length}</span>
+          </div>
+        </div>
+      )}
+
+      {s.reasons.length > 0 && (
+        <div className="mt-5">
+          <div className="mb-2 text-xs font-medium text-slate-500">למה קבוצות לא קיבלו את ההודעה</div>
+          <ul className="space-y-1 text-sm">
+            {s.reasons.map(([r, n]) => (
+              <li key={r} className="flex justify-between gap-3 rounded-lg bg-slate-50 px-3 py-1.5">
+                <span>{r}</span>
+                <b className="tabular-nums">{n}</b>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {why.length > 0 && (
+        <div className="mt-5 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">
+          <div className="mb-1 font-semibold">מה קרה בהפצה הזו</div>
+          <ul className="list-disc space-y-1 pr-5">
+            {why.map((w) => (
+              <li key={w}>{w}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function Mini({ label, value, hint }: { label: string; value: any; hint?: string }) {
+  return (
+    <div className="rounded-xl bg-slate-50 p-3" title={hint}>
+      <div className="text-[11px] text-slate-500">{label}</div>
+      <div className="mt-0.5 font-semibold tabular-nums">{value}</div>
+    </div>
   );
 }
