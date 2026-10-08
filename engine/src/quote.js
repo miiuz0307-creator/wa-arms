@@ -152,7 +152,10 @@ async function handleGroup(arm, m) {
 
   const text = extractText(msg);
   const trigger = getTriggers().find((t) => containsKeyword(text, t.keyword));
-  if (!trigger) return false;
+  if (!trigger) {
+    log.info({ arm: arm.name, text: text.slice(0, 40), triggers: getTriggers().map((t) => t.keyword) }, 'quote: no trigger word');
+    return false;
+  }
 
   const groupJid = m.key.remoteJid;
   const fromMe = !!m.key.fromMe;
@@ -162,7 +165,10 @@ async function handleGroup(arm, m) {
     const k = m.key || {};
     const senderIds = [k.participant, m.participant, k.participantPn, k.participantAlt, k.senderPn].filter(Boolean).map(normJid);
     for (const other of getArms().values()) {
-      if (other !== arm && other.ownJids().some((j) => senderIds.includes(j))) return true;
+      if (other !== arm && other.ownJids().some((j) => senderIds.includes(j))) {
+        log.info({ arm: arm.name, other: other.name }, 'quote: sent by another arm, it will handle');
+        return true;
+      }
     }
   }
 
@@ -170,6 +176,7 @@ async function handleGroup(arm, m) {
   const { error: dupErr } = await db.from('processed_messages').insert({ source_group_id: groupJid, message_id: `q:${m.key.id}` });
   if (dupErr) {
     if (dupErr.code !== '23505') log.error({ err: dupErr.message }, 'quote dedupe insert failed');
+    else log.info({ arm: arm.name }, 'quote: already handled by another arm');
     return true;
   }
 

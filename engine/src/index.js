@@ -135,8 +135,30 @@ function every(ms, fn, name) {
   run();
 }
 
+const INSTANCE = require('crypto').randomUUID();
+
+// Deploys briefly run two containers. Two engines on the same WhatsApp session corrupt its
+// encryption keys, so a new engine waits until the previous one has let go.
+async function acquireLock() {
+  for (let i = 0; ; i++) {
+    const { data, error } = await db.rpc('engine_lock_acquire', { p_holder: INSTANCE });
+    if (!error && data === true) return;
+    if (i % 5 === 0) log.info('waiting for the previous engine to stop');
+    await sleep(3000);
+  }
+}
+
 async function main() {
   log.info('arms engine starting');
+  await acquireLock();
+  log.info('engine lock acquired');
+  every(5_000, async () => {
+    const { data } = await db.rpc('engine_lock_acquire', { p_holder: INSTANCE });
+    if (data === false) {
+      log.error('another engine took over – exiting');
+      await shutdown('lock-lost');
+    }
+  }, 'lock');
   // Arms that were "online" before a restart are reconnecting now
   await db.from('arms').update({ status: 'connecting' }).eq('status', 'online');
   await refreshSettings();
@@ -168,6 +190,11 @@ async function shutdown(signal) {
     Promise.all([...arms.values()].map((a) => a.stop())),
     sleep(8000),
   ]);
+  if (signal !== 'lock-lost') {
+    try {
+      await db.rpc('engine_lock_release', { p_holder: INSTANCE });
+    } catch {}
+  }
   process.exit(0);
 }
 

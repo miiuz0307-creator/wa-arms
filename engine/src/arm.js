@@ -35,6 +35,31 @@ class Arm {
     this.sentIds = new Set(); // ids of messages the bot itself sent (never treat as commands)
   }
 
+  // diagnostics: count undecryptable messages, log anything that looks like a help request
+  trace(m, type) {
+    const jid = m.key?.remoteJid || '';
+    if (!m.message && m.messageStubType) {
+      this.undecrypted = (this.undecrypted || 0) + 1;
+      if (!this.undecryptedTimer) {
+        this.undecryptedTimer = setTimeout(() => {
+          log.warn({ arm: this.name, count: this.undecrypted }, 'messages that could not be decrypted (last minute)');
+          this.undecrypted = 0;
+          this.undecryptedTimer = null;
+        }, 60_000);
+      }
+      return;
+    }
+    const msg = m.message?.ephemeralMessage?.message || m.message || {};
+    const text = msg.conversation || msg.extendedTextMessage?.text || '';
+    const quoted = !!msg.extendedTextMessage?.contextInfo?.quotedMessage;
+    if (/עזרה|הפצה|לפרסם/.test(text) || quoted) {
+      log.info(
+        { arm: this.name, type, group: jid.endsWith('@g.us'), fromMe: !!m.key?.fromMe, quoted, text: text.slice(0, 40), sender: m.key?.participant },
+        'incoming candidate',
+      );
+    }
+  }
+
   rememberSent(id) {
     if (!id) return;
     this.sentIds.add(id);
@@ -100,6 +125,7 @@ class Arm {
     sock.ev.on('messages.upsert', ({ messages, type }) => {
       if (type !== 'notify' && type !== 'append') return;
       for (const m of messages) {
+        this.trace(m, type);
         // learn our own LID from our own group messages
         if (m.key?.fromMe && m.key?.participant?.endsWith('@lid')) this.learnedLid = m.key.participant.replace(/:\d+(?=@)/, '');
         this.onMessage(this, m, type).catch((e) =>

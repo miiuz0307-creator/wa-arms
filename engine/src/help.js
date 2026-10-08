@@ -87,8 +87,11 @@ async function resolveRequester(arm, m) {
 }
 
 async function onMessage(arm, m, type = 'notify') {
-  // 1. quote + tag + trigger, and private-chat commands for it
-  if (await quote.handle(arm, m)) return;
+  // 1. quote + trigger, and private-chat commands for it
+  if (await quote.handle(arm, m)) {
+    log.info({ arm: arm.name, id: m.key?.id }, 'handled by quote flow');
+    return;
+  }
   // 2. automatic listening to source groups (unchanged)
   if (type !== 'notify') return;
   if (m.key?.fromMe) return;
