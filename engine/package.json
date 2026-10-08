@@ -1,0 +1,19 @@
+{
+  "name": "wa-arms-engine",
+  "version": "1.0.0",
+  "private": true,
+  "description": "מנוע הזרועות: חיבורי WhatsApp, האזנה ושליחה",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "@whiskeysockets/baileys": "^6.7.16",
+    "pino": "^9.4.0"
+  }
+}
