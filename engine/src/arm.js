@@ -5,6 +5,36 @@ const { useDbAuthState } = require('./authState');
 const { jidUser, formatPhone } = require('./util');
 
 const makeWASocket = baileys.default || baileys.makeWASocket;
+
+// Who-has-which-devices cache. Baileys' default forgets it after 5 minutes, so every
+// distribution re-asked WhatsApp about hundreds of members per group (slow, and it stalls sends).
+function longCache(ttlMs = 12 * 60 * 60 * 1000) {
+  const m = new Map();
+  const live = (k) => {
+    const e = m.get(k);
+    if (!e) return undefined;
+    if (e.exp < Date.now()) {
+      m.delete(k);
+      return undefined;
+    }
+    return e.v;
+  };
+  return {
+    get: (k) => live(k),
+    set: (k, v) => (m.set(k, { v, exp: Date.now() + ttlMs }), true),
+    mget: (ks) => Object.fromEntries(ks.map((k) => [k, live(k)]).filter(([, v]) => v !== undefined)),
+    mset: (list) => (list.forEach(({ key, val }) => m.set(key, { v: val, exp: Date.now() + ttlMs })), true),
+    del: (k) => (Array.isArray(k) ? k.forEach((x) => m.delete(x)) : m.delete(k), true),
+    take: (k) => {
+      const v = live(k);
+      m.delete(k);
+      return v;
+    },
+    has: (k) => live(k) !== undefined,
+    keys: () => [...m.keys()],
+    flushAll: () => m.clear(),
+  };
+}
 const { DisconnectReason, Browsers, fetchLatestBaileysVersion, makeCacheableSignalKeyStore } = baileys;
 
 let cachedVersion = null;
@@ -145,11 +175,21 @@ class Arm {
       generateHighQualityLinkPreview: false,
       // answer group-metadata lookups from memory instead of asking WhatsApp every time
       cachedGroupMetadata: async (jid) => this.groupMeta?.get(jid),
+      userDevicesCache: (this.devCache = this.devCache || longCache()),
     });
     this.sock = sock;
     await this.update({ status: 'connecting' });
 
     sock.ev.on('creds.update', saveCreds);
+
+    // WhatsApp can accept a message on the socket and reject it afterwards – log those
+    sock.ev.on('messages.update', (updates) => {
+      for (const u of updates || []) {
+        if (u.update?.status === 0 && this.sentIds?.has?.(u.key?.id)) {
+          log.warn({ arm: this.name, id: u.key?.id, jid: u.key?.remoteJid, err: u.update?.messageStubParameters }, 'WhatsApp rejected a sent message');
+        }
+      }
+    });
 
 
     // diagnostics: raw message nodes reaching the socket vs. events emitted
@@ -316,8 +356,17 @@ class Arm {
 
   async send(jid, text) {
     if (!this.sock || !this.online) throw new Error('הזרוע לא מחוברת');
-    const sent = await this.sock.sendMessage(jid, { text });
+    const t0 = Date.now();
+    let timer;
+    const sent = await Promise.race([
+      this.sock.sendMessage(jid, { text }),
+      new Promise((_, rej) => {
+        timer = setTimeout(() => rej(new Error('Timed Out (שליחה לא הסתיימה תוך 45 שניות)')), 45_000);
+      }),
+    ]).finally(() => clearTimeout(timer));
     this.rememberSent(sent?.key?.id);
+    const ms = Date.now() - t0;
+    if (ms > 8000) log.warn({ arm: this.name, jid, ms }, 'slow send');
     return sent;
   }
 
