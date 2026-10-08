@@ -111,6 +111,14 @@ async function useDbAuthState(armId, secret) {
             if (type === 'app-state-sync-key' && v) {
               v = proto.Message.AppStateSyncKeyData.fromObject(v);
             }
+            // sender keys saved by newer Baileys are raw JSON bytes; 6.7.16 expects the parsed structure
+            if (type === 'sender-key' && v && (Buffer.isBuffer(v) || v instanceof Uint8Array)) {
+              try {
+                v = JSON.parse(Buffer.from(v).toString('utf8'));
+              } catch {
+                v = null;
+              }
+            }
             out[id] = v;
           }
           return out;
