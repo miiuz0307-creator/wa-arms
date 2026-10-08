@@ -151,7 +151,7 @@ class Arm {
       try {
         if (sock.ev.isBuffering?.()) sock.ev.flush();
       } catch {}
-    }, 1000);
+    }, 100);
 
     // diagnostics: raw message nodes reaching the socket vs. events emitted
     this.raw = 0;
