@@ -3,7 +3,7 @@
 // → the bot opens a private chat with the operator: preview without the customer's phone,
 //   numbered list of distribution lists, edit, "הפץ", live status.
 const { db, log } = require('./config');
-const { extractText, containsKeyword, jidUser } = require('./util');
+const { extractText, jidUser } = require('./util');
 const { sanitize, verifyNoCustomerPhone, normalize, formatPhone } = require('./phones');
 
 const SESSION_TTL_MS = 30 * 60 * 1000;
@@ -146,15 +146,127 @@ async function renderMenu(session, note) {
 
 // ---------- group trigger ----------
 
+// the message must be the trigger word alone ("עזרה"), nothing else besides tags, punctuation or emoji
+function bareWords(text) {
+  return String(text || '')
+    .replace(/@\S+/g, ' ')
+    .replace(/[\p{P}\p{S}\u200e\u200f\u202a-\u202e\ufe0f]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+const CANCEL_WORDS = new Set(['ביטול', 'בטל', 'נ', 'נמכר', 'נמכרה']);
+
+function sentByOtherArm(arm, m) {
+  if (m.key?.fromMe) return null;
+  const k = m.key || {};
+  const senderIds = [k.participant, m.participant, k.participantPn, k.participantAlt, k.senderPn].filter(Boolean).map(normJid);
+  for (const other of getArms().values()) {
+    if (other !== arm && other.ownJids().some((j) => senderIds.includes(j))) return other;
+  }
+  return null;
+}
+
+function keyOf(m, op) {
+  const fromMe = !!m.key.fromMe;
+  const pn = fromMe ? null : op?.wa_jid || [m.key.participantPn, m.key.participantAlt].find((j) => j?.endsWith('@s.whatsapp.net')) || null;
+  return {
+    remoteJid: m.key.remoteJid,
+    id: m.key.id,
+    fromMe,
+    ...(m.key.participant ? { participant: m.key.participant } : {}),
+    ...(pn ? { participantPn: pn } : {}),
+  };
+}
+
+// Reply to the ride or to the "עזרה" message with ביטול / נ / נמכר → stop that distribution
+async function handleCancel(arm, m, ctx) {
+  const quotedId = ctx.stanzaId;
+  if (!quotedId) return false;
+  const groupJid = m.key.remoteJid;
+
+  // find an active distribution started from that message (quoted ride or the "עזרה" reply)
+  const idq = `"${String(quotedId).replace(/"/g, '')}"`;
+  const { data: sessions } = await db
+    .from('quote_sessions')
+    .select('id,campaign_id,trigger_key,status')
+    .eq('source_group_id', groupJid)
+    .or(`source_message_id.eq.${idq},trigger_key->>id.eq.${idq}`)
+    .order('created_at', { ascending: false })
+    .limit(5);
+  const { data: helps } = await db
+    .from('campaigns')
+    .select('id,status,trigger_key')
+    .eq('kind', 'help')
+    .eq('source_group_id', groupJid)
+    .eq('source_message_id', quotedId)
+    .limit(5);
+  const campaignIds = [...(sessions || []).map((s) => s.campaign_id), ...(helps || []).map((c) => c.id)].filter(Boolean);
+  if (!campaignIds.length) return false; // not a reply to a distribution – let other handlers see it
+
+  if (sentByOtherArm(arm, m)) return true;
+  const { error: dupErr } = await db.from('processed_messages').insert({ source_group_id: groupJid, message_id: `x:${m.key.id}` });
+  if (dupErr) return true; // another arm handles it
+
+  let op = null;
+  if (!m.key.fromMe) {
+    op = (await resolveOperator(arm, m)).op;
+    if (!op || op.status !== 'approved') {
+      await activity('quote_cancel_denied', op?.id || null, { name: m.pushName, group: groupJid });
+      return true;
+    }
+  }
+
+  const { data: stopped } = await db
+    .from('campaigns')
+    .update({ status: 'cancelled', finished_at: new Date().toISOString() })
+    .in('id', campaignIds)
+    .in('status', ['queued', 'running', 'pending_phone'])
+    .select('id,sent,total');
+  const cancelKey = keyOf(m, op);
+  if (!stopped?.length) {
+    log.info({ arm: arm.name }, 'cancel: distribution already finished');
+    await arm.react(cancelKey, '🤷');
+    return true;
+  }
+  const ids = stopped.map((c) => c.id);
+  await db
+    .from('campaign_targets')
+    .update({ status: 'skipped', error: 'ההפצה בוטלה' })
+    .in('campaign_id', ids)
+    .eq('status', 'pending');
+  await db.from('campaigns').update({ reacted: true }).in('id', ids).eq('kind', 'help');
+  await db
+    .from('quote_sessions')
+    .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+    .in('campaign_id', ids);
+
+  const triggerKeys = [
+    ...(sessions || []).filter((s) => ids.includes(s.campaign_id)).map((s) => s.trigger_key),
+    ...(helps || []).filter((c) => ids.includes(c.id)).map((c) => c.trigger_key),
+  ].filter(Boolean);
+  for (const k of triggerKeys) await arm.react(k, '🛑');
+  await arm.react(cancelKey, '👍');
+  await activity('quote_cancelled', ids[0], {
+    by: op?.name || m.pushName || 'אני',
+    word: bareWords(extractText(unwrap(m.message))),
+    sent_before_stop: stopped.reduce((a, c) => a + (c.sent || 0), 0),
+  });
+  log.info({ arm: arm.name, campaigns: ids }, 'distribution cancelled from WhatsApp');
+  return true;
+}
+
 async function handleGroup(arm, m) {
   const msg = unwrap(m.message);
   const ctx = contextOf(msg);
   if (!ctx?.quotedMessage) return false;
 
   const text = extractText(msg);
-  const trigger = getTriggers().find((t) => containsKeyword(text, t.keyword));
+  const words = bareWords(text);
+  if (CANCEL_WORDS.has(words)) return handleCancel(arm, m, ctx);
+
+  const trigger = getTriggers().find((t) => words === bareWords(t.keyword));
   if (!trigger) {
-    log.info({ arm: arm.name, text: text.slice(0, 40), triggers: getTriggers().map((t) => t.keyword) }, 'quote: no trigger word');
+    log.info({ arm: arm.name, text: text.slice(0, 40) }, 'quote: not exactly a trigger word');
     return false;
   }
 
@@ -162,15 +274,10 @@ async function handleGroup(arm, m) {
   const fromMe = !!m.key.fromMe;
 
   // No tagging needed. If the sender is one of our own arms, that arm handles it (as "fromMe").
-  if (!fromMe) {
-    const k = m.key || {};
-    const senderIds = [k.participant, m.participant, k.participantPn, k.participantAlt, k.senderPn].filter(Boolean).map(normJid);
-    for (const other of getArms().values()) {
-      if (other !== arm && other.ownJids().some((j) => senderIds.includes(j))) {
-        log.info({ arm: arm.name, other: other.name }, 'quote: sent by another arm, it will handle');
-        return true;
-      }
-    }
+  const other = sentByOtherArm(arm, m);
+  if (other) {
+    log.info({ arm: arm.name, other: other.name }, 'quote: sent by another arm, it will handle');
+    return true;
   }
 
   // Several arms see the same message – only the first one handles it.

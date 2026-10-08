@@ -77,6 +77,8 @@ export const ACTION_LABEL: Record<string, string> = {
   quote_operator_pending: 'מספר לא מאושר ביקש הפצה מציטוט',
   operator_updated: 'עדכן מפעיל מורשה',
   quote_blocked: 'הפצה מציטוט לא יצאה (❌)',
+  quote_cancelled: 'הפצה בוטלה מוואטסאפ (🛑)',
+  quote_cancel_denied: 'ניסיון ביטול ממספר לא מורשה',
 };
 
 export const KIND_LABEL: Record<string, string> = {
