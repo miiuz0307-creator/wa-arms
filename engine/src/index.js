@@ -84,30 +84,64 @@ async function refreshSettings() {
   if (data) settings = data;
 }
 
-// One send at a time per arm, with a random pause between sends
+const MAX_IN_FLIGHT = 8; // parallel sends per arm in "messages per minute" mode
+
+async function sendOne(arm) {
+  const { data, error } = await db.rpc('claim_target_engine', { p_arm: arm.id });
+  if (error) throw error;
+  const job = data?.[0];
+  if (!job) return false;
+  let ok = true;
+  let errText = null;
+  try {
+    await arm.send(job.wa_group_id, job.final_text);
+  } catch (e) {
+    ok = false;
+    errText = e?.message || 'שגיאת שליחה';
+  }
+  await db.rpc('target_result_engine', { p_id: job.target_id, p_arm: arm.id, p_ok: ok, p_error: errText });
+  if (!ok) log.warn({ arm: arm.name, group: job.wa_group_id, err: errText }, 'send failed');
+  return true;
+}
+
 async function sendTick(arm) {
-  if (arm.busy || !arm.online || Date.now() < arm.nextSendAt) return;
+  if (!arm.online || Date.now() < arm.nextSendAt) return;
+  const rate = Number(settings.rate_per_minute) || 0;
+
+  if (rate > 0) {
+    // "N messages per minute": start a send every 60/N seconds (±15%), several may run at once
+    arm.inFlight = arm.inFlight || 0;
+    if (arm.inFlight >= MAX_IN_FLIGHT || arm.claiming) return;
+    const interval = 60_000 / rate;
+    arm.claiming = true;
+    arm.nextSendAt = Date.now() + interval * (0.85 + Math.random() * 0.3);
+    arm.inFlight += 1;
+    sendOne(arm)
+      .then((had) => {
+        if (!had) arm.nextSendAt = Date.now() + 1000; // nothing to send – check again in a second
+      })
+      .catch((e) => {
+        log.error({ arm: arm.name, err: e.message }, 'send tick failed');
+        arm.nextSendAt = Date.now() + 5000;
+      })
+      .finally(() => {
+        arm.inFlight -= 1;
+      });
+    // the claim itself is quick; release the claim lock right away so the next start is on schedule
+    setTimeout(() => {
+      arm.claiming = false;
+    }, 50);
+    return;
+  }
+
+  // seconds mode: one send at a time with a random pause between sends
+  if (arm.busy) return;
   arm.busy = true;
   try {
-    const { data, error } = await db.rpc('claim_target_engine', { p_arm: arm.id });
-    if (error) throw error;
-    const job = data?.[0];
-    if (!job) return;
-
-    let ok = true;
-    let errText = null;
-    try {
-      await arm.send(job.wa_group_id, job.final_text);
-    } catch (e) {
-      ok = false;
-      errText = e?.message || 'שגיאת שליחה';
-    }
-    await db.rpc('target_result_engine', { p_id: job.target_id, p_arm: arm.id, p_ok: ok, p_error: errText });
-    // the owner decides the speed (0 = no pause between messages)
+    await sendOne(arm);
     const min = Math.max(0, Number(settings.min_delay_sec) || 0) * 1000;
     const max = Math.max(min, (Number(settings.max_delay_sec) || 0) * 1000);
     arm.nextSendAt = Date.now() + randomBetween(min, max);
-    if (!ok) log.warn({ arm: arm.name, group: job.wa_group_id, err: errText }, 'send failed');
   } catch (e) {
     log.error({ arm: arm.name, err: e.message }, 'send tick failed');
     arm.nextSendAt = Date.now() + 5000;

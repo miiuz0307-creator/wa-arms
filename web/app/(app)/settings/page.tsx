@@ -32,12 +32,14 @@ function Settings() {
   if (!s) return <Spinner />;
 
   async function save() {
+    if (s.rate_per_minute != null && (s.rate_per_minute < 1 || s.rate_per_minute > 600)) return toast('קצב בין 1 ל-600 הודעות בדקה', 'error');
     if (s.min_delay_sec < 0) return toast('ההמתנה לא יכולה להיות שלילית', 'error');
     if (s.max_delay_sec < s.min_delay_sec) return toast('ההמתנה המקסימלית קטנה מהמינימלית', 'error');
     setBusy(true);
     const patch = {
       min_delay_sec: s.min_delay_sec,
       max_delay_sec: s.max_delay_sec,
+      rate_per_minute: s.rate_per_minute ? Number(s.rate_per_minute) : null,
       per_arm_group_limit: s.per_arm_group_limit,
       distribution_mode: s.distribution_mode,
       updated_at: new Date().toISOString(),
@@ -59,13 +61,67 @@ function Settings() {
           <Gauge className="h-5 w-5 text-indigo-500" />
           קצב ושליחה
         </div>
+        <div className="mb-5">
+          <div className="mb-2 text-sm font-medium text-slate-700">איך לקבוע את הקצב</div>
+          <div className="inline-flex rounded-xl bg-slate-100 p-1">
+            <button
+              type="button"
+              onClick={() => setS({ ...s, rate_per_minute: s.rate_per_minute || 50 })}
+              className={`rounded-lg px-4 py-2 text-sm font-medium ${s.rate_per_minute ? 'bg-white shadow-sm' : 'text-slate-500'}`}
+            >
+              הודעות בדקה
+            </button>
+            <button
+              type="button"
+              onClick={() => setS({ ...s, rate_per_minute: null })}
+              className={`rounded-lg px-4 py-2 text-sm font-medium ${!s.rate_per_minute ? 'bg-white shadow-sm' : 'text-slate-500'}`}
+            >
+              שניות בין הודעות
+            </button>
+          </div>
+        </div>
+
+        {s.rate_per_minute ? (
+          <div className="mb-5">
+            <Field label="כמה הודעות בדקה (לכל זרוע)" hint="בחר מהכפתורים או הקלד כל מספר. כמה זרועות = הקצב מוכפל">
+              <Input type="number" min={1} max={600} value={s.rate_per_minute} onChange={set('rate_per_minute')} className="max-w-40" />
+            </Field>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {[10, 20, 30, 50, 75, 100].map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => setS({ ...s, rate_per_minute: n })}
+                  className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${
+                    Number(s.rate_per_minute) === n ? 'border-indigo-300 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-600'
+                  }`}
+                >
+                  {n} בדקה
+                </button>
+              ))}
+            </div>
+            <p className="mt-2 text-xs text-slate-500">
+              {Math.round((89 / Number(s.rate_per_minute)) * 10) / 10} דקות להפצה ל-89 קבוצות עם זרוע אחת.
+            </p>
+            {Number(s.rate_per_minute) > 12 && (
+              <p className="mt-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">
+                ⚠️ יותר מ-12 הודעות בדקה ממספר אחד מעלה מאוד את הסיכון ש-WhatsApp יחסום אותו. ההחלטה שלך.
+              </p>
+            )}
+          </div>
+        ) : null}
+
         <div className="grid gap-5 md:grid-cols-2">
-          <Field label="המתנה מינימלית בין הודעות (שניות)" hint="לכל זרוע בנפרד. 0 = בלי המתנה">
-            <Input type="number" min={0} value={s.min_delay_sec} onChange={set('min_delay_sec')} />
-          </Field>
-          <Field label="המתנה מקסימלית בין הודעות (שניות)" hint="המערכת בוחרת זמן אקראי בטווח – נראה טבעי יותר">
-            <Input type="number" min={0} value={s.max_delay_sec} onChange={set('max_delay_sec')} />
-          </Field>
+          {!s.rate_per_minute && (
+            <>
+              <Field label="המתנה מינימלית בין הודעות (שניות)" hint="לכל זרוע בנפרד. 0 = בלי המתנה">
+                <Input type="number" min={0} value={s.min_delay_sec} onChange={set('min_delay_sec')} />
+              </Field>
+              <Field label="המתנה מקסימלית בין הודעות (שניות)" hint="המערכת בוחרת זמן אקראי בטווח – נראה טבעי יותר">
+                <Input type="number" min={0} value={s.max_delay_sec} onChange={set('max_delay_sec')} />
+              </Field>
+            </>
+          )}
           <Field label="חלוקת העבודה בין הזרועות">
             <Select value={s.distribution_mode} onChange={set('distribution_mode')}>
               <option value="round_robin">חלוקה שווה, עם תקרת קבוצות לזרוע</option>
@@ -78,7 +134,7 @@ function Settings() {
             </Field>
           )}
         </div>
-        {s.min_delay_sec < 5 && (
+        {!s.rate_per_minute && s.min_delay_sec < 5 && (
           <p className="mt-4 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">
             ⚠️ פחות מ-5 שניות בין הודעות מעלה מאוד את הסיכון ש-WhatsApp יחסום את המספר. ההחלטה שלך.
           </p>
