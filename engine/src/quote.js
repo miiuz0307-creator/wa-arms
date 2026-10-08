@@ -586,7 +586,8 @@ async function handle(arm, m) {
   // ignore old messages replayed after a reconnect
   const ts = Number(m.messageTimestamp?.low ?? m.messageTimestamp ?? 0);
   if (ts && Date.now() / 1000 - ts > 10 * 60) {
-    if ((m.key?.remoteJid || '').endsWith('@g.us')) log.info({ arm: arm.name, ageMin: Math.round((Date.now() / 1000 - ts) / 60) }, 'quote: message too old, ignored');
+    const mm = unwrap(m.message);
+    if (contextOf(mm)?.quotedMessage) log.info({ arm: arm.name, ageMin: Math.round((Date.now() / 1000 - ts) / 60) }, 'quote: message too old, ignored');
     return false;
   }
   const jid = m.key?.remoteJid || '';
