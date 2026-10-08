@@ -295,9 +295,26 @@ function EditArm({ arm, onClose }: { arm: any; onClose: () => void }) {
         <Field label="שם">
           <Input value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
-        <Field label="מקסימום הודעות ביום לזרוע" hint="הגנה מפני חסימה. כשמגיעים לתקרה, הזרוע עוצרת עד מחר והשאר ממשיכות.">
+        <Field label="מקסימום הודעות ביום לזרוע" hint="כשמגיעים לתקרה, הזרוע עוצרת עד מחר והשאר ממשיכות. אפשר לבחור כל מספר.">
           <Input type="number" min={1} value={limit} onChange={(e) => setLimit(Number(e.target.value))} />
         </Field>
+        <div className="flex flex-wrap gap-2">
+          {[300, 500, 750, 1000].map((n) => (
+            <button
+              key={n}
+              type="button"
+              onClick={() => setLimit(n)}
+              className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${limit === n ? 'border-indigo-300 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-600'}`}
+            >
+              {n}
+            </button>
+          ))}
+        </div>
+        {limit > 500 && (
+          <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">
+            מעל 500 הודעות ביום ממספר אחד הסיכון לחסימה עולה. מומלץ לחלק בין כמה זרועות, ולהשאיר המתנה של לפחות 8 שניות בין הודעות.
+          </p>
+        )}
       </div>
     </Modal>
   );

@@ -6,6 +6,7 @@ const quote = require('./quote');
 const { randomBetween, sleep } = require('./util');
 
 const arms = new Map(); // arm id -> Arm
+quote.setArmsSource(() => arms);
 let settings = { min_delay_sec: 8, max_delay_sec: 20 };
 let shuttingDown = false;
 

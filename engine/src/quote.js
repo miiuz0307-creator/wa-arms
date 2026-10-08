@@ -13,6 +13,10 @@ let getTriggers = () => [];
 function setTriggerSource(fn) {
   getTriggers = fn;
 }
+let getArms = () => new Map();
+function setArmsSource(fn) {
+  getArms = fn;
+}
 
 function unwrap(message) {
   if (!message) return null;
@@ -150,13 +154,25 @@ async function handleGroup(arm, m) {
   const trigger = getTriggers().find((t) => containsKeyword(text, t.keyword));
   if (!trigger) return false;
 
-  const mine = arm.ownJids();
-  const mentioned = (ctx.mentionedJid || []).map(normJid);
-  const tagged = mentioned.some((j) => mine.includes(j));
-  const fromMe = !!m.key.fromMe;
-  if (!tagged && !fromMe) return false; // not addressed to this arm
-
   const groupJid = m.key.remoteJid;
+  const fromMe = !!m.key.fromMe;
+
+  // No tagging needed. If the sender is one of our own arms, that arm handles it (as "fromMe").
+  if (!fromMe) {
+    const k = m.key || {};
+    const senderIds = [k.participant, m.participant, k.participantPn, k.participantAlt, k.senderPn].filter(Boolean).map(normJid);
+    for (const other of getArms().values()) {
+      if (other !== arm && other.ownJids().some((j) => senderIds.includes(j))) return true;
+    }
+  }
+
+  // Several arms see the same message – only the first one handles it.
+  const { error: dupErr } = await db.from('processed_messages').insert({ source_group_id: groupJid, message_id: `q:${m.key.id}` });
+  if (dupErr) {
+    if (dupErr.code !== '23505') log.error({ err: dupErr.message }, 'quote dedupe insert failed');
+    return true;
+  }
+
   let chat;
   let alt = null;
   let op = null;
@@ -175,14 +191,9 @@ async function handleGroup(arm, m) {
     chat = r.chat;
     alt = r.alt;
     if (!op || op.status !== 'approved') {
-      if (op && op.status === 'blocked') return true;
-      await reply(
-        arm,
-        chat,
-        '👋 קיבלתי את הבקשה, אבל המספר שלך עדיין לא מאושר להפצה דרך הבוט.\nמנהל המערכת צריך לאשר אותך במסך "הפצה אוטומטית" ← "מפעילים מורשים".',
-      );
-      await activity('quote_operator_pending', op?.id, { name: m.pushName, group: groupJid });
-      return true;
+      // anyone in the group may write "עזרה" – stay silent, just list them for approval
+      if (op && op.status === 'pending') await activity('quote_operator_pending', op.id, { name: m.pushName, group: groupJid });
+      return false; // let the regular source-group flow decide
     }
     opName = op.name || m.pushName || 'מפעיל';
     opPhone = op.phone ? normalize(op.phone) : null;
@@ -523,4 +534,4 @@ async function handle(arm, m) {
   return false;
 }
 
-module.exports = { handle, notifyFinished, setTriggerSource, renderMenu };
+module.exports = { handle, notifyFinished, setTriggerSource, setArmsSource, renderMenu };
