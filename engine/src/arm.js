@@ -64,6 +64,12 @@ class Arm {
     const jid = m.key?.remoteJid || '';
     if (!m.message && m.messageStubType) {
       this.undecrypted = (this.undecrypted || 0) + 1;
+      if (this.undecrypted <= 2) {
+        log.info(
+          { arm: this.name, group: jid.endsWith('@g.us'), stub: m.messageStubType, params: m.messageStubParameters, sender: m.key?.participant },
+          'undecryptable message sample',
+        );
+      }
       if (!this.undecryptedTimer) {
         this.undecryptedTimer = setTimeout(() => {
           log.warn({ arm: this.name, count: this.undecrypted }, 'messages that could not be decrypted (last minute)');
@@ -290,6 +296,19 @@ class Arm {
     if (rows.length) q = q.lt('updated_at', now);
     await q;
     log.info({ arm: this.name, groups: rows.length }, 'groups synced');
+  }
+
+  /** React to a message with an emoji ('' removes the reaction). */
+  async react(key, emoji) {
+    if (!this.sock || !this.online || !key?.remoteJid || !key?.id) return false;
+    try {
+      const sent = await this.sock.sendMessage(key.remoteJid, { react: { text: emoji, key } });
+      this.rememberSent(sent?.key?.id);
+      return true;
+    } catch (e) {
+      log.warn({ arm: this.name, err: e.message }, 'reaction failed');
+      return false;
+    }
   }
 
   async send(jid, text) {

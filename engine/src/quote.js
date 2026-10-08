@@ -203,6 +203,10 @@ async function handleGroup(arm, m) {
   }
   if (!chat) return true;
 
+  // ⏳ on the "עזרה" message: request received
+  const triggerKey = { remoteJid: groupJid, id: m.key.id, fromMe, ...(m.key.participant ? { participant: m.key.participant } : {}) };
+  await arm.react(triggerKey, '⏳');
+
   const original = extractText(unwrap(ctx.quotedMessage));
   if (!original) {
     await reply(arm, chat, '⚠️ לא מצאתי טקסט בהודעה שציטטת. אפשר להפיץ רק הודעות טקסט (או תמונה עם כיתוב).');
@@ -246,6 +250,7 @@ async function handleGroup(arm, m) {
     if (prev?.length) {
       const t = new Date(prev[0].created_at).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jerusalem' });
       await reply(arm, chat, `ℹ️ הנסיעה הזו כבר הופצה ב-${t}. לא שלחתי אותה שוב.`);
+      await arm.react(triggerKey, '✅');
       return true;
     }
   }
@@ -271,6 +276,7 @@ async function handleGroup(arm, m) {
       source_group_id: groupJid,
       source_group_name: groupRow?.[0]?.name || null,
       source_message_id: quotedId,
+      trigger_key: triggerKey,
       original_text: original,
       clean_text: clean,
       removed_phones: s.removed.length,
@@ -366,6 +372,7 @@ async function handleDM(arm, m) {
 
   if (/^(ביטול|בטל)$/.test(cmd)) {
     await update(session, { status: 'cancelled' });
+    if (session.trigger_key) await arm.react(session.trigger_key, '');
     await reply(arm, chat, '❎ ההפצה בוטלה. לא נשלח כלום.');
     return true;
   }
@@ -574,6 +581,7 @@ async function notifyFinished(armsMap) {
       for (const f of failed) lines.push(`• ${f.group_name || f.wa_group_id} – ${f.error || 'שגיאה'}`);
       if (c.failed > failed.length) lines.push(`ועוד ${c.failed - failed.length}…`);
     }
+    if (s.trigger_key) await arm.react(s.trigger_key, c.sent > 0 ? '✅' : '❌');
     if (await reply(arm, s.chat_jid, lines.join('\n'))) {
       await db.from('quote_sessions').update({ status: 'done', updated_at: new Date().toISOString() }).eq('id', s.id);
     }

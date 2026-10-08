@@ -152,10 +152,14 @@ async function onMessage(arm, m) {
       trigger_id: trigger.id,
       list_id: trigger.list_id,
       total: targets.length,
+      trigger_key: { remoteJid: groupJid, id: m.key.id, participant: m.key.participant || undefined },
+      trigger_arm_id: arm.id,
     })
     .select()
     .single();
   if (error) throw error;
+
+  await arm.react({ remoteJid: groupJid, id: m.key.id, ...(m.key.participant ? { participant: m.key.participant } : {}) }, '⏳');
 
   if (armIds.length) {
     await db.from('campaign_arms').insert(armIds.map((arm_id) => ({ campaign_id: campaign.id, arm_id })));
@@ -215,4 +219,22 @@ async function prepareHelpCampaigns() {
   }
 }
 
-module.exports = { refreshConfig, onMessage, prepareHelpCampaigns };
+// ✅ / ❌ on the original "עזרה" message once a help distribution has finished
+async function reactFinished(armsMap) {
+  const { data } = await db
+    .from('campaigns')
+    .select('id,status,sent,trigger_key,trigger_arm_id')
+    .eq('kind', 'help')
+    .eq('reacted', false)
+    .not('trigger_key', 'is', null)
+    .in('status', ['completed', 'cancelled', 'failed'])
+    .limit(20);
+  for (const c of data || []) {
+    const arm = armsMap.get(c.trigger_arm_id);
+    if (!arm?.online) continue;
+    const emoji = c.status === 'cancelled' ? '' : c.sent > 0 ? '✅' : '❌';
+    if (await arm.react(c.trigger_key, emoji)) await db.from('campaigns').update({ reacted: true }).eq('id', c.id);
+  }
+}
+
+module.exports = { refreshConfig, onMessage, prepareHelpCampaigns, reactFinished };

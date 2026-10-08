@@ -181,6 +181,7 @@ async function main() {
   }, 'finalize');
   every(30_000, heartbeat, 'heartbeat');
   every(5_000, () => quote.notifyFinished(arms), 'quote-notify');
+  every(5_000, () => help.reactFinished(arms), 'help-react');
   every(1_000, async () => {
     await Promise.all([...arms.values()].map(sendTick));
   }, 'send');
