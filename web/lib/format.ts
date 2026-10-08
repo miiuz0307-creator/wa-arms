@@ -71,4 +71,15 @@ export const ACTION_LABEL: Record<string, string> = {
   help_no_list: 'זיהה טריגר בלי רשימת יעד',
   phone_resolved: 'השלים מספר לבקשת עזרה',
   user_updated: 'עדכן הרשאות משתמש',
+  quote_received: 'קיבל בקשת הפצה מציטוט',
+  quote_distributed: 'התחיל הפצה מציטוט',
+  quote_manual_approved: 'אישר ידנית טקסט שנחשד כמכיל מספר',
+  quote_operator_pending: 'מספר לא מאושר ביקש הפצה מציטוט',
+  operator_updated: 'עדכן מפעיל מורשה',
+};
+
+export const KIND_LABEL: Record<string, string> = {
+  manual: 'ידני',
+  help: 'עזרה (אוטומטי)',
+  quote: 'ציטוט מקבוצה',
 };

@@ -5,7 +5,7 @@ import { Smartphone, UsersRound, Send, Radio, AlertTriangle, Activity, ChevronLe
 import { sb } from '@/lib/supabase';
 import { useRealtime } from '@/lib/hooks';
 import { useAuth } from '@/lib/auth';
-import { ACTION_LABEL, ARM_STATUS, CAMPAIGN_STATUS, firstLine, fmtTime, timeAgo } from '@/lib/format';
+import { ACTION_LABEL, KIND_LABEL, ARM_STATUS, CAMPAIGN_STATUS, firstLine, fmtTime, timeAgo } from '@/lib/format';
 import { Badge, Card, PageHeader, Progress, Spinner, Stat, Button } from '@/components/ui';
 
 export default function Dashboard() {
@@ -133,7 +133,7 @@ export default function Dashboard() {
                     <Progress sent={c.sent} failed={c.failed} total={c.total} />
                     <div className="mt-1.5 flex justify-between text-xs text-slate-500">
                       <span>
-                        {c.sent + c.failed}/{c.total} · {c.kind === 'help' ? 'עזרה' : 'ידני'}
+                        {c.sent + c.failed}/{c.total} · {KIND_LABEL[c.kind] || c.kind}
                       </span>
                       <span>{fmtTime(c.created_at)}</span>
                     </div>

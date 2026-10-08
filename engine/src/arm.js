@@ -32,6 +32,25 @@ class Arm {
     this.reconnectTimer = null;
     this.nextSendAt = 0;
     this.busy = false;
+    this.sentIds = new Set(); // ids of messages the bot itself sent (never treat as commands)
+  }
+
+  rememberSent(id) {
+    if (!id) return;
+    this.sentIds.add(id);
+    if (this.sentIds.size > 2000) this.sentIds.delete(this.sentIds.values().next().value);
+  }
+
+  isOwnSent(id) {
+    return this.sentIds.has(id);
+  }
+
+  /** The arm's own WhatsApp identities (phone JID and LID), without device suffix. */
+  ownJids() {
+    const norm = (j) => (j ? String(j).replace(/:\d+(?=@)/, '') : null);
+    return [this.sock?.user?.id, this.sock?.user?.lid, this.creds?.me?.id, this.creds?.me?.lid, this.learnedLid]
+      .map(norm)
+      .filter(Boolean);
   }
 
   async update(fields) {
@@ -79,9 +98,11 @@ class Arm {
     });
 
     sock.ev.on('messages.upsert', ({ messages, type }) => {
-      if (type !== 'notify') return;
+      if (type !== 'notify' && type !== 'append') return;
       for (const m of messages) {
-        this.onMessage(this, m).catch((e) =>
+        // learn our own LID from our own group messages
+        if (m.key?.fromMe && m.key?.participant?.endsWith('@lid')) this.learnedLid = m.key.participant.replace(/:\d+(?=@)/, '');
+        this.onMessage(this, m, type).catch((e) =>
           log.error({ arm: this.name, err: e.message }, 'message handler failed'),
         );
       }
@@ -180,7 +201,9 @@ class Arm {
 
   async send(jid, text) {
     if (!this.sock || !this.online) throw new Error('הזרוע לא מחוברת');
-    await this.sock.sendMessage(jid, { text });
+    const sent = await this.sock.sendMessage(jid, { text });
+    this.rememberSent(sent?.key?.id);
+    return sent;
   }
 
   // stop the socket but keep the session (can reconnect without QR)

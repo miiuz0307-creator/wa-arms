@@ -7,6 +7,8 @@ import { sb, logAct } from '@/lib/supabase';
 import { useRealtime } from '@/lib/hooks';
 import { useAuth } from '@/lib/auth';
 import { CAMPAIGN_STATUS, TARGET_STATUS, fmtTime } from '@/lib/format';
+
+const TITLE: Record<string, string> = { manual: 'הפצה ידנית', help: 'הפצת עזרה', quote: 'הפצה מציטוט' };
 import { Badge, Button, Card, Progress, Spinner, cx, toast } from '@/components/ui';
 
 export default function CampaignPage() {
@@ -76,7 +78,7 @@ export default function CampaignPage() {
       <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold">{c.kind === 'help' ? 'הפצת עזרה' : 'הפצה ידנית'}</h1>
+            <h1 className="text-2xl font-bold">{TITLE[c.kind] || 'הפצה'}</h1>
             <Badge tone={CAMPAIGN_STATUS[c.status]?.tone} dot>
               {CAMPAIGN_STATUS[c.status]?.label}
             </Badge>
@@ -126,7 +128,7 @@ export default function CampaignPage() {
           </div>
           <Progress sent={sent} failed={failed} total={c.total} />
           <dl className="mt-5 grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
-            {c.kind === 'help' && (
+            {c.kind !== 'manual' && (
               <>
                 <Info label="מבקש" value={c.requester_name} />
                 <Info label="מספר" value={<span dir="ltr">{c.requester_phone || '—'}</span>} />
@@ -138,7 +140,7 @@ export default function CampaignPage() {
           </dl>
         </Card>
         <Card className="bg-[#efeae2] p-5">
-          <div className="mb-2 text-xs font-medium text-slate-500">ההודעה שנשלחה</div>
+          <div className="mb-2 text-xs font-medium text-slate-500">{c.kind === 'quote' ? 'ההודעה שנשלחה (בלי מספר הלקוח)' : 'ההודעה שנשלחה'}</div>
           <div className="wa-bubble mr-auto max-w-full p-3 text-sm shadow-sm">{c.final_text || c.message_text}</div>
           {c.final_text && c.final_text !== c.message_text && (
             <details className="mt-3 text-xs text-slate-600">

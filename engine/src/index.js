@@ -2,6 +2,7 @@
 const { db, log } = require('./config');
 const { Arm } = require('./arm');
 const help = require('./help');
+const quote = require('./quote');
 const { randomBetween, sleep } = require('./util');
 
 const arms = new Map(); // arm id -> Arm
@@ -152,6 +153,7 @@ async function main() {
     if (error) throw error;
   }, 'finalize');
   every(30_000, heartbeat, 'heartbeat');
+  every(5_000, () => quote.notifyFinished(arms), 'quote-notify');
   every(1_000, async () => {
     await Promise.all([...arms.values()].map(sendTick));
   }, 'send');

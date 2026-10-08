@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { History as HistoryIcon, Search, LifeBuoy, Send } from 'lucide-react';
+import { History as HistoryIcon, Search, LifeBuoy, Send, Quote } from 'lucide-react';
 import { sb } from '@/lib/supabase';
 import { useRealtime } from '@/lib/hooks';
 import { CAMPAIGN_STATUS, firstLine, fmtTime } from '@/lib/format';
@@ -42,6 +42,7 @@ export default function HistoryPage() {
           <option value="">כל הסוגים</option>
           <option value="manual">ידני</option>
           <option value="help">עזרה (אוטומטי)</option>
+          <option value="quote">ציטוט מקבוצה</option>
         </Select>
         <Select value={status} onChange={(e) => setStatus(e.target.value)}>
           <option value="">כל הסטטוסים</option>
@@ -67,8 +68,8 @@ export default function HistoryPage() {
               <li key={c.id}>
                 <Link href={`/history/${c.id}`} className="flex flex-col gap-3 px-5 py-4 hover:bg-slate-50 md:flex-row md:items-center">
                   <div className="flex min-w-0 flex-1 items-start gap-3">
-                    <div className={`mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl ${c.kind === 'help' ? 'bg-pink-50 text-pink-600' : 'bg-indigo-50 text-indigo-600'}`}>
-                      {c.kind === 'help' ? <LifeBuoy className="h-4 w-4" /> : <Send className="h-4 w-4" />}
+                    <div className={`mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl ${c.kind === 'help' ? 'bg-pink-50 text-pink-600' : c.kind === 'quote' ? 'bg-amber-50 text-amber-600' : 'bg-indigo-50 text-indigo-600'}`}>
+                      {c.kind === 'help' ? <LifeBuoy className="h-4 w-4" /> : c.kind === 'quote' ? <Quote className="h-4 w-4" /> : <Send className="h-4 w-4" />}
                     </div>
                     <div className="min-w-0">
                       <div className="truncate font-medium">
@@ -76,7 +77,7 @@ export default function HistoryPage() {
                         {firstLine(c.message_text)}
                       </div>
                       <div className="mt-0.5 flex flex-wrap gap-x-3 text-xs text-slate-500">
-                        {c.kind === 'help' && (
+                        {c.kind !== 'manual' && (
                           <>
                             <span>מבקש: {c.requester_name || '—'}</span>
                             <span dir="ltr">{c.requester_phone || 'אין מספר'}</span>

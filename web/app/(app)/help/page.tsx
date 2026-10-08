@@ -1,9 +1,10 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Plus, Trash2, Radar, Zap, FileText, Save } from 'lucide-react';
+import { Plus, Trash2, Radar, Zap, FileText, Save, UserCheck, Quote } from 'lucide-react';
 import { sb, logAct } from '@/lib/supabase';
 import { RequireRole } from '@/components/Shell';
-import { Button, Card, Field, Input, Select, Spinner, Textarea, Toggle, PageHeader, toast, cx } from '@/components/ui';
+import { Badge, Button, Card, Field, Input, Select, Spinner, Textarea, Toggle, PageHeader, toast, cx } from '@/components/ui';
+import { useRealtime } from '@/lib/hooks';
 
 export default function HelpPage() {
   return (
@@ -19,7 +20,7 @@ function Help() {
   const [d, setD] = useState<any>(null);
 
   const load = useCallback(async () => {
-    const [s, src, trg, tpl, lists, arms, groups] = await Promise.all([
+    const [s, src, trg, tpl, lists, arms, groups, ops] = await Promise.all([
       sb().from('app_settings').select('*').eq('id', 1).single(),
       sb().from('source_groups').select('*').order('created_at'),
       sb().from('triggers').select('*').order('created_at'),
@@ -27,6 +28,7 @@ function Help() {
       sb().from('distribution_lists').select('id,name').order('name'),
       sb().from('arms').select('id,name').order('created_at'),
       sb().from('groups').select('wa_group_id,name,arm_id').limit(5000),
+      sb().from('wa_operators').select('*').order('created_at', { ascending: false }),
     ]);
     setD({
       settings: s.data,
@@ -36,11 +38,13 @@ function Help() {
       lists: lists.data || [],
       arms: arms.data || [],
       groups: groups.data || [],
+      operators: ops.data || [],
     });
   }, []);
   useEffect(() => {
     load();
   }, [load]);
+  useRealtime(['wa_operators'], load);
 
   if (!d) return <Spinner />;
 
@@ -65,6 +69,8 @@ function Help() {
       </Card>
 
       <div className="space-y-4">
+        <QuoteHowTo />
+        <Operators d={d} reload={load} />
         <Sources d={d} reload={load} />
         <Triggers d={d} reload={load} />
         <Templates d={d} reload={load} />
@@ -324,5 +330,112 @@ function TemplateEditor({ t, reload }: any) {
         <div className="wa-bubble mr-auto max-w-[90%] p-3 text-sm shadow-sm">{preview}</div>
       </div>
     </div>
+  );
+}
+
+function QuoteHowTo() {
+  return (
+    <Card className="border-amber-200 bg-amber-50/40 p-5">
+      <div className="mb-2 flex items-center gap-2 font-semibold">
+        <Quote className="h-5 w-5 text-amber-600" />
+        הפצה מציטוט – ישירות מוואטסאפ
+      </div>
+      <ol className="list-inside list-decimal space-y-1 text-sm text-slate-700">
+        <li>בקבוצה, השב (Reply) להודעת הנסיעה, תייג את הבוט וכתוב <b>עזרה</b>.</li>
+        <li>הבוט שולח לך בפרטי את הנסיעה בלי מספר הלקוח, ותפריט ממוספר של רשימות ההפצה.</li>
+        <li>בוחרים במספרים (למשל <b>1 3</b>), <b>הכל</b> או <b>נקה</b>. אפשר לשלוח <b>עריכה</b> עם טקסט חדש.</li>
+        <li>כותבים <b>הפץ</b>. בכל רגע אפשר לכתוב <b>סטטוס</b>, ובסוף מגיע סיכום.</li>
+      </ol>
+      <p className="mt-2 text-xs text-slate-500">
+        אם הבקשה נשלחת מהמספר של אחת הזרועות, אין צורך בתיוג והתפריט מגיע ל"הודעה לעצמי". מספרים אחרים צריכים אישור כאן למטה. מילות הטריגר והתבנית
+        הן אותן מילים ותבניות שמוגדרות בהמשך העמוד.
+      </p>
+    </Card>
+  );
+}
+
+const OP_STATUS: Record<string, { label: string; tone: any }> = {
+  pending: { label: 'ממתין לאישור', tone: 'amber' },
+  approved: { label: 'מאושר', tone: 'green' },
+  blocked: { label: 'חסום', tone: 'red' },
+};
+
+function Operators({ d, reload }: any) {
+  const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+
+  const norm = (p: string) => {
+    let x = p.replace(/\D/g, '');
+    if (x.startsWith('972')) x = '0' + x.slice(3);
+    return /^0\d{9}$/.test(x) ? `${x.slice(0, 3)}-${x.slice(3)}` : '';
+  };
+
+  async function add() {
+    const p = norm(phone);
+    if (!p) return toast('מספר טלפון לא תקין', 'error');
+    const { error } = await sb().from('wa_operators').insert({ name: name || null, phone: p, status: 'approved' });
+    if (error) return toast(error.message, 'error');
+    await logAct('operator_updated', 'operator', p, { added: name || p });
+    setName('');
+    setPhone('');
+    reload();
+  }
+  async function setStatus(o: any, status: string) {
+    const { error } = await sb().from('wa_operators').update({ status }).eq('id', o.id);
+    if (error) return toast(error.message, 'error');
+    await logAct('operator_updated', 'operator', o.id, { name: o.name, status });
+    reload();
+  }
+  async function del(o: any) {
+    if (!confirm('להסיר את המפעיל?')) return;
+    await sb().from('wa_operators').delete().eq('id', o.id);
+    reload();
+  }
+
+  return (
+    <Section icon={<UserCheck className="h-5 w-5" />} title="מפעילים מורשים בוואטסאפ" text="מי רשאי להפיץ בעזרת ציטוט + תיוג + עזרה">
+      <div className="mb-4 flex flex-wrap gap-2">
+        <Input placeholder="שם" value={name} onChange={(e) => setName(e.target.value)} className="w-40" />
+        <Input placeholder="050-0000000" dir="ltr" value={phone} onChange={(e) => setPhone(e.target.value)} className="w-44" />
+        <Button onClick={add} disabled={!phone.trim()}>
+          <Plus className="h-4 w-4" />
+          הוסף מאושר
+        </Button>
+      </div>
+      {d.operators.length === 0 ? (
+        <div className="py-4 text-center text-sm text-slate-500">
+          עדיין אין מפעילים. מי שינסה להפיץ מציטוט יופיע כאן לאישור, או שאפשר להוסיף מספר מראש.
+        </div>
+      ) : (
+        <ul className="divide-y divide-slate-100 rounded-xl border border-slate-100">
+          {d.operators.map((o: any) => (
+            <li key={o.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
+              <div className="min-w-40 flex-1">
+                <div className="font-medium">{o.name || 'ללא שם'}</div>
+                <div className="text-xs text-slate-500" dir="ltr" style={{ textAlign: 'right' }}>
+                  {o.phone || o.wa_lid || o.wa_jid || '—'}
+                </div>
+              </div>
+              <Badge tone={OP_STATUS[o.status]?.tone} dot>
+                {OP_STATUS[o.status]?.label}
+              </Badge>
+              {o.status !== 'approved' && (
+                <Button size="sm" variant="success" onClick={() => setStatus(o, 'approved')}>
+                  אשר
+                </Button>
+              )}
+              {o.status !== 'blocked' && (
+                <Button size="sm" variant="ghost" onClick={() => setStatus(o, 'blocked')}>
+                  חסום
+                </Button>
+              )}
+              <Button size="sm" variant="ghost" className="text-rose-600" onClick={() => del(o)}>
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Section>
   );
 }

@@ -2,12 +2,14 @@
 // identify the requester's phone, and create a distribution campaign.
 const { db, log } = require('./config');
 const { extractText, containsKeyword, formatPhone, jidUser, buildHelpText } = require('./util');
+const quote = require('./quote');
 
 const state = {
   settings: { auto_distribution_enabled: false },
   sources: new Map(), // wa_group_id -> row
   triggers: [],
 };
+quote.setTriggerSource(() => state.triggers);
 
 async function refreshConfig() {
   const [s, src, trg] = await Promise.all([
@@ -84,7 +86,11 @@ async function resolveRequester(arm, m) {
   return { phone, name, jid: lid || pnJid || candidates[0] || null };
 }
 
-async function onMessage(arm, m) {
+async function onMessage(arm, m, type = 'notify') {
+  // 1. quote + tag + trigger, and private-chat commands for it
+  if (await quote.handle(arm, m)) return;
+  // 2. automatic listening to source groups (unchanged)
+  if (type !== 'notify') return;
   if (m.key?.fromMe) return;
   const groupJid = m.key?.remoteJid;
   if (!groupJid || !groupJid.endsWith('@g.us')) return;
