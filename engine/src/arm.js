@@ -133,6 +133,9 @@ class Arm {
       printQRInTerminal: false,
       markOnlineOnConnect: false,
       syncFullHistory: false,
+      // We never need old chat history. Waiting for it (and the app-state sync after it)
+      // can leave Baileys buffering every new message forever, so skip it entirely.
+      shouldSyncHistoryMessage: () => false,
       generateHighQualityLinkPreview: false,
     });
     this.sock = sock;
@@ -149,6 +152,14 @@ class Arm {
     if (!this.rawTimer) {
       this.rawTimer = setInterval(() => {
         if (this.raw || this.upserts) log.info({ arm: this.name, rawMessages: this.raw, upsertEvents: this.upserts }, 'socket traffic (last minute)');
+        this.stuckMinutes = this.raw > 5 && this.upserts === 0 ? (this.stuckMinutes || 0) + 1 : 0;
+        if (this.stuckMinutes >= 2 && this.sock?.ev?.flush) {
+          log.warn({ arm: this.name }, 'events stuck in buffer – forcing flush');
+          try {
+            this.sock.ev.flush(true);
+          } catch {}
+          this.stuckMinutes = 0;
+        }
         this.raw = 0;
         this.upserts = 0;
       }, 60_000);
