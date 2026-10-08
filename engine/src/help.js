@@ -86,14 +86,16 @@ async function resolveRequester(arm, m) {
   return { phone, name, jid: lid || pnJid || candidates[0] || null };
 }
 
-async function onMessage(arm, m, type = 'notify') {
+async function onMessage(arm, m) {
   // 1. quote + trigger, and private-chat commands for it
   if (await quote.handle(arm, m)) {
     log.info({ arm: arm.name, id: m.key?.id }, 'handled by quote flow');
     return;
   }
-  // 2. automatic listening to source groups (unchanged)
-  if (type !== 'notify') return;
+  // 2. automatic listening to source groups
+  // (Baileys may deliver live messages as "append" after its buffer is released, so filter by age instead)
+  const ts = Number(m.messageTimestamp?.low ?? m.messageTimestamp ?? 0);
+  if (ts && Date.now() / 1000 - ts > 10 * 60) return;
   if (m.key?.fromMe) return;
   const groupJid = m.key?.remoteJid;
   if (!groupJid || !groupJid.endsWith('@g.us')) return;

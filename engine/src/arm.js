@@ -76,7 +76,7 @@ class Arm {
     const msg = m.message?.ephemeralMessage?.message || m.message || {};
     const text = msg.conversation || msg.extendedTextMessage?.text || '';
     const quoted = !!msg.extendedTextMessage?.contextInfo?.quotedMessage;
-    if (/עזרה|הפצה|לפרסם/.test(text) || quoted) {
+    if (quoted && /עזרה|הפצה|לפרסם/.test(text)) {
       log.info(
         { arm: this.name, type, group: jid.endsWith('@g.us'), fromMe: !!m.key?.fromMe, quoted, text: text.slice(0, 40), sender: m.key?.participant },
         'incoming candidate',
@@ -175,7 +175,6 @@ class Arm {
 
     sock.ev.on('messages.upsert', ({ messages, type }) => {
       this.upserts += 1;
-      if (this.upserts <= 3) log.info({ arm: this.name, type, n: messages.length, first: Object.keys(messages[0]?.message || {}).join(',') }, 'upsert event');
       this.stat(type, messages);
       if (type !== 'notify' && type !== 'append') return;
       for (const m of messages) {
