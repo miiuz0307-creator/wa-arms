@@ -87,7 +87,7 @@ async function sendTick(arm) {
   if (arm.busy || !arm.online || Date.now() < arm.nextSendAt) return;
   arm.busy = true;
   try {
-    const { data, error } = await db.rpc('claim_target', { p_arm: arm.id });
+    const { data, error } = await db.rpc('claim_target_engine', { p_arm: arm.id });
     if (error) throw error;
     const job = data?.[0];
     if (!job) return;
@@ -100,7 +100,7 @@ async function sendTick(arm) {
       ok = false;
       errText = e?.message || 'שגיאת שליחה';
     }
-    await db.rpc('target_result', { p_id: job.target_id, p_arm: arm.id, p_ok: ok, p_error: errText });
+    await db.rpc('target_result_engine', { p_id: job.target_id, p_arm: arm.id, p_ok: ok, p_error: errText });
     const min = Math.max(1, settings.min_delay_sec) * 1000;
     const max = Math.max(min, settings.max_delay_sec * 1000);
     arm.nextSendAt = Date.now() + randomBetween(min, max);
@@ -148,7 +148,7 @@ async function main() {
   }, 'config');
   every(3_000, help.prepareHelpCampaigns, 'prepare');
   every(10_000, async () => {
-    const { error } = await db.rpc('finalize_campaigns');
+    const { error } = await db.rpc('finalize_campaigns_engine');
     if (error) throw error;
   }, 'finalize');
   every(30_000, heartbeat, 'heartbeat');

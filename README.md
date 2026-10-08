@@ -17,7 +17,8 @@
 
 **engine**
 - `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY` – מפתח service role (סודי! רק בשרת)
+- `SUPABASE_ANON_KEY` – המפתח הציבורי
+- `ENGINE_KEY` – מפתח סודי של המנוע. בבסיס הנתונים נשמר רק ה-hash שלו (טבלה `engine_keys`), והפונקציה `is_engine()` בודקת אותו
 - `SESSION_SECRET` – מחרוזת אקראית ארוכה להצפנת ה-Sessions. לשמור בצד: בלעדיה ה-Sessions לא ניתנים לפענוח.
 
 **web**
