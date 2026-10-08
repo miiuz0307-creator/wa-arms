@@ -151,15 +151,6 @@ class Arm {
 
     sock.ev.on('creds.update', saveCreds);
 
-    // Baileys 6.7.x bug: once its event buffer is switched on during message processing,
-    // nothing switches it off again, so new messages are never emitted. Release it ourselves.
-    clearInterval(this.flushTimer);
-    this.flushTimer = setInterval(() => {
-      if (this.sock !== sock) return clearInterval(this.flushTimer);
-      try {
-        if (sock.ev.isBuffering?.()) sock.ev.flush();
-      } catch {}
-    }, 100);
 
     // diagnostics: raw message nodes reaching the socket vs. events emitted
     this.raw = 0;
