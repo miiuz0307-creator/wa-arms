@@ -39,7 +39,7 @@ function Settings() {
     sb()
       .from('app_settings')
       .select('*')
-      .eq('id', 1)
+      .limit(1)
       .single()
       .then(({ data }) => {
         setS(data);
@@ -64,10 +64,10 @@ function Settings() {
       distribution_mode: s.distribution_mode,
       updated_at: new Date().toISOString(),
     };
-    const { error } = await sb().from('app_settings').update(patch).eq('id', 1);
+    const { error } = await sb().from('app_settings').update(patch).eq('id', s.id);
     setBusy(false);
     if (error) return toast(error.message, 'error');
-    await logAct('settings_saved', 'settings', '1', patch);
+    await logAct('settings_saved', 'settings', String(s.id), patch);
     toast('ההגדרות נשמרו');
   }
 

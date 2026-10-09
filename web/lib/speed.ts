@@ -7,7 +7,7 @@ export type SettingsSnap = { at: number; rate: number | null; min: number; max: 
 export async function loadSpeedHistory(): Promise<SettingsSnap[]> {
   const [log, cur] = await Promise.all([
     sb().from('activity_log').select('created_at,details').eq('action', 'settings_saved').order('created_at', { ascending: false }).limit(300),
-    sb().from('app_settings').select('rate_per_minute,min_delay_sec,max_delay_sec').eq('id', 1).single(),
+    sb().from('app_settings').select('rate_per_minute,min_delay_sec,max_delay_sec').limit(1).single(),
   ]);
   const snaps = (log.data || [])
     .filter((r: any) => r.details)

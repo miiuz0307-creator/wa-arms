@@ -4,7 +4,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { Plus, QrCode, Power, PlugZap, RefreshCw, Trash2, Pencil, Smartphone, Loader2 } from 'lucide-react';
 import { sb, logAct } from '@/lib/supabase';
 import { useRealtime } from '@/lib/hooks';
-import { useAuth } from '@/lib/auth';
+import { useAuth, myUid } from '@/lib/auth';
 import { ARM_STATUS, timeAgo } from '@/lib/format';
 import { RequireRole } from '@/components/Shell';
 import { Badge, Button, Card, Empty, Field, Input, Modal, PageHeader, Spinner, toast } from '@/components/ui';
@@ -44,7 +44,7 @@ function Arms() {
   useRealtime(['arms', 'arm_qr', 'groups'], load);
 
   async function command(arm: any, command: string, label: string) {
-    const { error } = await sb().from('arm_commands').insert({ arm_id: arm.id, command, created_by: profile?.id });
+    const { error } = await sb().from('arm_commands').insert({ arm_id: arm.id, command, created_by: myUid(profile) });
     if (error) return toast(error.message, 'error');
     toast(label);
   }
@@ -224,7 +224,7 @@ function AddArm({ open, onClose, next }: { open: boolean; onClose: () => void; n
 
   async function save() {
     setBusy(true);
-    const { data, error } = await sb().from('arms').insert({ name: name.trim(), created_by: profile?.id }).select().single();
+    const { data, error } = await sb().from('arms').insert({ name: name.trim(), created_by: myUid(profile) }).select().single();
     setBusy(false);
     if (error) return toast(error.message, 'error');
     await logAct('arm_added', 'arm', data.id, { name: data.name });

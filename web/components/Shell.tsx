@@ -17,13 +17,18 @@ import {
   MoreHorizontal,
   CheckCircle2,
   AlertCircle,
+  Building2,
+  ArrowRightLeft,
+  CalendarClock,
 } from 'lucide-react';
 import { useAuth, ROLE_LABEL, Role } from '@/lib/auth';
+import { actAsStation } from '@/lib/supabase';
 import { cx, Spinner } from './ui';
 
-type Item = { href: string; label: string; icon: any; min: Role };
+type Item = { href: string; label: string; icon: any; min: Role; superOnly?: boolean };
 
 const NAV: Item[] = [
+  { href: '/stations', label: 'תחנות', icon: Building2, min: 'owner', superOnly: true },
   { href: '/', label: 'בית', icon: LayoutDashboard, min: 'viewer' },
   { href: '/send', label: 'שליחת הודעה', icon: Send, min: 'operator' },
   { href: '/history', label: 'היסטוריה', icon: History, min: 'viewer' },
@@ -67,7 +72,7 @@ function Toasts() {
 }
 
 export function Shell({ children }: { children: React.ReactNode }) {
-  const { loading, session, profile, can, signOut } = useAuth();
+  const { loading, session, profile, can, signOut, station, isStation, isSuper } = useAuth();
   const path = usePathname();
   const router = useRouter();
   const [more, setMore] = useState(false);
@@ -97,7 +102,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
     );
   }
 
-  const items = NAV.filter((n) => can(n.min));
+  const items = NAV.filter((n) => can(n.min) && (!n.superOnly || isSuper));
+  const daysLeft = station?.sub_end ? Math.ceil((new Date(station.sub_end + 'T23:59:59').getTime() - Date.now()) / 86400000) : null;
   const active = (href: string) => (href === '/' ? path === '/' : path.startsWith(href));
   const mobileMain = items.filter((i) => MOBILE_MAIN.includes(i.href));
   const mobileMore = items.filter((i) => !MOBILE_MAIN.includes(i.href));
@@ -111,7 +117,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <div className="brand-gradient grid h-10 w-10 place-items-center rounded-xl text-lg font-bold text-white shadow-md">ז</div>
           <div>
             <div className="font-bold leading-tight">זרועות</div>
-            <div className="text-xs text-slate-500">ניהול הפצות WhatsApp</div>
+            <div className="max-w-[10rem] truncate text-xs text-slate-500">
+              {isStation || station?.acting ? station?.name : 'ניהול הפצות WhatsApp'}
+            </div>
           </div>
         </div>
         <nav className="scroll-thin flex-1 space-y-0.5 overflow-y-auto px-3">
@@ -136,7 +144,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
             </div>
             <div className="min-w-0 flex-1">
               <div className="truncate text-sm font-medium">{profile.full_name || profile.email}</div>
-              <div className="text-xs text-slate-500">{ROLE_LABEL[profile.role]}</div>
+              <div className="text-xs text-slate-500">{isStation ? 'מנהל התחנה' : ROLE_LABEL[profile.role]}</div>
             </div>
             <button onClick={signOut} title="התנתקות" className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
               <LogOut className="h-4 w-4" />
@@ -149,7 +157,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       <header className="sticky top-0 z-30 flex items-center justify-between border-b border-slate-200/70 bg-white/85 px-4 py-3 backdrop-blur md:hidden">
         <div className="flex items-center gap-2.5">
           <div className="brand-gradient grid h-8 w-8 place-items-center rounded-lg text-sm font-bold text-white">ז</div>
-          <span className="font-bold">זרועות</span>
+          <span className="font-bold">{isStation || station?.acting ? station?.name : 'זרועות'}</span>
         </div>
         <button onClick={signOut} className="rounded-lg p-2 text-slate-500">
           <LogOut className="h-5 w-5" />
@@ -157,6 +165,23 @@ export function Shell({ children }: { children: React.ReactNode }) {
       </header>
 
       <main className="min-w-0 flex-1 px-4 pb-28 pt-5 md:px-8 md:pb-10 md:pt-8">
+        {station?.acting && (
+          <div className="mx-auto mb-4 flex max-w-6xl flex-wrap items-center justify-between gap-2 rounded-2xl bg-violet-600 px-4 py-3 text-sm text-white shadow-md">
+            <span>
+              אתה מנהל עכשיו את התחנה <b>{station.name}</b> כמנהל ראשי. כל פעולה כאן משפיעה רק עליה.
+            </span>
+            <button onClick={() => actAsStation(null)} className="flex items-center gap-1.5 rounded-lg bg-white/20 px-3 py-1.5 font-medium hover:bg-white/30">
+              <ArrowRightLeft className="h-4 w-4" />
+              חזרה לחשבון שלי
+            </button>
+          </div>
+        )}
+        {isStation && daysLeft !== null && daysLeft <= 7 && (
+          <div className="mx-auto mb-4 flex max-w-6xl items-center gap-2 rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-900 ring-1 ring-amber-200">
+            <CalendarClock className="h-4 w-4 shrink-0" />
+            {daysLeft <= 0 ? 'המנוי מסתיים היום.' : `המנוי מסתיים בעוד ${daysLeft} ימים.`} לחידוש פנה למנהל המערכת.
+          </div>
+        )}
         <div className="mx-auto max-w-6xl">{children}</div>
       </main>
 

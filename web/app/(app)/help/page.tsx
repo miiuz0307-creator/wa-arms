@@ -21,7 +21,7 @@ function Help() {
 
   const load = useCallback(async () => {
     const [s, src, trg, tpl, lists, arms, groups, ops] = await Promise.all([
-      sb().from('app_settings').select('*').eq('id', 1).single(),
+      sb().from('app_settings').select('*').limit(1).single(),
       sb().from('source_groups').select('*').order('created_at'),
       sb().from('triggers').select('*').order('created_at'),
       sb().from('templates').select('*').order('created_at'),
@@ -49,7 +49,7 @@ function Help() {
   if (!d) return <Spinner />;
 
   async function toggleMaster(v: boolean) {
-    const { error } = await sb().from('app_settings').update({ auto_distribution_enabled: v, updated_at: new Date().toISOString() }).eq('id', 1);
+    const { error } = await sb().from('app_settings').update({ auto_distribution_enabled: v, updated_at: new Date().toISOString() }).eq('id', d.settings.id);
     if (error) return toast(error.message, 'error');
     await logAct('help_settings', 'settings', '1', { auto_distribution_enabled: v });
     toast(v ? 'הפצה אוטומטית הופעלה' : 'הפצה אוטומטית כובתה');

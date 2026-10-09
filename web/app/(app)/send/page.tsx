@@ -39,7 +39,7 @@ function Wizard() {
         sb().from('arms').select('*').eq('is_active', true).order('created_at'),
         sb().from('groups').select('arm_id,wa_group_id,name,participants').limit(5000),
         sb().from('distribution_lists').select('id,name').order('name'),
-        sb().from('app_settings').select('*').eq('id', 1).single(),
+        sb().from('app_settings').select('*').limit(1).single(),
       ]);
       setArms(a.data || []);
       setRows(g.data || []);

@@ -9,7 +9,7 @@ import { ACTION_LABEL, KIND_LABEL, ARM_STATUS, CAMPAIGN_STATUS, firstLine, fmtTi
 import { Badge, Card, PageHeader, Progress, Spinner, Stat, Button } from '@/components/ui';
 
 export default function Dashboard() {
-  const { can, profile } = useAuth();
+  const { can, profile, isSuper, station } = useAuth();
   const [d, setD] = useState<any>(null);
 
   const load = useCallback(async () => {
@@ -26,6 +26,14 @@ export default function Dashboard() {
         .gte('sent_at', new Date(Date.now() - 86400000).toISOString()),
       can('admin') ? sb().from('activity_log').select('*').order('created_at', { ascending: false }).limit(8) : Promise.resolve({ data: [] }),
     ]);
+    // owner (own account, not inside a station): stations whose subscription ends this week or already ended
+    let stationAlerts: any[] = [];
+    if (isSuper && !station?.acting) {
+      const { data: st } = await sb().rpc('stations_overview');
+      stationAlerts = (st || [])
+        .map((s: any) => ({ ...s, left: s.sub_end ? Math.ceil((new Date(s.sub_end + 'T23:59:59').getTime() - Date.now()) / 86400000) : null }))
+        .filter((s: any) => s.status === 'active' && s.left !== null && s.left <= 7);
+    }
     // groups with no permission in the last day that are still in a distribution list
     const np = await sb()
       .from('campaign_targets')
@@ -61,8 +69,9 @@ export default function Dashboard() {
       recentFailed: recentFailed.count || 0,
       log: log.data || [],
       noPerm,
+      stationAlerts,
     });
-  }, [can]);
+  }, [can, isSuper, station?.acting]);
 
   useEffect(() => {
     load();
@@ -100,7 +109,7 @@ export default function Dashboard() {
         <Stat label="הפצות פעילות" value={d.active.length} icon={<Radio className="h-5 w-5" />} tone="pink" />
       </div>
 
-      {(problems.length > 0 || d.pendingPhone > 0 || d.recentFailed > 0 || d.noPerm.count > 0) && (
+      {(problems.length > 0 || d.pendingPhone > 0 || d.recentFailed > 0 || d.noPerm.count > 0 || d.stationAlerts.length > 0) && (
         <Card className="mt-4 border-amber-200 bg-amber-50/60 p-4">
           <div className="mb-2 flex items-center gap-2 font-semibold text-amber-900">
             <AlertTriangle className="h-4 w-4" />
@@ -122,6 +131,13 @@ export default function Dashboard() {
                 </Link>
               </li>
             )}
+            {d.stationAlerts.map((s: any) => (
+              <li key={s.id}>
+                <Link href="/stations" className="hover:underline">
+                  מנוי התחנה <b>{s.name}</b> {s.left < 0 ? 'הסתיים – הגישה חסומה' : s.left === 0 ? 'מסתיים היום' : `מסתיים בעוד ${s.left} ימים`}
+                </Link>
+              </li>
+            ))}
             {d.recentFailed > 0 && <li>{d.recentFailed} שליחות נכשלו ב-24 השעות האחרונות</li>}
             {d.noPerm.count > 0 && d.noPerm.campaign && (
               <li>

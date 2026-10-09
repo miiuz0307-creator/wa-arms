@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { RefreshCw, ListPlus, UsersRound } from 'lucide-react';
 import { sb, logAct } from '@/lib/supabase';
 import { useRealtime } from '@/lib/hooks';
-import { useAuth } from '@/lib/auth';
+import { useAuth, myUid } from '@/lib/auth';
 import { ARM_STATUS, timeAgo } from '@/lib/format';
 import { RequireRole } from '@/components/Shell';
 import { GroupPicker } from '@/components/GroupPicker';
@@ -46,7 +46,7 @@ function Groups() {
   const lastSync = armGroups.reduce((m: string | null, r: any) => (!m || r.updated_at > m ? r.updated_at : m), null);
 
   async function refresh() {
-    const { error } = await sb().from('arm_commands').insert({ arm_id: armId, command: 'refresh_groups', created_by: profile?.id });
+    const { error } = await sb().from('arm_commands').insert({ arm_id: armId, command: 'refresh_groups', created_by: myUid(profile) });
     if (error) return toast(error.message, 'error');
     toast('מרענן קבוצות מ-WhatsApp…');
   }
@@ -149,7 +149,7 @@ function AddToList({ open, onClose, armId, groups, onDone }: { open: boolean; on
     setBusy(true);
     let id = listId;
     if (listId === 'new') {
-      const { data, error } = await sb().from('distribution_lists').insert({ name: name.trim(), created_by: profile?.id }).select().single();
+      const { data, error } = await sb().from('distribution_lists').insert({ name: name.trim(), created_by: myUid(profile) }).select().single();
       if (error) {
         setBusy(false);
         return toast(error.message, 'error');

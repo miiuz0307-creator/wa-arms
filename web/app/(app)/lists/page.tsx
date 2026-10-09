@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Plus, ListChecks, Pencil, Trash2, Smartphone, UsersRound } from 'lucide-react';
 import { sb, logAct } from '@/lib/supabase';
-import { useAuth } from '@/lib/auth';
+import { useAuth, myUid } from '@/lib/auth';
 import { RequireRole } from '@/components/Shell';
 import { GroupPicker, mergeGroups } from '@/components/GroupPicker';
 import { Button, Card, Checkbox, Empty, Field, Input, Modal, PageHeader, Spinner, toast } from '@/components/ui';
@@ -137,7 +137,7 @@ function ListEditor({ list, onClose, onSaved }: { list: any; onClose: () => void
       } else {
         const { data, error } = await sb()
           .from('distribution_lists')
-          .insert({ name: name.trim(), description: desc || null, created_by: profile?.id })
+          .insert({ name: name.trim(), description: desc || null, created_by: myUid(profile) })
           .select()
           .single();
         if (error) throw error;

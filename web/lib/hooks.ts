@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef } from 'react';
-import { sb } from './supabase';
+import { sb, needsPolling } from './supabase';
 
 /** Re-run `onChange` whenever any of the given tables change (Supabase Realtime). */
 export function useRealtime(tables: string[], onChange: () => void, filter?: string) {
@@ -17,6 +17,11 @@ export function useRealtime(tables: string[], onChange: () => void, filter?: str
         cb.current();
       }, 400);
     };
+    // station / acting mode: realtime can't see our station headers, so refresh every few seconds instead
+    if (needsPolling()) {
+      const iv = setInterval(() => cb.current(), 4000);
+      return () => clearInterval(iv);
+    }
     const ch = sb().channel('rt-' + key + '-' + Math.random().toString(36).slice(2));
     for (const t of tables) {
       ch.on('postgres_changes' as any, { event: '*', schema: 'public', table: t, ...(filter ? { filter } : {}) }, fire);
