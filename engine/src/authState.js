@@ -59,6 +59,7 @@ async function useDbAuthState(armId, secret) {
     }
   };
 
+  const WRITE_EVERY_MS = 5000;
   const pendingWrites = new Map();
   const pendingDeletes = new Set();
   let timer = null;
@@ -114,7 +115,9 @@ async function useDbAuthState(armId, secret) {
       pendingDeletes.delete(k);
       pendingWrites.set(k, v);
     }
-    if (!timer) timer = setTimeout(flush, 500);
+    // Signal keys change on almost every incoming group message. Collect changes for a few
+    // seconds so each key is written once instead of dozens of times (the database was choking).
+    if (!timer) timer = setTimeout(flush, WRITE_EVERY_MS);
   };
 
   const creds = read('creds') || initAuthCreds();
@@ -154,7 +157,6 @@ async function useDbAuthState(armId, secret) {
     },
     saveCreds: async () => {
       write('creds', creds);
-      await flush();
     },
     flush,
     clear: async () => {
