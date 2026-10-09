@@ -41,7 +41,10 @@ let cachedVersion = null;
 async function waVersion() {
   if (cachedVersion) return cachedVersion;
   try {
-    const { version } = await fetchLatestBaileysVersion();
+    const { version } = await Promise.race([
+      fetchLatestBaileysVersion(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('version lookup timeout')), 5000)),
+    ]);
     cachedVersion = version;
   } catch {
     cachedVersion = undefined;
@@ -180,6 +183,23 @@ class Arm {
       userDevicesCache: (this.devCache = this.devCache || longCache()),
     });
     this.sock = sock;
+    log.info({ arm: this.name }, 'connecting');
+    // A socket that neither opens nor closes would leave the arm stuck on "connecting" forever
+    clearTimeout(this.connectGuard);
+    this.connectGuard = setTimeout(() => {
+      if (this.sock !== sock || this.online) return;
+      log.warn({ arm: this.name }, 'still not connected after 90s – retrying');
+      try {
+        sock.end(new Error('connect stuck'));
+      } catch {}
+      // if the socket doesn't report the close, restart it ourselves
+      setTimeout(() => {
+        if (this.sock !== sock || this.online) return;
+        this.sock = null;
+        this.stopped = true;
+        this.scheduleReconnect();
+      }, 10_000);
+    }, 90_000);
     await this.update({ status: 'connecting' });
 
     sock.ev.on('creds.update', saveCreds);
