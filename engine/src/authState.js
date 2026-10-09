@@ -1,6 +1,9 @@
 // WhatsApp auth state stored in Supabase (table arm_auth), encrypted with AES-256-GCM.
 // Moving to another server needs only the same SESSION_SECRET – no new QR scan.
 const crypto = require('crypto');
+const fs = require('fs');
+const fsp = require('fs/promises');
+const path = require('path');
 const { initAuthCreds, BufferJSON, proto } = require('@whiskeysockets/baileys');
 const { db, log } = require('./config');
 
@@ -30,23 +33,57 @@ function decrypt(key, b64) {
   return Buffer.concat([d.update(buf.subarray(28)), d.final()]).toString('utf8');
 }
 
+// Local disk copy (Railway volume). Reading/writing thousands of keys through the database
+// overloaded it (each incoming group message changes keys), so the disk is the working copy
+// and the database only gets a backup every minute.
+const AUTH_DIR = process.env.AUTH_DIR || '/data/auth';
+const fname = (k) => encodeURIComponent(k);
+
+function localDir(armId) {
+  try {
+    const dir = path.join(AUTH_DIR, armId);
+    fs.mkdirSync(dir, { recursive: true });
+    const probe = path.join(dir, '.probe');
+    fs.writeFileSync(probe, '1');
+    return dir;
+  } catch {
+    return null; // no volume – database only
+  }
+}
+
 async function useDbAuthState(armId, secret) {
   const key = deriveKey(secret);
   const cache = new Map();
+  const dir = localDir(armId);
 
-  // keyset paging (by key) – offset paging re-read all earlier rows and timed out on large sessions
-  let last = null;
-  for (;;) {
-    let q = db.from('arm_auth').select('key,value').eq('arm_id', armId).order('key').limit(500);
-    if (last !== null) q = q.gt('key', last);
-    let res = await q;
-    if (res.error) res = await q; // one retry on a hiccup
-    if (res.error) throw res.error;
-    const data = res.data || [];
-    for (const r of data) cache.set(r.key, r.value);
-    if (data.length < 500) break;
-    last = data[data.length - 1].key;
+  let fromDisk = false;
+  if (dir && fs.existsSync(path.join(dir, fname('creds')))) {
+    for (const f of await fsp.readdir(dir)) {
+      if (f.startsWith('.')) continue;
+      try {
+        cache.set(decodeURIComponent(f), await fsp.readFile(path.join(dir, f), 'utf8'));
+      } catch {}
+    }
+    fromDisk = true;
+  } else {
+    // keyset paging (by key) – offset paging re-read all earlier rows and timed out on large sessions
+    let last = null;
+    for (;;) {
+      let q = db.from('arm_auth').select('key,value').eq('arm_id', armId).order('key').limit(500);
+      if (last !== null) q = q.gt('key', last);
+      let res = await q;
+      if (res.error) res = await q; // one retry on a hiccup
+      if (res.error) throw res.error;
+      const data = res.data || [];
+      for (const r of data) cache.set(r.key, r.value);
+      if (data.length < 500) break;
+      last = data[data.length - 1].key;
+    }
+    if (dir && cache.size) {
+      for (const [k, v] of cache) await fsp.writeFile(path.join(dir, fname(k)), v).catch(() => {});
+    }
   }
+  log.info({ armId, keys: cache.size, source: fromDisk ? 'disk' : 'database' }, 'auth state loaded');
 
   const read = (k) => {
     const v = cache.get(k);
@@ -59,13 +96,36 @@ async function useDbAuthState(armId, secret) {
     }
   };
 
-  const WRITE_EVERY_MS = 5000;
+  // disk: written within a second; database backup: once a minute (or every 5s without a volume)
+  const DB_EVERY_MS = dir ? 60_000 : 5000;
+  const diskWrites = new Map();
+  const diskDeletes = new Set();
+  let diskTimer = null;
+  let diskFlushing = Promise.resolve();
+  const doDiskFlush = async () => {
+    const ws = [...diskWrites];
+    diskWrites.clear();
+    const ds = [...diskDeletes];
+    diskDeletes.clear();
+    for (const [k, v] of ws) await fsp.writeFile(path.join(dir, fname(k)), v).catch((e) => log.error({ armId, err: e.message }, 'auth disk write failed'));
+    for (const k of ds) await fsp.unlink(path.join(dir, fname(k))).catch(() => {});
+  };
+  const diskFlush = () => {
+    if (!dir) return Promise.resolve();
+    if (diskTimer) {
+      clearTimeout(diskTimer);
+      diskTimer = null;
+    }
+    diskFlushing = diskFlushing.then(doDiskFlush, doDiskFlush);
+    return diskFlushing;
+  };
+
   const pendingWrites = new Map();
   const pendingDeletes = new Set();
   let timer = null;
   let flushing = Promise.resolve();
 
-  const doFlush = async () => {
+  const doDbFlush = async () => {
     const ups = [...pendingWrites].map(([k, value]) => ({
       arm_id: armId,
       key: k,
@@ -82,7 +142,7 @@ async function useDbAuthState(armId, secret) {
         log.error({ armId, err: error.message }, 'auth upsert failed – will retry');
         // keep the keys so they are saved on the next flush (unless a newer value is already waiting)
         for (const r of batch) if (!pendingWrites.has(r.key) && !pendingDeletes.has(r.key)) pendingWrites.set(r.key, r.value);
-        if (!timer) timer = setTimeout(flush, 5000);
+        if (!timer) timer = setTimeout(dbFlush, DB_EVERY_MS);
       }
     }
     for (let i = 0; i < dels.length; i += 200) {
@@ -95,13 +155,19 @@ async function useDbAuthState(armId, secret) {
     }
   };
 
-  const flush = () => {
+  const dbFlush = () => {
     if (timer) {
       clearTimeout(timer);
       timer = null;
     }
-    flushing = flushing.then(doFlush, doFlush);
+    flushing = flushing.then(doDbFlush, doDbFlush);
     return flushing;
+  };
+
+  // everything still waiting goes out now (disk first – it is the one we start from)
+  const flush = async () => {
+    await diskFlush();
+    await dbFlush();
   };
 
   const write = (k, val) => {
@@ -109,15 +175,20 @@ async function useDbAuthState(armId, secret) {
       cache.delete(k);
       pendingWrites.delete(k);
       pendingDeletes.add(k);
+      diskWrites.delete(k);
+      diskDeletes.add(k);
     } else {
       const v = encrypt(key, JSON.stringify(val, BufferJSON.replacer));
       cache.set(k, v);
       pendingDeletes.delete(k);
       pendingWrites.set(k, v);
+      diskDeletes.delete(k);
+      diskWrites.set(k, v);
     }
-    // Signal keys change on almost every incoming group message. Collect changes for a few
-    // seconds so each key is written once instead of dozens of times (the database was choking).
-    if (!timer) timer = setTimeout(flush, WRITE_EVERY_MS);
+    if (dir && !diskTimer) diskTimer = setTimeout(diskFlush, 1000);
+    // Signal keys change on almost every incoming group message: collect them so each key
+    // is written once per interval instead of dozens of times.
+    if (!timer) timer = setTimeout(dbFlush, DB_EVERY_MS);
   };
 
   const creds = read('creds') || initAuthCreds();
@@ -165,7 +236,13 @@ async function useDbAuthState(armId, secret) {
       cache.clear();
       pendingWrites.clear();
       pendingDeletes.clear();
+      if (diskTimer) clearTimeout(diskTimer);
+      diskTimer = null;
+      diskWrites.clear();
+      diskDeletes.clear();
+      await diskFlushing.catch(() => {});
       await flushing.catch(() => {});
+      if (dir) await fsp.rm(dir, { recursive: true, force: true }).catch(() => {});
       await db.from('arm_auth').delete().eq('arm_id', armId);
     },
   };
