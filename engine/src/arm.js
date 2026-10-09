@@ -153,6 +153,7 @@ class Arm {
     } catch (e) {
       log.error({ arm: this.name, err: e.message }, 'arm start failed');
       await this.update({ status: 'error', last_error: e.message });
+      this.stopped = true; // so the scheduled retry really starts again
       this.scheduleReconnect();
     }
   }
