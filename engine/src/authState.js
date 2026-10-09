@@ -34,15 +34,18 @@ async function useDbAuthState(armId, secret) {
   const key = deriveKey(secret);
   const cache = new Map();
 
-  for (let from = 0; ; from += 1000) {
-    const { data, error } = await db
-      .from('arm_auth')
-      .select('key,value')
-      .eq('arm_id', armId)
-      .range(from, from + 999);
-    if (error) throw error;
+  // keyset paging (by key) – offset paging re-read all earlier rows and timed out on large sessions
+  let last = null;
+  for (;;) {
+    let q = db.from('arm_auth').select('key,value').eq('arm_id', armId).order('key').limit(500);
+    if (last !== null) q = q.gt('key', last);
+    let res = await q;
+    if (res.error) res = await q; // one retry on a hiccup
+    if (res.error) throw res.error;
+    const data = res.data || [];
     for (const r of data) cache.set(r.key, r.value);
-    if (data.length < 1000) break;
+    if (data.length < 500) break;
+    last = data[data.length - 1].key;
   }
 
   const read = (k) => {
