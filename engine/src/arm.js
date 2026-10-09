@@ -240,12 +240,23 @@ class Arm {
       if (this.sock !== sock) return clearInterval(this.watchdog);
       if (!this.online) return;
       const quiet = Date.now() - Math.max(this.lastRawAt || 0, this.onlineAt || 0);
-      if (quiet > 150_000) {
-        log.warn({ arm: this.name, quietSec: Math.round(quiet / 1000) }, 'no incoming messages – reconnecting to unblock');
+      if (quiet > 150_000 && !this.pinging) {
+        // quiet groups are normal – only reconnect if WhatsApp doesn't answer a ping
+        this.pinging = true;
         this.lastRawAt = Date.now();
-        try {
-          sock.end(new Error('incoming stalled'));
-        } catch {}
+        Promise.race([
+          sock.query({ tag: 'iq', attrs: { to: 's.whatsapp.net', type: 'get', xmlns: 'w:p', id: sock.generateMessageTag() }, content: [{ tag: 'ping', attrs: {} }] }),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('ping timeout')), 20_000)),
+        ])
+          .then(() => log.info({ arm: this.name, quietSec: Math.round(quiet / 1000) }, 'quiet but connection alive'))
+          .catch((e) => {
+            if (this.sock !== sock) return;
+            log.warn({ arm: this.name, err: e.message }, 'no answer from WhatsApp – reconnecting');
+            try {
+              sock.end(new Error('incoming stalled'));
+            } catch {}
+          })
+          .finally(() => (this.pinging = false));
       }
     }, 30_000);
     if (!this.rawTimer) {
