@@ -170,26 +170,37 @@ async function useDbAuthState(armId, secret) {
     await dbFlush();
   };
 
+  // With a disk, the database keeps only the login identity (creds + app-state keys): enough to
+  // reconnect without a new QR if the disk is ever lost. The thousands of per-chat encryption keys
+  // stay on the disk only – writing them to the small database is what choked it.
+  const backupKey = (k) => !dir || k === 'creds' || k.startsWith('app-state-sync-key-');
+
   const write = (k, val) => {
     if (val === null || val === undefined) {
       cache.delete(k);
       pendingWrites.delete(k);
-      pendingDeletes.add(k);
+      if (backupKey(k)) pendingDeletes.add(k);
       diskWrites.delete(k);
       diskDeletes.add(k);
     } else {
       const v = encrypt(key, JSON.stringify(val, BufferJSON.replacer));
       cache.set(k, v);
       pendingDeletes.delete(k);
-      pendingWrites.set(k, v);
+      if (backupKey(k)) pendingWrites.set(k, v);
       diskDeletes.delete(k);
       diskWrites.set(k, v);
     }
     if (dir && !diskTimer) diskTimer = setTimeout(diskFlush, 1000);
     // Signal keys change on almost every incoming group message: collect them so each key
     // is written once per interval instead of dozens of times.
-    if (!timer) timer = setTimeout(dbFlush, DB_EVERY_MS);
+    if (!timer && (pendingWrites.size || pendingDeletes.size)) timer = setTimeout(dbFlush, DB_EVERY_MS);
   };
+
+  // make sure the database backup has the identity keys (once per start, a few rows)
+  if (dir) {
+    for (const [k, v] of cache) if (backupKey(k)) pendingWrites.set(k, v);
+    if (pendingWrites.size) timer = setTimeout(dbFlush, 30_000);
+  }
 
   const creds = read('creds') || initAuthCreds();
 
