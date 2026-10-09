@@ -413,13 +413,35 @@ class Arm {
     this.groupMeta = new Map(Object.entries(all));
     const groups = Object.values(all);
     const now = new Date().toISOString();
+
+    // WhatsApp sometimes returns a group without its details (name, members). Ask for those
+    // groups one by one, and otherwise keep the name we already had instead of showing a number.
+    const missing = groups.filter((g) => !g.subject);
+    if (missing.length) {
+      for (const g of missing.slice(0, 80)) {
+        try {
+          const meta = await Promise.race([this.sock.groupMetadata(g.id), new Promise((r) => setTimeout(() => r(null), 8000))]);
+          if (meta?.subject) {
+            Object.assign(g, meta);
+            this.groupMeta.set(g.id, meta);
+          }
+        } catch {}
+      }
+    }
+    const stillMissing = groups.filter((g) => !g.subject).map((g) => g.id);
+    const known = new Map();
+    if (stillMissing.length) {
+      const { data } = await db.from('groups').select('wa_group_id,name,participants').eq('arm_id', this.id).in('wa_group_id', stillMissing);
+      for (const r of data || []) if (r.name && r.name !== r.wa_group_id) known.set(r.wa_group_id, r);
+    }
     const rows = groups.map((g) => ({
       arm_id: this.id,
       wa_group_id: g.id,
-      name: g.subject || g.id,
-      participants: g.participants?.length ?? null,
+      name: g.subject || known.get(g.id)?.name || g.id,
+      participants: g.participants?.length || known.get(g.id)?.participants || null,
       updated_at: now,
     }));
+    if (stillMissing.length) log.info({ arm: this.name, withoutDetails: stillMissing.length, keptName: known.size }, 'groups without details from WhatsApp');
     for (let i = 0; i < rows.length; i += 500) {
       const { error } = await db.from('groups').upsert(rows.slice(i, i + 500), { onConflict: 'arm_id,wa_group_id' });
       if (error) throw error;
