@@ -462,14 +462,29 @@ class Arm {
       updated_at: now,
     }));
     if (stillMissing.length) log.info({ arm: this.name, withoutDetails: stillMissing.length, keptName: known.size }, 'groups without details from WhatsApp');
-    for (let i = 0; i < rows.length; i += 500) {
-      const { error } = await db.from('groups').upsert(rows.slice(i, i + 500), { onConflict: 'arm_id,wa_group_id' });
+    // Only write what changed (a full rewrite every couple of minutes was needless database load)
+    if (!this.savedGroups) {
+      const { data, error } = await db.from('groups').select('wa_group_id,name,participants').eq('arm_id', this.id);
       if (error) throw error;
+      this.savedGroups = new Map((data || []).map((r) => [r.wa_group_id, `${r.name}|${r.participants}`]));
     }
-    // remove groups the arm has left
-    let q = db.from('groups').delete().eq('arm_id', this.id);
-    if (rows.length) q = q.lt('updated_at', now);
-    await q;
+    const changed = rows.filter((r) => this.savedGroups.get(r.wa_group_id) !== `${r.name}|${r.participants}`);
+    for (let i = 0; i < changed.length; i += 500) {
+      const { error } = await db.from('groups').upsert(changed.slice(i, i + 500), { onConflict: 'arm_id,wa_group_id' });
+      if (error) {
+        this.savedGroups = null;
+        throw error;
+      }
+    }
+    for (const r of changed) this.savedGroups.set(r.wa_group_id, `${r.name}|${r.participants}`);
+    // remove groups the arm has left (only when WhatsApp returned a list at all)
+    const current = new Set(rows.map((r) => r.wa_group_id));
+    const gone = rows.length ? [...this.savedGroups.keys()].filter((id) => !current.has(id)) : [];
+    for (let i = 0; i < gone.length; i += 100) {
+      const { error } = await db.from('groups').delete().eq('arm_id', this.id).in('wa_group_id', gone.slice(i, i + 100));
+      if (!error) gone.slice(i, i + 100).forEach((id) => this.savedGroups.delete(id));
+    }
+    if (changed.length || gone.length) log.info({ arm: this.name, changed: changed.length, removed: gone.length }, 'groups changed');
     log.info({ arm: this.name, groups: rows.length }, 'groups synced');
   }
 

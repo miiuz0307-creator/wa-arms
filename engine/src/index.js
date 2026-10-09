@@ -217,8 +217,19 @@ async function sendOne(arm) {
   return true;
 }
 
+// One light "is anything waiting?" check per second for all arms, instead of every idle arm
+// asking the database for a group to send every second.
+let hasWork = true;
+let lastWorkCheck = 0;
+async function checkWork() {
+  if (Date.now() - lastWorkCheck < 1000) return;
+  lastWorkCheck = Date.now();
+  const { data, error } = await db.from('campaigns').select('id').in('status', ['queued', 'running']).limit(1);
+  if (!error) hasWork = !!data?.length;
+}
+
 async function sendTick(arm) {
-  if (!arm.online || Date.now() < arm.nextSendAt) return;
+  if (!hasWork || !arm.online || Date.now() < arm.nextSendAt) return;
   const settings = settingsFor(arm);
   const rate = Number(settings.rate_per_minute) || 0;
   const penalty = arm.penalty || 1;
@@ -334,6 +345,7 @@ async function main() {
   every(5_000, () => quote.notifyFinished(arms), 'quote-notify');
   every(5_000, () => help.reactFinished(arms), 'help-react');
   every(250, async () => {
+    await checkWork();
     await Promise.all([...arms.values()].map(sendTick));
   }, 'send');
 }
