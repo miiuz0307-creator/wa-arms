@@ -419,7 +419,7 @@ class Arm {
 
   scheduleGroupSync() {
     if (this.groupSyncTimer) return;
-    const wait = Math.max(0, 120_000 - (Date.now() - (this.lastGroupSync || 0)));
+    const wait = Math.max(0, 10 * 60_000 - (Date.now() - (this.lastGroupSync || 0)));
     this.groupSyncTimer = setTimeout(() => {
       this.groupSyncTimer = null;
       this.syncGroups().catch((e) => log.warn({ arm: this.name, err: e.message }, 'group sync failed'));
@@ -436,17 +436,24 @@ class Arm {
 
     // WhatsApp sometimes returns a group without its details (name, members). Ask for those
     // groups one by one, and otherwise keep the name we already had instead of showing a number.
-    const missing = groups.filter((g) => !g.subject);
-    if (missing.length) {
-      for (const g of missing.slice(0, 80)) {
-        try {
-          const meta = await Promise.race([this.sock.groupMetadata(g.id), new Promise((r) => setTimeout(() => r(null), 8000))]);
-          if (meta?.subject) {
-            Object.assign(g, meta);
-            this.groupMeta.set(g.id, meta);
-          }
-        } catch {}
-      }
+    // Ask for the details one by one only for groups we have no name for at all, a few at a time and
+    // not more than every half hour per group – asking for many in a row trips WhatsApp's rate limit.
+    const nameKnown = (id) => {
+      const v = this.savedGroups?.get(id);
+      return v && !v.startsWith(id + '|');
+    };
+    this.metaTried = this.metaTried || new Map();
+    const missing = groups.filter((g) => !g.subject && !nameKnown(g.id) && Date.now() - (this.metaTried.get(g.id) || 0) > 30 * 60_000);
+    for (const g of missing.slice(0, 10)) {
+      this.metaTried.set(g.id, Date.now());
+      try {
+        const meta = await Promise.race([this.sock.groupMetadata(g.id), new Promise((r) => setTimeout(() => r(null), 8000))]);
+        if (meta?.subject) {
+          Object.assign(g, meta);
+          this.groupMeta.set(g.id, meta);
+        }
+      } catch {}
+      await new Promise((r) => setTimeout(r, 1500));
     }
     const stillMissing = groups.filter((g) => !g.subject).map((g) => g.id);
     const known = new Map();
