@@ -72,8 +72,14 @@ async function useDbAuthState(armId, secret) {
     const dels = [...pendingDeletes];
     pendingDeletes.clear();
     for (let i = 0; i < ups.length; i += 500) {
-      const { error } = await db.from('arm_auth').upsert(ups.slice(i, i + 500));
-      if (error) log.error({ armId, err: error.message }, 'auth upsert failed');
+      const batch = ups.slice(i, i + 500);
+      const { error } = await db.from('arm_auth').upsert(batch);
+      if (error) {
+        log.error({ armId, err: error.message }, 'auth upsert failed – will retry');
+        // keep the keys so they are saved on the next flush (unless a newer value is already waiting)
+        for (const r of batch) if (!pendingWrites.has(r.key) && !pendingDeletes.has(r.key)) pendingWrites.set(r.key, r.value);
+        if (!timer) timer = setTimeout(flush, 5000);
+      }
     }
     for (let i = 0; i < dels.length; i += 200) {
       const { error } = await db

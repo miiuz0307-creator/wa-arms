@@ -7,27 +7,44 @@ const { randomBetween, sleep } = require('./util');
 
 const arms = new Map(); // arm id -> Arm
 quote.setArmsSource(() => arms);
-let settings = { min_delay_sec: 8, max_delay_sec: 20 };
+// settings per station (station_id -> app_settings row)
+const settingsByStation = new Map();
+const settingsFor = (arm) => settingsByStation.get(arm.stationId) || { min_delay_sec: 8, max_delay_sec: 20 };
 let shuttingDown = false;
 
 // Keep running arms in line with the arms table
 async function reconcileArms() {
-  const { data, error } = await db.from('arms').select('id,name,is_active,status');
+  const [{ data, error }, st] = await Promise.all([
+    db.from('arms').select('id,name,is_active,status,station_id'),
+    db.rpc('engine_station_states'),
+  ]);
   if (error) return log.error({ err: error.message }, 'load arms failed');
+  // stations that are suspended or whose subscription ended: their arms stop
+  const blocked = new Set((st.data || []).filter((s) => !s.allowed).map((s) => s.id));
   const ids = new Set(data.map((a) => a.id));
 
   for (const row of data) {
     let arm = arms.get(row.id);
-    if (arm) arm.name = row.name;
-    if (row.is_active && !arm) {
+    if (arm) {
+      arm.name = row.name;
+      arm.stationId = row.station_id;
+    }
+    const shouldRun = row.is_active && !blocked.has(row.station_id);
+    if (row.is_active && blocked.has(row.station_id) && !arm && row.status !== 'paused') {
+      await db.from('arms').update({ status: 'paused', last_error: 'התחנה מושעית או שהמנוי הסתיים' }).eq('id', row.id);
+    }
+    if (shouldRun && !arm) {
       arm = new Arm(row, help.onMessage);
       arms.set(row.id, arm);
       arm.start();
-    } else if (!row.is_active && arm) {
+    } else if (!shouldRun && arm) {
       arms.delete(row.id);
       await arm.stop();
       await db.from('arm_qr').delete().eq('arm_id', row.id);
-      await db.from('arms').update({ status: 'paused' }).eq('id', row.id);
+      await db.from('arms').update({
+        status: 'paused',
+        ...(row.is_active ? { last_error: 'התחנה מושעית או שהמנוי הסתיים' } : {}),
+      }).eq('id', row.id);
       log.info({ arm: row.name }, 'arm paused');
     }
   }
@@ -80,8 +97,10 @@ async function processCommands() {
 }
 
 async function refreshSettings() {
-  const { data } = await db.from('app_settings').select('*').eq('id', 1).single();
-  if (data) settings = data;
+  const { data, error } = await db.from('app_settings').select('*');
+  if (error || !data) return;
+  settingsByStation.clear();
+  for (const r of data) settingsByStation.set(r.station_id, r);
 }
 
 const MAX_IN_FLIGHT = 12; // parallel sends per arm in "messages per minute" mode
@@ -200,6 +219,7 @@ async function sendOne(arm) {
 
 async function sendTick(arm) {
   if (!arm.online || Date.now() < arm.nextSendAt) return;
+  const settings = settingsFor(arm);
   const rate = Number(settings.rate_per_minute) || 0;
   const penalty = arm.penalty || 1;
 

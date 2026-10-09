@@ -5,31 +5,34 @@ const { extractText, containsKeyword, formatPhone, jidUser, buildHelpText } = re
 const quote = require('./quote');
 const { assignArms } = require('./assign');
 
+// Everything is per station: an arm only sees its own station's settings, sources and triggers.
 const state = {
-  settings: { auto_distribution_enabled: false },
-  sources: new Map(), // wa_group_id -> row
+  settings: new Map(), // station_id -> app_settings row
+  sources: new Map(), // `${station_id}|${wa_group_id}` -> row
   triggers: [],
 };
-quote.setTriggerSource(() => state.triggers);
+const triggersOf = (stationId) => state.triggers.filter((t) => t.station_id === stationId);
+quote.setTriggerSource(triggersOf);
 
 async function refreshConfig() {
   const [s, src, trg] = await Promise.all([
-    db.from('app_settings').select('*').eq('id', 1).single(),
+    db.from('app_settings').select('*'),
     db.from('source_groups').select('*').eq('is_active', true),
     db.from('triggers').select('*').eq('is_active', true),
   ]);
-  if (!s.error) state.settings = s.data;
-  if (!src.error) state.sources = new Map(src.data.map((r) => [r.wa_group_id, r]));
+  if (!s.error) state.settings = new Map(s.data.map((r) => [r.station_id, r]));
+  if (!src.error) state.sources = new Map(src.data.map((r) => [`${r.station_id}|${r.wa_group_id}`, r]));
   if (!trg.error) state.triggers = trg.data.sort((a, b) => b.keyword.length - a.keyword.length);
 }
 
-async function logActivity(action, entity, entityId, details) {
+async function logActivity(stationId, action, entity, entityId, details) {
   await db.from('activity_log').insert({
     actor_name: 'מערכת',
     action,
     entity,
     entity_id: entityId,
     details: details || null,
+    station_id: stationId,
   });
 }
 
@@ -49,11 +52,13 @@ async function resolveRequester(arm, m) {
     } catch {}
   }
 
+  const st = arm.stationId;
   let dispatcher = null;
-  if (lid) dispatcher = (await db.from('dispatchers').select('*').eq('wa_lid', lid).maybeSingle()).data;
-  if (!dispatcher && pnJid) dispatcher = (await db.from('dispatchers').select('*').eq('wa_jid', pnJid).maybeSingle()).data;
+  if (lid) dispatcher = (await db.from('dispatchers').select('*').eq('station_id', st).eq('wa_lid', lid).maybeSingle()).data;
+  if (!dispatcher && pnJid) dispatcher = (await db.from('dispatchers').select('*').eq('station_id', st).eq('wa_jid', pnJid).maybeSingle()).data;
   if (!dispatcher && phoneDigits) {
-    dispatcher = (await db.from('dispatchers').select('*').eq('phone', formatPhone(phoneDigits)).maybeSingle()).data;
+    const { data } = await db.from('dispatchers').select('*').eq('station_id', st).eq('phone', formatPhone(phoneDigits)).limit(1);
+    dispatcher = data?.[0] || null;
   }
 
   let phone = phoneDigits ? formatPhone(phoneDigits) : dispatcher?.phone || null;
@@ -63,6 +68,7 @@ async function resolveRequester(arm, m) {
   try {
     if (!dispatcher) {
       await db.from('dispatchers').insert({
+        station_id: st,
         name,
         phone,
         wa_jid: pnJid || null,
@@ -101,27 +107,28 @@ async function onMessage(arm, m) {
   const groupJid = m.key?.remoteJid;
   if (!groupJid || !groupJid.endsWith('@g.us')) return;
 
-  const source = state.sources.get(groupJid);
+  const st = arm.stationId;
+  const source = state.sources.get(`${st}|${groupJid}`);
   if (!source) return;
   if (source.listen_arm_id && source.listen_arm_id !== arm.id) return;
-  if (!state.settings.auto_distribution_enabled) return;
+  if (!state.settings.get(st)?.auto_distribution_enabled) return;
 
   const text = extractText(m.message);
   if (!text) return;
-  const trigger = state.triggers.find((t) => containsKeyword(text, t.keyword));
+  const trigger = triggersOf(st).find((t) => containsKeyword(text, t.keyword));
   if (!trigger) return;
 
-  // duplicate guard – the first arm to insert wins, everyone else stops here
+  // duplicate guard – the first arm (of this station) to insert wins, everyone else stops here
   const { error: dupErr } = await db
     .from('processed_messages')
-    .insert({ source_group_id: groupJid, message_id: m.key.id });
+    .insert({ station_id: st, source_group_id: groupJid, message_id: m.key.id });
   if (dupErr) {
     if (dupErr.code !== '23505') log.error({ err: dupErr.message }, 'processed_messages insert failed');
     return;
   }
 
   if (!trigger.list_id) {
-    await logActivity('help_no_list', 'trigger', trigger.id, { keyword: trigger.keyword, text });
+    await logActivity(st, 'help_no_list', 'trigger', trigger.id, { keyword: trigger.keyword, text });
     return;
   }
 
@@ -142,7 +149,7 @@ async function onMessage(arm, m) {
   const targets = (lg.data || []).filter((g) => g.wa_group_id !== groupJid);
   let armIds = (la.data || []).map((r) => r.arm_id);
   if (!armIds.length) {
-    const { data } = await db.from('arms').select('id').eq('is_active', true);
+    const { data } = await db.from('arms').select('id').eq('station_id', st).eq('is_active', true);
     armIds = (data || []).map((r) => r.id);
   }
   const plan = await assignArms(armIds, targets.map((t) => t.wa_group_id));
@@ -151,6 +158,7 @@ async function onMessage(arm, m) {
   const { data: campaign, error } = await db
     .from('campaigns')
     .insert({
+      station_id: st,
       kind: 'help',
       status: requester.phone ? 'queued' : 'pending_phone',
       message_text: text,
@@ -188,10 +196,11 @@ async function onMessage(arm, m) {
   await db
     .from('processed_messages')
     .update({ campaign_id: campaign.id })
+    .eq('station_id', st)
     .eq('source_group_id', groupJid)
     .eq('message_id', m.key.id);
 
-  await logActivity(requester.phone ? 'help_received' : 'help_pending_phone', 'campaign', campaign.id, {
+  await logActivity(st, requester.phone ? 'help_received' : 'help_pending_phone', 'campaign', campaign.id, {
     requester: requester.name,
     phone: requester.phone,
     source: source.name,

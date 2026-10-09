@@ -53,6 +53,7 @@ class Arm {
   constructor(row, onMessage) {
     this.id = row.id;
     this.name = row.name;
+    this.stationId = row.station_id;
     this.onMessage = onMessage;
     this.sock = null;
     this.auth = null;

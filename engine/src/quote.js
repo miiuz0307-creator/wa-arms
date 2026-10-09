@@ -47,11 +47,11 @@ async function reply() {
 
 async function fail(arm, key, sessionId, reason) {
   if (key) await arm.react(key, '❌');
-  await activity('quote_blocked', sessionId, { reason });
+  await activity(arm.stationId, 'quote_blocked', sessionId, { reason });
 }
 
-async function activity(action, entityId, details) {
-  await db.from('activity_log').insert({ actor_name: 'בוט', action, entity: 'quote', entity_id: entityId, details });
+async function activity(stationId, action, entityId, details) {
+  await db.from('activity_log').insert({ actor_name: 'בוט', action, entity: 'quote', entity_id: entityId, details, station_id: stationId });
 }
 
 // ---------- operator identity & permission ----------
@@ -69,11 +69,12 @@ async function resolveOperator(arm, m) {
     } catch {}
   }
 
+  const st = arm.stationId;
   let op = null;
-  if (lid) op = (await db.from('wa_operators').select('*').eq('wa_lid', lid).maybeSingle()).data;
-  if (!op && pnJid) op = (await db.from('wa_operators').select('*').eq('wa_jid', pnJid).maybeSingle()).data;
+  if (lid) op = (await db.from('wa_operators').select('*').eq('station_id', st).eq('wa_lid', lid).maybeSingle()).data;
+  if (!op && pnJid) op = (await db.from('wa_operators').select('*').eq('station_id', st).eq('wa_jid', pnJid).maybeSingle()).data;
   if (!op && phone) {
-    const { data } = await db.from('wa_operators').select('*').eq('phone', formatPhone(phone)).limit(1);
+    const { data } = await db.from('wa_operators').select('*').eq('station_id', st).eq('phone', formatPhone(phone)).limit(1);
     op = data?.[0] || null;
   }
 
@@ -90,7 +91,7 @@ async function resolveOperator(arm, m) {
   } else {
     const { data } = await db
       .from('wa_operators')
-      .insert({ name: m.pushName || null, phone: phone ? formatPhone(phone) : null, wa_jid: pnJid, wa_lid: lid, status: 'pending' })
+      .insert({ station_id: st, name: m.pushName || null, phone: phone ? formatPhone(phone) : null, wa_jid: pnJid, wa_lid: lid, status: 'pending' })
       .select()
       .single();
     op = data;
@@ -103,8 +104,8 @@ async function resolveOperator(arm, m) {
 
 // ---------- menu rendering ----------
 
-async function loadLists() {
-  const { data } = await db.from('distribution_lists').select('id,name, list_groups(count)').order('name');
+async function loadLists(stationId) {
+  const { data } = await db.from('distribution_lists').select('id,name, list_groups(count)').eq('station_id', stationId).order('name');
   return (data || []).map((l) => ({ id: l.id, name: l.name, count: l.list_groups?.[0]?.count ?? 0 }));
 }
 
@@ -117,7 +118,7 @@ async function selectedGroups(listIds, excludeGroup) {
 }
 
 async function renderMenu(session, note) {
-  const lists = await loadLists();
+  const lists = await loadLists(session.station_id);
   const groups = await selectedGroups(session.selected_list_ids, session.source_group_id);
   const sel = new Set(session.selected_list_ids);
   const lines = [];
@@ -162,7 +163,7 @@ function sentByOtherArm(arm, m) {
   const k = m.key || {};
   const senderIds = [k.participant, m.participant, k.participantPn, k.participantAlt, k.senderPn].filter(Boolean).map(normJid);
   for (const other of getArms().values()) {
-    if (other !== arm && other.ownJids().some((j) => senderIds.includes(j))) return other;
+    if (other !== arm && other.stationId === arm.stationId && other.ownJids().some((j) => senderIds.includes(j))) return other;
   }
   return null;
 }
@@ -190,6 +191,7 @@ async function handleCancel(arm, m, ctx) {
   const { data: sessions } = await db
     .from('quote_sessions')
     .select('id,campaign_id,trigger_key,status')
+    .eq('station_id', arm.stationId)
     .eq('source_group_id', groupJid)
     .or(`source_message_id.eq.${idq},trigger_key->>id.eq.${idq}`)
     .order('created_at', { ascending: false })
@@ -197,6 +199,7 @@ async function handleCancel(arm, m, ctx) {
   const { data: helps } = await db
     .from('campaigns')
     .select('id,status,trigger_key')
+    .eq('station_id', arm.stationId)
     .eq('kind', 'help')
     .eq('source_group_id', groupJid)
     .eq('source_message_id', quotedId)
@@ -205,14 +208,14 @@ async function handleCancel(arm, m, ctx) {
   if (!campaignIds.length) return false; // not a reply to a distribution – let other handlers see it
 
   if (sentByOtherArm(arm, m)) return true;
-  const { error: dupErr } = await db.from('processed_messages').insert({ source_group_id: groupJid, message_id: `x:${m.key.id}` });
+  const { error: dupErr } = await db.from('processed_messages').insert({ station_id: arm.stationId, source_group_id: groupJid, message_id: `x:${m.key.id}` });
   if (dupErr) return true; // another arm handles it
 
   let op = null;
   if (!m.key.fromMe) {
     op = (await resolveOperator(arm, m)).op;
     if (!op || op.status !== 'approved') {
-      await activity('quote_cancel_denied', op?.id || null, { name: m.pushName, group: groupJid });
+      await activity(arm.stationId, 'quote_cancel_denied', op?.id || null, { name: m.pushName, group: groupJid });
       return true;
     }
   }
@@ -247,7 +250,7 @@ async function handleCancel(arm, m, ctx) {
   ].filter(Boolean);
   for (const k of triggerKeys) await arm.react(k, '🛑');
   await arm.react(cancelKey, '👍');
-  await activity('quote_cancelled', ids[0], {
+  await activity(arm.stationId, 'quote_cancelled', ids[0], {
     by: op?.name || m.pushName || 'אני',
     word: bareWords(extractText(unwrap(m.message))),
     sent_before_stop: stopped.reduce((a, c) => a + (c.sent || 0), 0),
@@ -265,7 +268,7 @@ async function handleGroup(arm, m) {
   const words = bareWords(text);
   if (CANCEL_WORDS.has(words)) return handleCancel(arm, m, ctx);
 
-  const trigger = getTriggers().find((t) => words === bareWords(t.keyword));
+  const trigger = getTriggers(arm.stationId).find((t) => words === bareWords(t.keyword));
   if (!trigger) {
     log.info({ arm: arm.name, text: text.slice(0, 40) }, 'quote: not exactly a trigger word');
     return false;
@@ -282,7 +285,7 @@ async function handleGroup(arm, m) {
   }
 
   // Several arms see the same message – only the first one handles it.
-  const { error: dupErr } = await db.from('processed_messages').insert({ source_group_id: groupJid, message_id: `q:${m.key.id}` });
+  const { error: dupErr } = await db.from('processed_messages').insert({ station_id: arm.stationId, source_group_id: groupJid, message_id: `q:${m.key.id}` });
   if (dupErr) {
     if (dupErr.code !== '23505') log.error({ err: dupErr.message }, 'quote dedupe insert failed');
     else log.info({ arm: arm.name }, 'quote: already handled by another arm');
@@ -308,7 +311,7 @@ async function handleGroup(arm, m) {
     alt = r.alt;
     if (!op || op.status !== 'approved') {
       // only approved numbers may trigger a mass distribution – others are ignored silently
-      if (op?.status === 'pending') await activity('quote_operator_pending', op.id, { name: m.pushName, group: groupJid });
+      if (op?.status === 'pending') await activity(arm.stationId, 'quote_operator_pending', op.id, { name: m.pushName, group: groupJid });
       return false;
     }
     opName = op?.name || m.pushName || 'מבקש';
@@ -341,7 +344,7 @@ async function handleGroup(arm, m) {
   const s = sanitize(original, { allow: opPhone ? [opPhone] : [] });
   // the quoted message must be an actual ride, not just a word
   const bare = s.text.replace(/[\s\p{P}\p{S}]/gu, '');
-  if (bare.length < 6 || getTriggers().some((t) => s.text.trim() === t.keyword)) {
+  if (bare.length < 6 || getTriggers(arm.stationId).some((t) => s.text.trim() === t.keyword)) {
     log.info({ arm: arm.name, text: s.text.slice(0, 30) }, 'quote: quoted text is not a ride, ignored');
     await arm.react(triggerKey, '');
     return true;
@@ -374,6 +377,7 @@ async function handleGroup(arm, m) {
     const { data: prev } = await db
       .from('quote_sessions')
       .select('campaign_id')
+      .eq('station_id', arm.stationId)
       .eq('source_message_id', quotedId)
       .not('campaign_id', 'is', null)
       .order('created_at', { ascending: false })
@@ -387,7 +391,7 @@ async function handleGroup(arm, m) {
       if (busy) {
         log.info({ arm: arm.name, campaign: busy.id, status: busy.status }, 'quote: this ride was already distributed');
         await arm.react(triggerKey, '🔁');
-        await activity('quote_duplicate', busy.id, { operator: opName });
+        await activity(arm.stationId, 'quote_duplicate', busy.id, { operator: opName });
         return true;
       }
     }
@@ -396,11 +400,11 @@ async function handleGroup(arm, m) {
   // target lists: the trigger's list if set, otherwise every distribution list
   let listIds = trigger.list_id ? [trigger.list_id] : [];
   if (!listIds.length) {
-    const { data: all } = await db.from('distribution_lists').select('id');
+    const { data: all } = await db.from('distribution_lists').select('id').eq('station_id', arm.stationId);
     listIds = (all || []).map((l) => l.id);
   }
 
-  const { data: groupRow } = await db.from('groups').select('name').eq('wa_group_id', groupJid).limit(1);
+  const { data: groupRow } = await db.from('groups').select('name').eq('station_id', arm.stationId).eq('wa_group_id', groupJid).limit(1);
   const { data: session, error } = await db
     .from('quote_sessions')
     .insert({
@@ -425,7 +429,7 @@ async function handleGroup(arm, m) {
     .select()
     .single();
   if (error) throw error;
-  await activity('quote_received', session.id, { operator: opName, group: session.source_group_name, removed: s.removed.length });
+  await activity(arm.stationId, 'quote_received', session.id, { operator: opName, group: session.source_group_name, removed: s.removed.length });
 
   // safe and complete → send right away, no questions
   if (!reasons.length) {
@@ -515,7 +519,7 @@ async function handleDM(arm, m) {
   }
 
   if (/^(הכל|הכול|בחר הכל|בחר הכול)$/.test(cmd)) {
-    const lists = await loadLists();
+    const lists = await loadLists(session.station_id);
     session = await update(session, { selected_list_ids: lists.map((l) => l.id) });
     await reply(arm, chat, (await renderMenu(session)).text);
     return true;
@@ -589,7 +593,7 @@ async function handleDM(arm, m) {
       return true;
     }
     session = await update(session, { needs_review: false, review_reason: null });
-    await activity('quote_manual_approved', session.id, { operator: session.operator_name });
+    await activity(arm.stationId, 'quote_manual_approved', session.id, { operator: session.operator_name });
     if (session.selected_list_ids.length) {
       await reply(arm, chat, '👍 אושר. מפיץ עכשיו.');
       return distribute(arm, chat, session, allow, { quiet: true });
@@ -599,7 +603,7 @@ async function handleDM(arm, m) {
   }
 
   if (/^[\d\s,،.]+$/.test(cmd)) {
-    const lists = await loadLists();
+    const lists = await loadLists(session.station_id);
     const sel = new Set(session.selected_list_ids);
     const bad = [];
     for (const n of cmd.split(/[\s,،.]+/).filter(Boolean).map(Number)) {
@@ -650,7 +654,7 @@ async function distribute(arm, chat, session, allow, opts = {}) {
   const { data: la } = await db.from('list_arms').select('arm_id').in('list_id', session.selected_list_ids);
   let armIds = [...new Set((la || []).map((r) => r.arm_id))];
   if (!armIds.length) {
-    const { data } = await db.from('arms').select('id').eq('is_active', true);
+    const { data } = await db.from('arms').select('id').eq('station_id', arm.stationId).eq('is_active', true);
     armIds = (data || []).map((r) => r.id);
   }
   const plan = await assignArms(armIds, groups.map((g) => g.wa_group_id));
@@ -659,6 +663,7 @@ async function distribute(arm, chat, session, allow, opts = {}) {
   const { data: campaign, error } = await db
     .from('campaigns')
     .insert({
+      station_id: arm.stationId,
       kind: 'quote',
       status: 'queued',
       message_text: session.original_text,
@@ -688,7 +693,7 @@ async function distribute(arm, chat, session, allow, opts = {}) {
     );
   }
   await update(session, { status: 'sending', campaign_id: campaign.id });
-  await activity('quote_distributed', session.id, { campaign: campaign.id, groups: groups.length, arms: armIds.length });
+  await activity(arm.stationId, 'quote_distributed', session.id, { campaign: campaign.id, groups: groups.length, arms: armIds.length });
   if (!opts.quiet) {
     await reply(
       arm,
