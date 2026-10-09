@@ -4,7 +4,7 @@
 //   numbered list of distribution lists, edit, "הפץ", live status.
 const { db, log } = require('./config');
 const { extractText, jidUser } = require('./util');
-const { assignArms, pickFreeArm } = require('./assign');
+
 const { sanitize, verifyNoCustomerPhone, normalize, formatPhone } = require('./phones');
 
 const SESSION_TTL_MS = 30 * 60 * 1000;
@@ -399,15 +399,6 @@ async function handleGroup(arm, m) {
 
   // target lists: the trigger's list if set, otherwise every distribution list
   let listIds = trigger.list_id ? [trigger.list_id] : [];
-  let onlyArm = null;
-  if (!listIds.length) {
-    // each arm has its own list: send this request from the free arm, to that arm's list only
-    const pick = await pickFreeArm(arm.stationId);
-    if (pick) {
-      listIds = pick.listIds;
-      onlyArm = pick.armId;
-    }
-  }
   if (!listIds.length) {
     const { data: all } = await db.from('distribution_lists').select('id').eq('station_id', arm.stationId);
     listIds = (all || []).map((l) => l.id);
@@ -442,7 +433,7 @@ async function handleGroup(arm, m) {
 
   // safe and complete → send right away, no questions
   if (!reasons.length) {
-    return distribute(arm, chat, session, phoneShown ? [phoneShown] : [], { quiet: true, onlyArm });
+    return distribute(arm, chat, session, phoneShown ? [phoneShown] : [], { quiet: true });
   }
 
   // something is missing (requester phone unknown / possible customer phone left) → not sent, ❌
@@ -666,9 +657,9 @@ async function distribute(arm, chat, session, allow, opts = {}) {
     const { data } = await db.from('arms').select('id').eq('station_id', arm.stationId).eq('is_active', true);
     armIds = (data || []).map((r) => r.id);
   }
-  // the free arm was chosen for this request: it sends everything itself
-  const plan = opts.onlyArm ? { armIds: [opts.onlyArm], exclude: () => [] } : await assignArms(armIds, groups.map((g) => g.wa_group_id));
-  armIds = plan.armIds;
+  // all the station's arms join; the database hands out the work like a ladder
+  // (each arm on its own ride under load, all arms on one ride when it's the only one)
+  const plan = { armIds, exclude: () => [] };
 
   const { data: campaign, error } = await db
     .from('campaigns')

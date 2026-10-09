@@ -3,7 +3,6 @@
 const { db, log } = require('./config');
 const { extractText, containsKeyword, formatPhone, jidUser, buildHelpText } = require('./util');
 const quote = require('./quote');
-const { assignArms } = require('./assign');
 
 // Everything is per station: an arm only sees its own station's settings, sources and triggers.
 const state = {
@@ -152,8 +151,7 @@ async function onMessage(arm, m) {
     const { data } = await db.from('arms').select('id').eq('station_id', st).eq('is_active', true);
     armIds = (data || []).map((r) => r.id);
   }
-  const plan = await assignArms(armIds, targets.map((t) => t.wa_group_id));
-  armIds = plan.armIds;
+  const plan = { armIds, exclude: () => [] }; // ladder: the database splits the work between arms
 
   const { data: campaign, error } = await db
     .from('campaigns')
