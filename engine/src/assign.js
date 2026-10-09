@@ -59,4 +59,41 @@ async function assignArms(candidateIds, groupIds) {
   }
 }
 
-module.exports = { assignArms };
+// No list chosen on the trigger: every arm works with its own list(s).
+// Pick the free arm (fewest running distributions, online first) and use only the lists linked to it.
+async function pickFreeArm(stationId) {
+  try {
+    const [la, armsRes, activeRes] = await Promise.all([
+      db.from('list_arms').select('arm_id,list_id').eq('station_id', stationId),
+      db.from('arms').select('id,name,status,is_active,sent_today,sent_day,daily_limit').eq('station_id', stationId).eq('is_active', true),
+      db.from('campaigns').select('id').eq('station_id', stationId).in('status', ['queued', 'running']),
+    ]);
+    const listsByArm = new Map();
+    for (const r of la.data || []) {
+      if (!listsByArm.has(r.arm_id)) listsByArm.set(r.arm_id, []);
+      listsByArm.get(r.arm_id).push(r.list_id);
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    const usable = (armsRes.data || []).filter(
+      (a) => listsByArm.has(a.id) && !(a.sent_day === today && a.sent_today >= a.daily_limit),
+    );
+    if (!usable.length) return null;
+    const load = new Map(usable.map((a) => [a.id, 0]));
+    const activeIds = (activeRes.data || []).map((c) => c.id);
+    if (activeIds.length) {
+      const { data: ca } = await db.from('campaign_arms').select('arm_id').in('campaign_id', activeIds);
+      for (const r of ca || []) if (load.has(r.arm_id)) load.set(r.arm_id, load.get(r.arm_id) + 1);
+    }
+    usable.sort(
+      (a, b) => (a.status === 'online' ? 0 : 1) - (b.status === 'online' ? 0 : 1) || load.get(a.id) - load.get(b.id) || (a.sent_today || 0) - (b.sent_today || 0),
+    );
+    const arm = usable[0];
+    log.info({ arm: arm.name, load: load.get(arm.id) }, 'help goes to the free arm');
+    return { armId: arm.id, listIds: listsByArm.get(arm.id) };
+  } catch (e) {
+    log.warn({ err: e.message }, 'free arm pick failed');
+    return null;
+  }
+}
+
+module.exports = { assignArms, pickFreeArm };
