@@ -347,10 +347,10 @@ async function handleGroup(arm, m) {
   if (trigger.template_id) template = (await db.from('templates').select('*').eq('id', trigger.template_id).maybeSingle()).data;
   // no template set → still add the requester's number
   if (!template) template = { prefix: '', suffix: '📞 לבקשה במספר: {PHONE}' };
-  // phone numbers written in the template itself (e.g. a fixed office number) are allowed in the message
+  // Every phone in the ride itself is removed (even if it equals the number written in the template).
+  // Numbers written in the template are added afterwards and allowed only there.
   const templatePhones = findPhones(`${template?.prefix || ''}\n${template?.suffix || ''}`).map((p) => p.digits);
-  const allowPhones = [...(opPhone ? [opPhone] : []), ...templatePhones];
-  const s = sanitize(original, { allow: allowPhones });
+  const s = sanitize(original, { allow: opPhone ? [opPhone] : [] });
   // the quoted message must be an actual ride, not just a word
   const bare = s.text.replace(/[\s\p{P}\p{S}]/gu, '');
   if (bare.length < 6 || getTriggers(arm.stationId).some((t) => s.text.trim() === t.keyword)) {
