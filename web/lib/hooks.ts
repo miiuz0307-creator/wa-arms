@@ -1,35 +1,30 @@
 'use client';
 import { useEffect, useRef } from 'react';
-import { sb, needsPolling } from './supabase';
 
-/** Re-run `onChange` whenever any of the given tables change (Supabase Realtime). */
+/**
+ * Re-run `onChange` every few seconds while the screen is visible.
+ * (Supabase Realtime was replaced by light polling: decoding the database log for live
+ * updates cost the small database about a third of its CPU, even when nobody looked.)
+ */
 export function useRealtime(tables: string[], onChange: () => void, filter?: string) {
   const cb = useRef(onChange);
   cb.current = onChange;
   const key = tables.join(',') + '|' + (filter ?? '');
 
   useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const fire = () => {
-      if (timer) return;
-      timer = setTimeout(() => {
-        timer = null;
-        cb.current();
-      }, 400);
+    const tick = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      cb.current();
     };
-    // station / acting mode: realtime can't see our station headers, so refresh every few seconds instead
-    if (needsPolling()) {
-      const iv = setInterval(() => cb.current(), 4000);
-      return () => clearInterval(iv);
-    }
-    const ch = sb().channel('rt-' + key + '-' + Math.random().toString(36).slice(2));
-    for (const t of tables) {
-      ch.on('postgres_changes' as any, { event: '*', schema: 'public', table: t, ...(filter ? { filter } : {}) }, fire);
-    }
-    ch.subscribe();
+    const iv = setInterval(tick, 5000);
+    // coming back to the app: refresh right away
+    const onVis = () => {
+      if (document.visibilityState === 'visible') cb.current();
+    };
+    document.addEventListener('visibilitychange', onVis);
     return () => {
-      if (timer) clearTimeout(timer);
-      sb().removeChannel(ch);
+      clearInterval(iv);
+      document.removeEventListener('visibilitychange', onVis);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
