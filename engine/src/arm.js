@@ -207,9 +207,11 @@ class Arm {
     // diagnostics: raw message nodes reaching the socket vs. events emitted
     this.raw = 0;
     this.upserts = 0;
+    this.gotMessage = false;
     this.lastRawAt = Date.now();
     sock.ws.on('CB:message', () => {
       this.raw += 1;
+      this.gotMessage = true;
       this.lastRawAt = Date.now();
     });
     // Messages that piled up while the arm was away arrive in batches, and WhatsApp sends the next
@@ -231,6 +233,7 @@ class Arm {
       this.offlineDone = true;
       clearInterval(this.batchPump);
       log.info({ arm: this.name }, 'caught up with messages from while offline – now live');
+      if (sock.user?.id) this.markOnline(sock, 'caught up').catch(() => {});
     });
 
     // Watchdog: in 90 busy groups silence means WhatsApp stopped delivering to this socket
@@ -238,7 +241,11 @@ class Arm {
     clearInterval(this.watchdog);
     this.watchdog = setInterval(() => {
       if (this.sock !== sock) return clearInterval(this.watchdog);
-      if (!this.online) return;
+      if (!this.online) {
+        // logged in and receiving, but Baileys never said 'open'
+        if (sock.user?.id && this.gotMessage && Date.now() - this.lastRawAt < 60_000) this.markOnline(sock, 'messages flowing').catch(() => {});
+        return;
+      }
       const quiet = Date.now() - Math.max(this.lastRawAt || 0, this.onlineAt || 0);
       if (quiet > 150_000 && !this.pinging) {
         // quiet groups are normal – only reconnect if WhatsApp doesn't answer a ping
@@ -315,6 +322,31 @@ class Arm {
     if (this.clearedStuck % 20 === 1) log.info({ arm: this.name, cleared: this.clearedStuck }, 'confirmed undecryptable messages so the queue moves on');
   }
 
+  // Called on 'open', and as a fallback once messages are flowing: Baileys sometimes
+  // never emits 'open' even though the socket is logged in and working.
+  async markOnline(sock, why) {
+    if (sock !== this.sock || this.online || this.markingOnline) return;
+    this.markingOnline = true;
+    try {
+      this.online = true;
+      this.retry = 0;
+      this.onlineAt = Date.now();
+      const phone = formatPhone(jidUser(sock.user?.id));
+      log.info({ arm: this.name, phone, why }, 'arm online');
+      db.from('arm_qr').delete().eq('arm_id', this.id).then(() => {}, () => {});
+      await this.update({
+        status: 'online',
+        phone,
+        last_connected_at: new Date().toISOString(),
+        last_seen_at: new Date().toISOString(),
+        last_error: null,
+      });
+      this.syncGroups().catch((e) => log.error({ arm: this.name, err: e.message }, 'group sync failed'));
+    } finally {
+      this.markingOnline = false;
+    }
+  }
+
   async onConnectionUpdate(sock, u) {
     if (sock !== this.sock) return; // stale socket
 
@@ -323,22 +355,7 @@ class Arm {
       await this.update({ status: 'qr', last_error: null });
     }
 
-    if (u.connection === 'open') {
-      this.online = true;
-      this.retry = 0;
-      const phone = formatPhone(jidUser(sock.user?.id));
-      await db.from('arm_qr').delete().eq('arm_id', this.id);
-      await this.update({
-        status: 'online',
-        phone,
-        last_connected_at: new Date().toISOString(),
-        last_seen_at: new Date().toISOString(),
-        last_error: null,
-      });
-      this.onlineAt = Date.now();
-      log.info({ arm: this.name, phone }, 'arm online');
-      await this.syncGroups().catch((e) => log.error({ arm: this.name, err: e.message }, 'group sync failed'));
-    }
+    if (u.connection === 'open') await this.markOnline(sock, 'open');
 
     if (u.connection === 'close') {
       this.online = false;
