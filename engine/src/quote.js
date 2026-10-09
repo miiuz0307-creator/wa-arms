@@ -15,6 +15,10 @@ function setTriggerSource(fn) {
   getTriggers = fn;
 }
 let getArms = () => new Map();
+let isSourceGroup = () => true;
+function setSourceGroupCheck(fn) {
+  isSourceGroup = fn;
+}
 let getSettings = () => null;
 function setSettingsSource(fn) {
   getSettings = fn;
@@ -267,6 +271,10 @@ async function handleGroup(arm, m) {
   const msg = unwrap(m.message);
   const ctx = contextOf(msg);
   if (!ctx?.quotedMessage) return false;
+
+  // Only the station's own operator groups (Settings → help → source groups). Everywhere else
+  // "עזרה" / "ביטול" are ordinary messages and the arm ignores them.
+  if (!isSourceGroup(arm.stationId, m.key.remoteJid)) return false;
 
   const text = extractText(msg);
   const words = bareWords(text);
@@ -789,4 +797,4 @@ async function handle(arm, m) {
   return false;
 }
 
-module.exports = { handle, notifyFinished, setTriggerSource, setArmsSource, setSettingsSource, renderMenu };
+module.exports = { handle, notifyFinished, setTriggerSource, setArmsSource, setSettingsSource, setSourceGroupCheck, renderMenu };
