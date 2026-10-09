@@ -410,10 +410,9 @@ class Arm {
    */
   async react(key, emoji) {
     if (!this.sock || !this.online || !key?.remoteJid || !key?.id) return false;
+    // Only the key exactly as the message arrived. (A second copy addressed to the phone-number form of
+    // the sender replaced the first one in LID groups, so no reaction showed at all.)
     const variants = [key];
-    if (key.participantPn && key.participantPn !== key.participant) {
-      variants.push({ ...key, participant: key.participantPn });
-    }
     let ok = false;
     for (const k of variants) {
       const clean = { remoteJid: k.remoteJid, id: k.id, fromMe: !!k.fromMe, ...(k.participant ? { participant: k.participant } : {}) };
