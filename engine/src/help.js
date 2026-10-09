@@ -159,7 +159,7 @@ async function onMessage(arm, m) {
     .insert({
       station_id: st,
       kind: 'help',
-      status: requester.phone ? 'queued' : 'pending_phone',
+      status: 'paused', // becomes queued only after all groups are added (avoids "completed with 0 groups")
       message_text: text,
       requester_name: requester.name,
       requester_phone: requester.phone,
@@ -192,6 +192,7 @@ async function onMessage(arm, m) {
       })),
     );
   }
+  await db.from('campaigns').update({ status: requester.phone ? 'queued' : 'pending_phone' }).eq('id', campaign.id);
   await db
     .from('processed_messages')
     .update({ campaign_id: campaign.id })

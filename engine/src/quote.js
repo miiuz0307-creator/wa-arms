@@ -677,7 +677,9 @@ async function distribute(arm, chat, session, allow, opts = {}) {
       kind: 'quote',
       status: 'queued',
       message_text: session.original_text,
-      final_text: session.clean_text,
+      // the text is set only after all groups are added: a campaign without text is not
+      // picked up or closed yet (before, it could be marked "completed" with 0 groups)
+      final_text: null,
       requester_name: session.operator_name,
       requester_phone: session.operator_phone,
       source_group_id: session.source_group_id,
@@ -691,9 +693,19 @@ async function distribute(arm, chat, session, allow, opts = {}) {
     await fail(arm, session.trigger_key, session.id, `שגיאה ביצירת ההפצה: ${error.message}`);
     return true;
   }
-  await db.from('campaign_arms').insert(armIds.map((arm_id) => ({ campaign_id: campaign.id, arm_id })));
-  for (let i = 0; i < groups.length; i += 500) {
-    await db.from('campaign_targets').insert(
+  const insertWithRetry = async (table, rows) => {
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const { error: e } = await db.from(table).insert(rows);
+      if (!e) return null;
+      if (e.code === '23505') return null; // already there
+      if (attempt === 3) return e;
+      await new Promise((r) => setTimeout(r, 1000 * attempt));
+    }
+  };
+  let insErr = await insertWithRetry('campaign_arms', armIds.map((arm_id) => ({ campaign_id: campaign.id, arm_id })));
+  for (let i = 0; !insErr && i < groups.length; i += 500) {
+    insErr = await insertWithRetry(
+      'campaign_targets',
       groups.slice(i, i + 500).map((g) => ({
         campaign_id: campaign.id,
         wa_group_id: g.wa_group_id,
@@ -702,6 +714,14 @@ async function distribute(arm, chat, session, allow, opts = {}) {
       })),
     );
   }
+  if (insErr) {
+    log.error({ arm: arm.name, err: insErr.message }, 'quote: adding groups failed');
+    await db.from('campaigns').update({ status: 'failed', finished_at: new Date().toISOString() }).eq('id', campaign.id);
+    await fail(arm, session.trigger_key, session.id, `שגיאה בהוספת הקבוצות: ${insErr.message}`);
+    return true;
+  }
+  // now it may start
+  await db.from('campaigns').update({ final_text: session.clean_text }).eq('id', campaign.id);
   await update(session, { status: 'sending', campaign_id: campaign.id });
   await activity(arm.stationId, 'quote_distributed', session.id, { campaign: campaign.id, groups: groups.length, arms: armIds.length });
   if (!opts.quiet) {
