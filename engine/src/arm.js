@@ -210,6 +210,27 @@ class Arm {
       this.raw += 1;
       this.lastRawAt = Date.now();
     });
+    // Messages that piled up while the arm was away arrive in batches, and WhatsApp sends the next
+    // batch only when asked. Baileys asks once, so after ~100 messages delivery stopped and new
+    // messages (like "עזרה") waited behind the backlog. Keep asking until WhatsApp says it's done.
+    this.offlineDone = false;
+    clearInterval(this.batchPump);
+    const askBatch = () =>
+      Promise.resolve(sock.sendNode?.({ tag: 'ib', attrs: {}, content: [{ tag: 'offline_batch', attrs: { count: '100' } }] })).catch(() => {});
+    sock.ws.on('CB:ib,,offline_preview', () => {
+      this.offlineDone = false;
+      clearInterval(this.batchPump);
+      this.batchPump = setInterval(() => {
+        if (this.sock !== sock || this.offlineDone) return clearInterval(this.batchPump);
+        askBatch();
+      }, 1500);
+    });
+    sock.ws.on('CB:ib,,offline', () => {
+      this.offlineDone = true;
+      clearInterval(this.batchPump);
+      log.info({ arm: this.name }, 'caught up with messages from while offline – now live');
+    });
+
     // Watchdog: in 90 busy groups silence means WhatsApp stopped delivering to this socket
     // (it happens after reconnects). Reconnecting makes it deliver again.
     clearInterval(this.watchdog);
