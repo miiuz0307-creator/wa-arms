@@ -35,10 +35,8 @@ const NAV: Item[] = [
   { href: '/arms', label: 'חיבור זרועות', icon: Smartphone, min: 'admin' },
   { href: '/groups', label: 'ניהול קבוצות', icon: UsersRound, min: 'operator' },
   { href: '/lists', label: 'רשימות הפצה', icon: ListChecks, min: 'operator' },
-  { href: '/help', label: 'הפצה אוטומטית', icon: LifeBuoy, min: 'admin' },
-  { href: '/dispatchers', label: 'סדרנים', icon: Contact, min: 'operator' },
   { href: '/users', label: 'משתמשים והרשאות', icon: ShieldCheck, min: 'owner' },
-  { href: '/settings', label: 'הגדרות ויומן', icon: Settings, min: 'admin' },
+  { href: '/settings', label: 'הגדרות', icon: Settings, min: 'admin' },
 ];
 const MOBILE_MAIN = ['/', '/send', '/history', '/arms'];
 

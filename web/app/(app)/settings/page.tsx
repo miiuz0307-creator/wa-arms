@@ -5,13 +5,45 @@ import { sb, logAct } from '@/lib/supabase';
 import { useRealtime } from '@/lib/hooks';
 import { ACTION_LABEL, fmtTime } from '@/lib/format';
 import { RequireRole } from '@/components/Shell';
+import { HelpSettings } from '@/components/settings/HelpSettings';
+import { DispatchersPanel } from '@/components/settings/DispatchersPanel';
 import { Button, Card, Field, Input, PageHeader, Select, Spinner, toast } from '@/components/ui';
 
+const TABS = [
+  ['help', 'עזרה ומפעילים'],
+  ['speed', 'קצב שליחה'],
+  ['dispatchers', 'סדרנים'],
+  ['log', 'יומן פעילות'],
+] as const;
+
 export default function SettingsPage() {
+  const [tab, setTab] = useState<string>('help');
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get('tab');
+    if (t && TABS.some(([k]) => k === t)) setTab(t);
+  }, []);
+  const go = (t: string) => {
+    setTab(t);
+    window.history.replaceState(null, '', `/settings?tab=${t}`);
+  };
   return (
     <RequireRole min="admin">
-      <Settings />
-      <Log />
+      <PageHeader title="הגדרות" subtitle="כל ההגדרות של התחנה במקום אחד" />
+      <div className="scroll-thin -mx-1 mb-5 flex gap-1 overflow-x-auto px-1">
+        {TABS.map(([k, label]) => (
+          <button
+            key={k}
+            onClick={() => go(k)}
+            className={`shrink-0 rounded-xl px-4 py-2 text-sm font-medium transition ${tab === k ? 'bg-indigo-600 text-white shadow-sm' : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50'}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {tab === 'help' && <HelpSettings />}
+      {tab === 'speed' && <Settings />}
+      {tab === 'dispatchers' && <DispatchersPanel />}
+      {tab === 'log' && <Log />}
     </RequireRole>
   );
 }
@@ -75,7 +107,6 @@ function Settings() {
 
   return (
     <>
-      <PageHeader title="הגדרות" subtitle="קצב שליחה וחלוקת עבודה בין הזרועות" />
       <Card className="p-5">
         <div className="mb-5 flex items-center gap-2 font-semibold">
           <Gauge className="h-5 w-5 text-indigo-500" />
@@ -217,7 +248,7 @@ function Log() {
   useRealtime(['activity_log'], load);
 
   return (
-    <Card className="mt-6" >
+    <Card>
       <div id="log" className="flex items-center gap-2 border-b border-slate-100 px-5 py-4 font-semibold">
         <ScrollText className="h-5 w-5 text-indigo-500" />
         יומן פעילות

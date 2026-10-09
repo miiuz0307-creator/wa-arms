@@ -5,7 +5,7 @@
 const { db, log } = require('./config');
 const { extractText, jidUser } = require('./util');
 
-const { sanitize, verifyNoCustomerPhone, normalize, formatPhone } = require('./phones');
+const { sanitize, verifyNoCustomerPhone, normalize, formatPhone, findPhones } = require('./phones');
 
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const normJid = (j) => (j ? String(j).replace(/:\d+(?=@)/, '') : null);
@@ -15,6 +15,10 @@ function setTriggerSource(fn) {
   getTriggers = fn;
 }
 let getArms = () => new Map();
+let getSettings = () => null;
+function setSettingsSource(fn) {
+  getSettings = fn;
+}
 function setArmsSource(fn) {
   getArms = fn;
 }
@@ -309,8 +313,10 @@ async function handleGroup(arm, m) {
     op = r.op;
     chat = r.chat;
     alt = r.alt;
-    if (!op || op.status !== 'approved') {
-      // only approved numbers may trigger a mass distribution – others are ignored silently
+    // "open" mode (station setting): anyone in the group may trigger, except blocked numbers.
+    // Otherwise only approved numbers – others are ignored silently.
+    const open = !!getSettings(arm.stationId)?.open_trigger;
+    if (!op || op.status === 'blocked' || (op.status !== 'approved' && !open)) {
       if (op?.status === 'pending') await activity(arm.stationId, 'quote_operator_pending', op.id, { name: m.pushName, group: groupJid });
       return false;
     }
@@ -341,7 +347,10 @@ async function handleGroup(arm, m) {
   if (trigger.template_id) template = (await db.from('templates').select('*').eq('id', trigger.template_id).maybeSingle()).data;
   // no template set → still add the requester's number
   if (!template) template = { prefix: '', suffix: '📞 לבקשה במספר: {PHONE}' };
-  const s = sanitize(original, { allow: opPhone ? [opPhone] : [] });
+  // phone numbers written in the template itself (e.g. a fixed office number) are allowed in the message
+  const templatePhones = findPhones(`${template?.prefix || ''}\n${template?.suffix || ''}`).map((p) => p.digits);
+  const allowPhones = [...(opPhone ? [opPhone] : []), ...templatePhones];
+  const s = sanitize(original, { allow: allowPhones });
   // the quoted message must be an actual ride, not just a word
   const bare = s.text.replace(/[\s\p{P}\p{S}]/gu, '');
   if (bare.length < 6 || getTriggers(arm.stationId).some((t) => s.text.trim() === t.keyword)) {
@@ -433,7 +442,7 @@ async function handleGroup(arm, m) {
 
   // safe and complete → send right away, no questions
   if (!reasons.length) {
-    return distribute(arm, chat, session, phoneShown ? [phoneShown] : [], { quiet: true });
+    return distribute(arm, chat, session, [...(phoneShown ? [phoneShown] : []), ...templatePhones], { quiet: true });
   }
 
   // something is missing (requester phone unknown / possible customer phone left) → not sent, ❌
@@ -754,4 +763,4 @@ async function handle(arm, m) {
   return false;
 }
 
-module.exports = { handle, notifyFinished, setTriggerSource, setArmsSource, renderMenu };
+module.exports = { handle, notifyFinished, setTriggerSource, setArmsSource, setSettingsSource, renderMenu };

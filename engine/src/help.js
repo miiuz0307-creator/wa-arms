@@ -12,6 +12,7 @@ const state = {
 };
 const triggersOf = (stationId) => state.triggers.filter((t) => t.station_id === stationId);
 quote.setTriggerSource(triggersOf);
+quote.setSettingsSource((stationId) => state.settings.get(stationId));
 
 async function refreshConfig() {
   const [s, src, trg] = await Promise.all([
