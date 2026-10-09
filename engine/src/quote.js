@@ -289,7 +289,13 @@ async function handleGroup(arm, m) {
   }
 
   // Several arms see the same message – only the first one handles it.
-  const { error: dupErr } = await db.from('processed_messages').insert({ station_id: arm.stationId, source_group_id: groupJid, message_id: `q:${m.key.id}` });
+  // (a database hiccup must not swallow the request – try again for up to ~40 seconds)
+  let dupErr = null;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    ({ error: dupErr } = await db.from('processed_messages').insert({ station_id: arm.stationId, source_group_id: groupJid, message_id: `q:${m.key.id}` }));
+    if (!dupErr || dupErr.code === '23505') break;
+    await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+  }
   if (dupErr) {
     if (dupErr.code !== '23505') log.error({ err: dupErr.message }, 'quote dedupe insert failed');
     else log.info({ arm: arm.name }, 'quote: already handled by another arm');
