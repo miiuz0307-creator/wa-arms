@@ -606,3 +606,16 @@ begin
   where token_hash = encode(extensions.digest(tok, 'sha256'), 'hex') and last_seen < now() - interval '1 minute';
 end $$;
 grant execute on function public.station_ping() to anon, authenticated;
+
+-- ---------- applied afterwards (fixes found while testing) ----------
+-- station_delete() was replaced by a row policy (the owner deletes through the API)
+-- create policy owner_removes_station on public.stations for delete to authenticated using (public.is_super() and not is_home);
+-- create policy owner_reads_stations on public.stations for select to authenticated using (public.is_super());
+-- grant select, delete on public.stations to authenticated;
+-- alter table public.app_settings drop constraint if exists app_settings_id_check;   -- was "id = 1"
+-- station-code users use the anon role: every permissive policy for "authenticated" now also covers anon
+--   (anon without a valid station token has rank 0 and no station, so it still sees nothing)
+-- grant execute on function my_rank, my_station, is_engine, req_header, station_from_token, home_station, is_super, role_rank to anon, authenticated;
+-- engine policies use (select public.is_engine()) so it is evaluated once per statement
+-- engine_station_states(): which stations may run their arms (suspended / expired → arms stop)
+-- create_manual_campaign(): variable renamed to v_arms (it clashed with the arms table)
