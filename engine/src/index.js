@@ -18,7 +18,7 @@ async function reconcileArms() {
     db.from('arms').select('id,name,is_active,status,station_id'),
     db.rpc('engine_station_states'),
   ]);
-  if (error) return log.error({ err: error.message }, 'load arms failed');
+  if (error) throw new Error('load arms failed: ' + error.message);
   // stations that are suspended or whose subscription ended: their arms stop
   const blocked = new Set((st.data || []).filter((s) => !s.allowed).map((s) => s.id));
   const ids = new Set(data.map((a) => a.id));
@@ -226,6 +226,10 @@ async function checkWork() {
   lastWorkCheck = Date.now();
   const { data, error } = await db.from('campaigns').select('id').in('status', ['queued', 'running']).limit(1);
   if (!error) hasWork = !!data?.length;
+  else {
+    hasWork = false; // database unreachable: nothing can be sent anyway – look again in 10s
+    lastWorkCheck = Date.now() + 9000;
+  }
 }
 
 async function sendTick(arm) {
@@ -284,15 +288,23 @@ async function heartbeat() {
   }
 }
 
+// While the database is failing, back off (up to a minute) instead of hammering it –
+// a struggling database recovers faster when it is left alone.
+let dbFailStreak = 0;
 function every(ms, fn, name) {
   const run = async () => {
     if (shuttingDown) return;
+    let failed = false;
     try {
       await fn();
     } catch (e) {
-      log.error({ loop: name, err: e.message }, 'loop error');
+      failed = true;
+      log.error({ loop: name, err: String(e.message).slice(0, 120) }, 'loop error');
     }
-    setTimeout(run, ms);
+    if (failed) dbFailStreak = Math.min(dbFailStreak + 1, 20);
+    else if (dbFailStreak) dbFailStreak = Math.max(0, dbFailStreak - 1);
+    const wait = dbFailStreak > 2 ? Math.min(60_000, ms * 2 ** Math.min(dbFailStreak - 2, 6)) : ms;
+    setTimeout(run, wait);
   };
   run();
 }
