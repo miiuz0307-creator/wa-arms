@@ -96,8 +96,8 @@ async function useDbAuthState(armId, secret) {
     }
   };
 
-  // disk: written within a second; database backup: once a minute (or every 5s without a volume)
-  const DB_EVERY_MS = dir ? 60_000 : 5000;
+  // disk: written within a second; database backup: every 10 minutes (or every 5s without a volume)
+  const DB_EVERY_MS = dir ? 10 * 60_000 : 5000;
   const diskWrites = new Map();
   const diskDeletes = new Set();
   let diskTimer = null;
