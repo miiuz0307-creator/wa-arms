@@ -349,7 +349,11 @@ async function main() {
     await help.refreshConfig();
   }, 'config');
   every(3_000, help.prepareHelpCampaigns, 'prepare');
+  // closing finished distributions: every 10s while something is running, once a minute otherwise
+  let lastFinalize = 0;
   every(10_000, async () => {
+    if (!hasWork && Date.now() - lastFinalize < 60_000) return;
+    lastFinalize = Date.now();
     const { error } = await db.rpc('finalize_campaigns_engine');
     if (error) throw error;
   }, 'finalize');
