@@ -194,14 +194,15 @@ async function handleCancel(arm, m, ctx) {
   if (!quotedId) return false;
   const groupJid = m.key.remoteJid;
 
-  // find an active distribution started from that message (quoted ride or the "עזרה" reply)
+  // find an active distribution started by that "עזרה" message. A reply to the ride itself does NOT stop
+  // anything – operators answer "נ" on rides all the time (taken), which must not cancel a distribution.
   const idq = `"${String(quotedId).replace(/"/g, '')}"`;
   const { data: sessions } = await db
     .from('quote_sessions')
     .select('id,campaign_id,trigger_key,status,arm_id')
     .eq('station_id', arm.stationId)
     .eq('source_group_id', groupJid)
-    .or(`source_message_id.eq.${idq},trigger_key->>id.eq.${idq}`)
+    .filter('trigger_key->>id', 'eq', String(quotedId))
     .order('created_at', { ascending: false })
     .limit(5);
   const { data: helps } = await db
