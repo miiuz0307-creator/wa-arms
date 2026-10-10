@@ -198,7 +198,7 @@ async function handleCancel(arm, m, ctx) {
   const idq = `"${String(quotedId).replace(/"/g, '')}"`;
   const { data: sessions } = await db
     .from('quote_sessions')
-    .select('id,campaign_id,trigger_key,status')
+    .select('id,campaign_id,trigger_key,status,arm_id')
     .eq('station_id', arm.stationId)
     .eq('source_group_id', groupJid)
     .or(`source_message_id.eq.${idq},trigger_key->>id.eq.${idq}`)
@@ -206,7 +206,7 @@ async function handleCancel(arm, m, ctx) {
     .limit(5);
   const { data: helps } = await db
     .from('campaigns')
-    .select('id,status,trigger_key')
+    .select('id,status,trigger_key,trigger_arm_id')
     .eq('station_id', arm.stationId)
     .eq('kind', 'help')
     .eq('source_group_id', groupJid)
@@ -254,11 +254,16 @@ async function handleCancel(arm, m, ctx) {
     .update({ status: 'cancelled', updated_at: new Date().toISOString() })
     .in('campaign_id', ids);
 
-  const triggerKeys = [
-    ...(sessions || []).filter((s) => ids.includes(s.campaign_id)).map((s) => s.trigger_key),
-    ...(helps || []).filter((c) => ids.includes(c.id)).map((c) => c.trigger_key),
-  ].filter(Boolean);
-  for (const k of triggerKeys) await arm.react(k, '🛑');
+  // 🛑 replaces the ⏳ – so it must come from the same arm that put the ⏳ (otherwise both show)
+  const armsNow = getArms();
+  const triggers = [
+    ...(sessions || []).filter((s) => ids.includes(s.campaign_id)).map((s) => ({ key: s.trigger_key, armId: s.arm_id })),
+    ...(helps || []).filter((c) => ids.includes(c.id)).map((c) => ({ key: c.trigger_key, armId: c.trigger_arm_id })),
+  ].filter((t) => t.key);
+  for (const t of triggers) {
+    const owner = (t.armId && armsNow.get(t.armId)) || arm;
+    await (owner.online ? owner : arm).react(t.key, '🛑');
+  }
   await arm.react(cancelKey, '👍');
   await activity(arm.stationId, 'quote_cancelled', ids[0], {
     by: op?.name || m.pushName || 'אני',
