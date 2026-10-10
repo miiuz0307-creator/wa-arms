@@ -103,7 +103,7 @@ async function refreshSettings() {
   for (const r of data) settingsByStation.set(r.station_id, r);
 }
 
-const MAX_IN_FLIGHT = 12; // parallel sends per arm in "messages per minute" mode
+const MAX_IN_FLIGHT = 4; // parallel sends per arm (fewer = incoming messages like 'עזרה'/'נ' aren't stuck behind sends) in "messages per minute" mode
 const MAX_REQUEUES = 8; // a group refused by WhatsApp goes back to the queue up to this many times
 
 // "not-acceptable" = the arm has no permission to write in that group – no point retrying

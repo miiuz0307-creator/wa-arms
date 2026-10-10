@@ -116,9 +116,11 @@ class Arm {
     const msg = m.message?.ephemeralMessage?.message || m.message || {};
     const text = msg.conversation || msg.extendedTextMessage?.text || '';
     const quoted = !!msg.extendedTextMessage?.contextInfo?.quotedMessage;
-    if (quoted && /עזרה|הפצה|לפרסם/.test(text)) {
+    if (quoted && /עזרה|הפצה|לפרסם|ביטול|בטל|נמכר|^\s*נ+\s*$/.test(text)) {
+      // lagSec = how long after it was written the arm got it
+      const lagSec = m.messageTimestamp ? Math.round(Date.now() / 1000 - Number(m.messageTimestamp)) : null;
       log.info(
-        { arm: this.name, type, group: jid.endsWith('@g.us'), fromMe: !!m.key?.fromMe, quoted, text: text.slice(0, 40), sender: m.key?.participant },
+        { arm: this.name, type, group: jid.endsWith('@g.us'), fromMe: !!m.key?.fromMe, quoted, text: text.slice(0, 40), sender: m.key?.participant, lagSec },
         'incoming candidate',
       );
     }

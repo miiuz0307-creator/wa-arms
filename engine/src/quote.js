@@ -397,8 +397,10 @@ async function handleGroup(arm, m) {
     .eq('status', 'selecting');
 
   const quotedId = ctx.stanzaId || null;
-  if (quotedId) {
-    // the same ride is still being distributed, or was fully distributed in the last 30 minutes → don't send it twice.
+  // station setting (Settings → help): minutes during which the same ride isn't sent again. 0 = always send.
+  const dupWindowMin = Number(getSettings(arm.stationId)?.duplicate_window_min ?? 10);
+  if (quotedId && dupWindowMin > 0) {
+    // the same ride is still being distributed, or was fully distributed within the station's window → don't send it twice.
     // A cancelled distribution can be started again.
     const { data: prev } = await db
       .from('quote_sessions')
@@ -412,7 +414,7 @@ async function handleGroup(arm, m) {
     if (ids.length) {
       const { data: camps } = await db.from('campaigns').select('id,status,finished_at').in('id', ids);
       const busy = (camps || []).find(
-        (c) => ['queued', 'running'].includes(c.status) || (c.status === 'completed' && Date.now() - new Date(c.finished_at).getTime() < 30 * 60 * 1000),
+        (c) => ['queued', 'running'].includes(c.status) || (c.status === 'completed' && Date.now() - new Date(c.finished_at).getTime() < dupWindowMin * 60 * 1000),
       );
       if (busy) {
         log.info({ arm: arm.name, campaign: busy.id, status: busy.status }, 'quote: this ride was already distributed');

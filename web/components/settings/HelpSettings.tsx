@@ -439,6 +439,7 @@ function Operators({ d, reload }: any) {
           </button>
         ))}
       </div>
+      <DuplicateWindow settings={d.settings} reload={reload} />
       <div className="mb-4 flex flex-wrap gap-2">
         <Input placeholder="שם" value={name} onChange={(e) => setName(e.target.value)} className="w-40" />
         <Input placeholder="050-0000000" dir="ltr" value={phone} onChange={(e) => setPhone(e.target.value)} className="w-44" />
@@ -482,5 +483,56 @@ function Operators({ d, reload }: any) {
         </ul>
       )}
     </Section>
+  );
+}
+
+// How long the same ride isn't distributed again after a "עזרה" on it (0 = always send again)
+function DuplicateWindow({ settings, reload }: any) {
+  const current = Number(settings?.duplicate_window_min ?? 10);
+  const [val, setVal] = useState(String(current));
+  const [busy, setBusy] = useState(false);
+  useEffect(() => setVal(String(current)), [current]);
+  const presets = [0, 5, 10, 30, 60];
+
+  async function save(min: number) {
+    if (!Number.isFinite(min) || min < 0 || min > 1440) return toast('מספר דקות בין 0 ל-1440', 'error');
+    setBusy(true);
+    const { error } = await sb()
+      .from('app_settings')
+      .update({ duplicate_window_min: Math.round(min), updated_at: new Date().toISOString() })
+      .eq('id', settings.id);
+    setBusy(false);
+    if (error) return toast(error.message, 'error');
+    await logAct('help_settings', 'settings', String(settings.id), { duplicate_window_min: Math.round(min) });
+    toast(min === 0 ? 'כל "עזרה" תפיץ שוב, גם על נסיעה שכבר הופצה' : `נסיעה שהופצה לא תופץ שוב במשך ${Math.round(min)} דקות`);
+    reload();
+  }
+
+  return (
+    <div className="mb-5 rounded-2xl border border-slate-200 p-4">
+      <div className="font-semibold">אותה נסיעה פעמיים</div>
+      <div className="mt-0.5 text-xs text-slate-500">
+        אם כותבים "עזרה" על נסיעה שכבר הופצה – כמה דקות לא להפיץ אותה שוב (הבוט שם 🔁). 0 = תמיד להפיץ שוב.
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        {presets.map((p) => (
+          <button
+            key={p}
+            disabled={busy}
+            onClick={() => p !== current && save(p)}
+            className={cx(
+              'rounded-xl border px-3 py-1.5 text-sm transition',
+              p === current ? 'border-indigo-300 bg-indigo-50 font-semibold text-indigo-700' : 'border-slate-200 hover:bg-slate-50',
+            )}
+          >
+            {p === 0 ? 'בלי הגבלה' : `${p} דק'`}
+          </button>
+        ))}
+        <Input type="number" min={0} max={1440} dir="ltr" value={val} onChange={(e) => setVal(e.target.value)} className="w-24" />
+        <Button variant="secondary" onClick={() => save(Number(val))} disabled={busy || Number(val) === current}>
+          שמור
+        </Button>
+      </div>
+    </div>
   );
 }
