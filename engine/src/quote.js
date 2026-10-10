@@ -222,7 +222,9 @@ async function handleCancel(arm, m, ctx) {
   let op = null;
   if (!m.key.fromMe) {
     op = (await resolveOperator(arm, m)).op;
-    if (!op || op.status !== 'approved') {
+    // same rule as for "עזרה": in "anyone in the group" mode everyone except blocked numbers may cancel
+    const open = !!getSettings(arm.stationId)?.open_trigger;
+    if (!op || op.status === 'blocked' || (op.status !== 'approved' && !open)) {
       await activity(arm.stationId, 'quote_cancel_denied', op?.id || null, { name: m.pushName, group: groupJid });
       return true;
     }
