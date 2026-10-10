@@ -234,7 +234,6 @@ async function checkWork() {
 
 async function sendTick(arm) {
   if (!hasWork || !arm.online || Date.now() < arm.nextSendAt) return;
-  if (arm.holdSendsUntil && Date.now() < arm.holdSendsUntil) return; // reading an operator message first
   const settings = settingsFor(arm);
   const rate = Number(settings.rate_per_minute) || 0;
   const penalty = arm.penalty || 1;
