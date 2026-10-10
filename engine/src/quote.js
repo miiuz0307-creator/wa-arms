@@ -280,7 +280,8 @@ async function handleGroup(arm, m) {
 
   const text = extractText(msg);
   const words = bareWords(text);
-  if (CANCEL_WORDS.has(words)) return handleCancel(arm, m, ctx);
+  // "נננ" / "ביטולל" count too (repeated letters collapsed)
+  if (CANCEL_WORDS.has(words) || CANCEL_WORDS.has(words.replace(/(.)\1+/g, '$1'))) return handleCancel(arm, m, ctx);
 
   const trigger = getTriggers(arm.stationId).find((t) => words === bareWords(t.keyword));
   if (!trigger) {
