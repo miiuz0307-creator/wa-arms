@@ -281,7 +281,10 @@ async function handleGroup(arm, m) {
   const text = extractText(msg);
   const words = bareWords(text);
   // "נננ" / "ביטולל" count too (repeated letters collapsed)
-  if (CANCEL_WORDS.has(words) || CANCEL_WORDS.has(words.replace(/(.)\1+/g, '$1'))) return handleCancel(arm, m, ctx);
+  // stop words: the station's own list (Settings → help), otherwise the defaults
+  const custom = getSettings(arm.stationId)?.cancel_words;
+  const stopWords = Array.isArray(custom) && custom.length ? new Set(custom.map((w) => bareWords(w)).filter(Boolean)) : CANCEL_WORDS;
+  if (stopWords.has(words) || stopWords.has(words.replace(/(.)\1+/g, '$1'))) return handleCancel(arm, m, ctx);
 
   const trigger = getTriggers(arm.stationId).find((t) => words === bareWords(t.keyword));
   if (!trigger) {

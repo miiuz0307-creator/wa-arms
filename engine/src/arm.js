@@ -231,6 +231,12 @@ class Arm {
     this.upserts = 0;
     this.gotMessage = false;
     this.lastRawAt = Date.now();
+    // diagnostics: "retry" receipts = members asking us to re-send a message they couldn't decrypt.
+    // Baileys handles them in the same queue as incoming messages, so many of them delay reading.
+    this.retryReceipts = 0;
+    sock.ws.on('CB:receipt', (node) => {
+      if (node?.attrs?.type === 'retry') this.retryReceipts += 1;
+    });
     sock.ws.on('CB:message', () => {
       this.raw += 1;
       this.gotMessage = true;
@@ -290,7 +296,8 @@ class Arm {
     }, 30_000);
     if (!this.rawTimer) {
       this.rawTimer = setInterval(() => {
-        if (this.raw || this.upserts) log.info({ arm: this.name, rawMessages: this.raw, upsertEvents: this.upserts }, 'socket traffic (last minute)');
+        if (this.raw || this.upserts) log.info({ arm: this.name, rawMessages: this.raw, upsertEvents: this.upserts, retryReceipts: this.retryReceipts || 0 }, 'socket traffic (last minute)');
+        this.retryReceipts = 0;
         this.raw = 0;
         this.upserts = 0;
       }, 60_000);

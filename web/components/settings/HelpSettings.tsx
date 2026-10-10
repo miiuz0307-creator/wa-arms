@@ -439,6 +439,7 @@ function Operators({ d, reload }: any) {
           </button>
         ))}
       </div>
+      <StopWords settings={d.settings} reload={reload} />
       <DuplicateWindow settings={d.settings} reload={reload} />
       <div className="mb-4 flex flex-wrap gap-2">
         <Input placeholder="שם" value={name} onChange={(e) => setName(e.target.value)} className="w-40" />
@@ -531,6 +532,55 @@ function DuplicateWindow({ settings, reload }: any) {
         <Input type="number" min={0} max={1440} dir="ltr" value={val} onChange={(e) => setVal(e.target.value)} className="w-24" />
         <Button variant="secondary" onClick={() => save(Number(val))} disabled={busy || Number(val) === current}>
           שמור
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// Words that stop a distribution when written as a reply to the ride or to the "עזרה"
+function StopWords({ settings, reload }: any) {
+  const current: string[] = Array.isArray(settings?.cancel_words) && settings.cancel_words.length ? settings.cancel_words : ['ביטול', 'בטל', 'נ', 'נמכר', 'נמכרה'];
+  const [word, setWord] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function save(list: string[]) {
+    const clean = Array.from(new Set(list.map((w) => w.trim()).filter(Boolean)));
+    if (!clean.length) return toast('צריך לפחות מילת עצירה אחת', 'error');
+    setBusy(true);
+    const { error } = await sb().from('app_settings').update({ cancel_words: clean, updated_at: new Date().toISOString() }).eq('id', settings.id);
+    setBusy(false);
+    if (error) return toast(error.message, 'error');
+    await logAct('help_settings', 'settings', String(settings.id), { cancel_words: clean });
+    toast('מילות העצירה נשמרו');
+    setWord('');
+    reload();
+  }
+
+  return (
+    <div className="mb-5 rounded-2xl border border-slate-200 p-4">
+      <div className="font-semibold">מילות עצירה</div>
+      <div className="mt-0.5 text-xs text-slate-500">
+        כותבים אחת מהן כתגובה (ציטוט) לנסיעה או ל"עזרה" – ההפצה נעצרת. כל הודעה אחרת בקבוצה לא משפיעה.
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        {current.map((w) => (
+          <span key={w} className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1 text-sm">
+            {w}
+            <button
+              disabled={busy || current.length <= 1}
+              onClick={() => save(current.filter((x) => x !== w))}
+              className="text-slate-400 hover:text-rose-600 disabled:opacity-30"
+              aria-label={`הסר ${w}`}
+            >
+              ×
+            </button>
+          </span>
+        ))}
+        <Input placeholder="מילה חדשה" value={word} onChange={(e) => setWord(e.target.value)} className="w-32" />
+        <Button variant="secondary" onClick={() => save([...current, word])} disabled={busy || !word.trim()}>
+          <Plus className="h-4 w-4" />
+          הוסף
         </Button>
       </div>
     </div>
