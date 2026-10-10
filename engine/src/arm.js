@@ -185,6 +185,40 @@ class Arm {
       userDevicesCache: (this.devCache = this.devCache || longCache()),
     });
     this.sock = sock;
+
+    // "Retry" receipts (a member couldn't decrypt one of our messages) are handled by Baileys in the
+    // same one-at-a-time queue as incoming messages, and each one waits on network calls. During a
+    // distribution hundreds arrive, so an operator's "נ" waited ~20s behind them. While this arm is
+    // sending, park retry receipts and hand them to Baileys once the sending pauses.
+    const baileysReceipt = sock.ws.listeners('CB:receipt');
+    if (baileysReceipt.length) {
+      sock.ws.removeAllListeners('CB:receipt');
+      const parked = [];
+      const pass = (node) => {
+        for (const fn of baileysReceipt) {
+          try {
+            fn(node);
+          } catch (e) {
+            log.warn({ arm: this.name, err: e.message }, 'receipt handler failed');
+          }
+        }
+      };
+      sock.ws.on('CB:receipt', (node) => {
+        if (node?.attrs?.type === 'retry' && Date.now() - (this.lastSendAt || 0) < 5000 && parked.length < 5000) {
+          parked.push(node);
+          return;
+        }
+        pass(node);
+      });
+      clearInterval(this.retryFlush);
+      this.retryFlush = setInterval(() => {
+        if (this.sock !== sock) return clearInterval(this.retryFlush);
+        if (!parked.length || Date.now() - (this.lastSendAt || 0) < 5000) return;
+        for (const node of parked.splice(0, 25)) pass(node);
+      }, 1000);
+    } else {
+      log.warn({ arm: this.name }, 'could not find Baileys receipt handler – retry receipts not deferred');
+    }
     log.info({ arm: this.name }, 'connecting');
     // A socket that neither opens nor closes would leave the arm stuck on "connecting" forever
     clearTimeout(this.connectGuard);
@@ -532,6 +566,7 @@ class Arm {
     if (!this.sock || !this.online) throw new Error('הזרוע לא מחוברת');
     const t0 = Date.now();
     let timer;
+    this.lastSendAt = Date.now();
     const sent = await Promise.race([
       this.sock.sendMessage(jid, { text }),
       new Promise((_, rej) => {
@@ -539,6 +574,7 @@ class Arm {
       }),
     ]).finally(() => clearTimeout(timer));
     this.rememberSent(sent?.key?.id);
+    this.lastSendAt = Date.now();
     const ms = Date.now() - t0;
     if (ms > 8000) log.warn({ arm: this.name, jid, ms }, 'slow send');
     return sent;
