@@ -14,6 +14,7 @@ const triggersOf = (stationId) => state.triggers.filter((t) => t.station_id === 
 quote.setTriggerSource(triggersOf);
 quote.setSettingsSource((stationId) => state.settings.get(stationId));
 quote.setSourceGroupCheck((stationId, jid) => state.sources.has(`${stationId}|${jid}`));
+require('./arm').Arm.isSourceGroup = (stationId, jid) => state.sources.has(`${stationId}|${jid}`);
 
 async function refreshConfig() {
   const [s, src, trg] = await Promise.all([

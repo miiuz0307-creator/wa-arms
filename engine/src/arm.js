@@ -231,10 +231,14 @@ class Arm {
     this.upserts = 0;
     this.gotMessage = false;
     this.lastRawAt = Date.now();
-    sock.ws.on('CB:message', () => {
+    sock.ws.on('CB:message', (node) => {
       this.raw += 1;
       this.gotMessage = true;
       this.lastRawAt = Date.now();
+      // A message in one of the station's operator groups ("עזרה" / "נ") has to be decrypted, and
+      // decryption waits behind the sends. Hold new sends for a moment so it is read right away.
+      const from = node?.attrs?.from;
+      if (from && Arm.isSourceGroup(this.stationId, from)) this.holdSendsUntil = Date.now() + 2500;
     });
     // Messages that piled up while the arm was away arrive in batches, and WhatsApp sends the next
     // batch only when asked. Baileys asks once, so after ~100 messages delivery stopped and new
@@ -585,5 +589,8 @@ class Arm {
     this.online = false;
   }
 }
+
+// set by help.js: is this group one of the station's operator (source) groups?
+Arm.isSourceGroup = () => false;
 
 module.exports = { Arm };
