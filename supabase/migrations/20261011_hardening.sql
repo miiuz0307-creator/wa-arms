@@ -5,3 +5,7 @@
 
 -- when a number was linked (QR scanned): its first 24 hours it sends slowly (warm-up)
 alter table public.arms add column if not exists linked_at timestamptz;
+
+-- finalize: an arm at its daily limit (e.g. stopped on purpose with limit 0) no longer counts as available,
+-- so groups only it can reach are closed right away instead of holding the ride for 20 minutes
+-- (full body: public.finalize_campaigns in the database)
