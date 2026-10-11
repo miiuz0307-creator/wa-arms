@@ -154,4 +154,14 @@ select testkit.as_owner('0000000b-0000-0000-0000-000000000000');
 select testkit.check((select count(*) from arms) = 2 and (select bool_and(station_id = '0000000b-0000-0000-0000-000000000000') from arms), 'owner: can enter a station to support it');
 reset role;
 
+-- monitoring
+reset role;
+update arms set status = 'offline', last_error = 'החיבור נפל' where id = '00000000-0000-0000-0002-00000000000c';
+set role authenticated; select testkit.as_owner();
+select testkit.check((select count(*) from public.owner_health() where arm_name is not null and station_name = 'תחנה ג') = 1, 'monitoring: owner sees a disconnected number of another station');
+set role anon; select testkit.as_station('tok-a');
+do $$ begin perform public.owner_health(); perform testkit.check(false, 'monitoring: stations cannot see the system monitor');
+exception when others then perform testkit.check(true, 'monitoring: stations cannot see the system monitor'); end $$;
+reset role;
+
 select n, case when ok then 'PASS' else 'FAIL' end as result, name, coalesce(left(detail, 80), '') from testkit.results where name not like '%(update attempted)%' order by n;

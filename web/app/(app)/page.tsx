@@ -23,12 +23,18 @@ export default function Dashboard() {
         .from('campaign_targets')
         .select('id', { count: 'exact', head: true })
         .eq('status', 'failed')
-        .gte('sent_at', new Date(Date.now() - 86400000).toISOString()),
+        .gte('claimed_at', new Date(Date.now() - 86400000).toISOString()),
       can('admin') ? sb().from('activity_log').select('*').order('created_at', { ascending: false }).limit(8) : Promise.resolve({ data: [] }),
     ]);
     // owner (own account, not inside a station): stations whose subscription ends this week or already ended
     let stationAlerts: any[] = [];
+    let health: any[] = [];
+    let engineSeen: string | null = null;
     if (isSuper && !station?.acting) {
+      // system monitor: disconnected numbers and failed sends in every station, engine heartbeat
+      const { data: h } = await sb().rpc('owner_health');
+      engineSeen = (h || [])[0]?.engine_seen || null;
+      health = (h || []).filter((r: any) => r.station_id && r.station_name && (r.arm_id || r.failed_hour > 0));
       const { data: st } = await sb().rpc('stations_overview');
       stationAlerts = (st || [])
         .map((s: any) => ({ ...s, left: s.sub_end ? Math.ceil((new Date(s.sub_end + 'T23:59:59').getTime() - Date.now()) / 86400000) : null }))
@@ -70,6 +76,8 @@ export default function Dashboard() {
       log: log.data || [],
       noPerm,
       stationAlerts,
+      health,
+      engineDown: isSuper && !station?.acting && engineSeen && Date.now() - new Date(engineSeen).getTime() > 3 * 60_000 ? engineSeen : null,
     });
   }, [can, isSuper, station?.acting]);
 
@@ -109,7 +117,7 @@ export default function Dashboard() {
         <Stat label="הפצות פעילות" value={d.active.length} icon={<Radio className="h-5 w-5" />} tone="pink" />
       </div>
 
-      {(problems.length > 0 || d.pendingPhone > 0 || d.recentFailed > 0 || d.noPerm.count > 0 || d.stationAlerts.length > 0) && (
+      {(problems.length > 0 || d.pendingPhone > 0 || d.recentFailed > 0 || d.noPerm.count > 0 || d.stationAlerts.length > 0 || d.health.length > 0 || d.engineDown) && (
         <Card className="mt-4 border-amber-200 bg-amber-50/60 p-4">
           <div className="mb-2 flex items-center gap-2 font-semibold text-amber-900">
             <AlertTriangle className="h-4 w-4" />
@@ -131,6 +139,20 @@ export default function Dashboard() {
                 </Link>
               </li>
             )}
+            {d.engineDown && (
+              <li className="font-semibold text-rose-700">המנוע לא דיווח מאז {fmtTime(d.engineDown)} – ייתכן שהשרת נפל. בדוק ב-Railway.</li>
+            )}
+            {d.health
+              .filter((r: any) => r.station_id !== station?.id)
+              .map((r: any, i: number) => (
+                <li key={`h${i}`}>
+                  <Link href="/stations" className="hover:underline">
+                    תחנה <b>{r.station_name}</b>
+                    {r.arm_id ? ` – ${r.arm_name}: ${ARM_STATUS[r.arm_status]?.label || r.arm_status}${r.arm_error ? ` (${r.arm_error})` : ''}` : ''}
+                    {r.failed_hour > 0 ? ` – ${r.failed_hour} שליחות נכשלו בשעה האחרונה` : ''}
+                  </Link>
+                </li>
+              ))}
             {d.stationAlerts.map((s: any) => (
               <li key={s.id}>
                 <Link href="/stations" className="hover:underline">
