@@ -8,7 +8,7 @@ import nodemailer from 'npm:nodemailer@6.9.14';
 const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
 const CORS = {
   'access-control-allow-origin': '*',
-  'access-control-allow-headers': 'authorization, x-client-info, apikey, content-type',
+  'access-control-allow-headers': 'authorization, x-client-info, apikey, content-type, x-station-token, x-act-station',
   'access-control-allow-methods': 'POST, OPTIONS',
 };
 const json = (b: unknown, status = 200) => Response.json(b, { status, headers: CORS });
