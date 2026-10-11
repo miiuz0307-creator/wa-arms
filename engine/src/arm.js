@@ -170,7 +170,7 @@ class Arm {
 
     const sock = makeWASocket({
       version: await waVersion(),
-      auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, waLogger) },
+      auth: { creds: state.creds, keys: (this.signalKeys = makeCacheableSignalKeyStore(state.keys, waLogger)) },
       logger: waLogger,
       browser: Browsers.ubuntu('Chrome'),
       printQRInTerminal: false,
@@ -193,7 +193,6 @@ class Arm {
     const baileysReceipt = sock.ws.listeners('CB:receipt');
     if (baileysReceipt.length) {
       sock.ws.removeAllListeners('CB:receipt');
-      const parked = [];
       const pass = (node) => {
         for (const fn of baileysReceipt) {
           try {
@@ -203,21 +202,28 @@ class Arm {
           }
         }
       };
+      // Group "retry" receipts: after a distribution they arrive by the thousand, and Baileys handles each
+      // one (with network calls) in the same queue as incoming messages – "עזרה"/"נ" then waited minutes.
+      // Baileys can't re-send the message anyway (we keep no copies), so handle them here instantly:
+      // acknowledge, and mark the group so the next message hands the encryption key to everyone again.
+      const resetKeyAt = new Map();
       sock.ws.on('CB:receipt', (node) => {
-        if (node?.attrs?.type === 'retry' && Date.now() - (this.lastSendAt || 0) < 5000 && parked.length < 5000) {
-          parked.push(node);
+        const a = node?.attrs || {};
+        if (a.type === 'retry' && String(a.from || '').endsWith('@g.us')) {
+          const ack = { tag: 'ack', attrs: { id: a.id, to: a.from, class: 'receipt', type: 'retry' } };
+          if (a.participant) ack.attrs.participant = a.participant;
+          if (a.recipient) ack.attrs.recipient = a.recipient;
+          Promise.resolve(sock.sendNode?.(ack)).catch(() => {});
+          if (Date.now() - (resetKeyAt.get(a.from) || 0) > 60_000) {
+            resetKeyAt.set(a.from, Date.now());
+            Promise.resolve(this.signalKeys?.set({ 'sender-key-memory': { [a.from]: null } })).catch(() => {});
+          }
           return;
         }
         pass(node);
       });
-      clearInterval(this.retryFlush);
-      this.retryFlush = setInterval(() => {
-        if (this.sock !== sock) return clearInterval(this.retryFlush);
-        if (!parked.length || Date.now() - (this.lastSendAt || 0) < 5000) return;
-        for (const node of parked.splice(0, 25)) pass(node);
-      }, 1000);
     } else {
-      log.warn({ arm: this.name }, 'could not find Baileys receipt handler – retry receipts not deferred');
+      log.warn({ arm: this.name }, 'could not find Baileys receipt handler – retry receipts handled by Baileys');
     }
     log.info({ arm: this.name }, 'connecting');
     // A socket that neither opens nor closes would leave the arm stuck on "connecting" forever
