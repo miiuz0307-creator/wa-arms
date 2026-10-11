@@ -313,3 +313,28 @@ test('groups: member lists kept only for source and target groups; the full list
   assert.equal(upserts.length, 4, 'id + name of every group still saved, so new groups can be picked in the app');
   assert.deepEqual(Object.keys(upserts[0]).sort(), ['arm_id', 'name', 'participants', 'updated_at', 'wa_group_id']);
 });
+
+test('resend: one at a time, never a flood (at most one every 2 seconds)', async () => {
+  const arm = new Arm({ id: 'rs', name: 'r', station_id: 'st' }, () => {});
+  let inFlight = 0;
+  let maxInFlight = 0;
+  let calls = 0;
+  const sock = {
+    assertSessions: async () => {},
+    relayMessage: async () => {
+      calls++;
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((r) => setTimeout(r, 2500)); // slower than the 2s gap – used to start a second chain
+      inFlight--;
+    },
+  };
+  arm.sock = sock;
+  arm.online = true;
+  arm.sentStore = new Map([['ID1', { message: { conversation: 'x' }, at: Date.now() }]]);
+  for (let i = 0; i < 20; i++) arm.queueResend(sock, 'g@g.us', 'ID1', `p${i}@lid`, 1);
+  await new Promise((r) => setTimeout(r, 9000));
+  assert.equal(maxInFlight, 1);
+  assert.ok(calls <= 3, `only ~2 per 9s, got ${calls}`);
+  arm.resendQueue = [];
+});

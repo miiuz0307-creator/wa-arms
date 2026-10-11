@@ -17,7 +17,7 @@ let shuttingDown = false;
 // Keep running arms in line with the arms table
 async function reconcileArms() {
   const [{ data, error }, st] = await Promise.all([
-    db.from('arms').select('id,name,is_active,status,station_id'),
+    db.from('arms').select('id,name,is_active,status,station_id,linked_at'),
     db.rpc('engine_station_states'),
   ]);
   if (error) throw new Error('load arms failed: ' + error.message);
@@ -31,6 +31,7 @@ async function reconcileArms() {
     if (arm) {
       arm.name = row.name;
       arm.stationId = row.station_id;
+      arm.linkedAt = row.linked_at ? new Date(row.linked_at).getTime() : 0;
     }
     const shouldRun = row.is_active && !blocked.has(row.station_id);
     if (row.is_active && blocked.has(row.station_id) && !arm && row.status !== 'paused') {
@@ -130,7 +131,9 @@ async function refreshSettings() {
 }
 
 const MAX_IN_FLIGHT = 4; // parallel sends per arm (fewer = incoming messages like 'עזרה'/'נ' aren't stuck behind sends) in "messages per minute" mode
-const MAX_REQUEUES = 8; // a group refused by WhatsApp goes back to the queue up to this many times
+const MAX_REQUEUES = 8;
+const WARMUP_MS = 24 * 60 * 60_000;
+const WARMUP_RATE = 6; // messages per minute during a new number's first day // a group refused by WhatsApp goes back to the queue up to this many times
 
 // "not-acceptable" = the arm has no permission to write in that group – no point retrying
 const NO_PERMISSION = /not-acceptable|forbidden|not-authorized/i;
@@ -297,14 +300,19 @@ async function checkWork() {
 async function sendTick(arm) {
   if (!hasWork || !arm.online || Date.now() < arm.nextSendAt) return;
   const settings = settingsFor(arm);
-  const rate = Number(settings.rate_per_minute) || 0;
+  // Warm-up: a number linked less than 24 hours ago sends slowly (at most WARMUP_RATE a minute, one at a time).
+  // Every first message to a group hands our new encryption key to every member; done fast across hundreds
+  // of groups WhatsApp refuses (rate-overlimit) and members see "waiting for this message".
+  const warming = arm.linkedAt && Date.now() - arm.linkedAt < WARMUP_MS;
+  let rate = Number(settings.rate_per_minute) || 0;
+  if (warming) rate = Math.min(rate || WARMUP_RATE, WARMUP_RATE);
   const penalty = arm.penalty || 1;
 
   if (rate > 0) {
     // "N messages per minute": start a send every 60/N seconds (±15%), several may run at once.
     // After a refusal (penalty > 1) the arm sends one at a time, more slowly.
     arm.inFlight = arm.inFlight || 0;
-    const maxInFlight = penalty > 1 ? 1 : MAX_IN_FLIGHT;
+    const maxInFlight = penalty > 1 || warming ? 1 : MAX_IN_FLIGHT;
     if (arm.inFlight >= maxInFlight || arm.claiming) return;
     const interval = (60_000 / rate) * penalty;
     arm.claiming = true;

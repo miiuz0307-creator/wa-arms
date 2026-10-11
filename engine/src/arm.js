@@ -190,13 +190,17 @@ class Arm {
     this.resendQueue = this.resendQueue || [];
     if (this.resendQueue.length > 500) return; // a flood: drop the excess rather than pile up
     this.resendQueue.push({ sock, jid, id, participant, count, message: m.message });
-    if (!this.resendTimer) this.resendTimer = setTimeout(() => this.runResends(), 2000);
+    if (!this.resendTimer && !this.resending) this.resendTimer = setTimeout(() => this.runResends(), 2000);
   }
 
+  // one worker at a time (a second chain started while the first awaited its network call, and under
+  // a flood they multiplied – over 1,000 re-sends a minute, which WhatsApp answered with rate-overlimit)
   async runResends() {
     this.resendTimer = null;
+    if (this.resending) return;
     const job = this.resendQueue?.shift();
     if (!job) return;
+    this.resending = true;
     if (job.sock === this.sock && this.online) {
       try {
         await job.sock.assertSessions([job.participant], true);
@@ -206,7 +210,8 @@ class Arm {
         this.resendFailed = (this.resendFailed || 0) + 1;
       }
     }
-    if (this.resendQueue.length) this.resendTimer = setTimeout(() => this.runResends(), 2000);
+    this.resending = false;
+    if (this.resendQueue.length && !this.resendTimer) this.resendTimer = setTimeout(() => this.runResends(), 2000);
   }
 
   rememberSent(id) {
@@ -250,6 +255,7 @@ class Arm {
     const { state, saveCreds, flush, clear } = await useDbAuthState(this.id, SESSION_SECRET);
     this.auth = { flush, clear };
     this.creds = state.creds;
+    this.wasLinked = !!state.creds?.me; // false = a QR scan is about to link a new number
 
     const sock = makeWASocket({
       version: await waVersion(),
@@ -544,7 +550,8 @@ class Arm {
       log.warn({ arm: this.name, code }, 'arm connection closed');
 
       if (code === DisconnectReason.restartRequired) {
-        // normal right after scanning the QR
+        // normal right after scanning the QR – a newly linked number starts with a slow warm-up
+        if (!this.wasLinked) await this.update({ linked_at: new Date().toISOString() });
         this.stopped = true;
         return this.start();
       }
