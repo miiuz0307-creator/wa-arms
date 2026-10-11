@@ -19,11 +19,18 @@ function longCache(ttlMs = 12 * 60 * 60 * 1000) {
     }
     return e.v;
   };
+  // expired entries were only dropped when read again, so the cache grew for as long as the engine ran
+  const sweep = () => {
+    if (m.size < 20_000) return;
+    const now = Date.now();
+    for (const [k, e] of m) if (e.exp < now) m.delete(k);
+    while (m.size > 50_000) m.delete(m.keys().next().value);
+  };
   return {
     get: (k) => live(k),
-    set: (k, v) => (m.set(k, { v, exp: Date.now() + ttlMs }), true),
+    set: (k, v) => (sweep(), m.set(k, { v, exp: Date.now() + ttlMs }), true),
     mget: (ks) => Object.fromEntries(ks.map((k) => [k, live(k)]).filter(([, v]) => v !== undefined)),
-    mset: (list) => (list.forEach(({ key, val }) => m.set(key, { v: val, exp: Date.now() + ttlMs })), true),
+    mset: (list) => (sweep(), list.forEach(({ key, val }) => m.set(key, { v: val, exp: Date.now() + ttlMs })), true),
     del: (k) => (Array.isArray(k) ? k.forEach((x) => m.delete(x)) : m.delete(k), true),
     take: (k) => {
       const v = live(k);
@@ -126,6 +133,39 @@ class Arm {
     }
   }
 
+  // Re-send to one member who reported "couldn't decrypt". Limits (to respect WhatsApp and keep the
+  // arm light): only our own messages from the last 10 minutes, once per member per message,
+  // at most 2 tries by the member, at most 30 re-sends a minute per arm.
+  queueResend(sock, jid, id, participant, count) {
+    const m = this.sentStore?.get(id);
+    if (!m || !participant || count > 2 || Date.now() - m.at > 10 * 60_000) return;
+    this.resendDone = this.resendDone || new Set();
+    const k = `${id}|${participant}`;
+    if (this.resendDone.has(k)) return;
+    this.resendDone.add(k);
+    if (this.resendDone.size > 5000) this.resendDone.delete(this.resendDone.values().next().value);
+    this.resendQueue = this.resendQueue || [];
+    if (this.resendQueue.length > 500) return; // a flood: drop the excess rather than pile up
+    this.resendQueue.push({ sock, jid, id, participant, count, message: m.message });
+    if (!this.resendTimer) this.resendTimer = setTimeout(() => this.runResends(), 2000);
+  }
+
+  async runResends() {
+    this.resendTimer = null;
+    const job = this.resendQueue?.shift();
+    if (!job) return;
+    if (job.sock === this.sock && this.online) {
+      try {
+        await job.sock.assertSessions([job.participant], true);
+        await job.sock.relayMessage(job.jid, job.message, { messageId: job.id, participant: { jid: job.participant, count: job.count } });
+        this.resent = (this.resent || 0) + 1;
+      } catch (e) {
+        this.resendFailed = (this.resendFailed || 0) + 1;
+      }
+    }
+    if (this.resendQueue.length) this.resendTimer = setTimeout(() => this.runResends(), 2000);
+  }
+
   rememberSent(id) {
     if (!id) return;
     this.sentIds.add(id);
@@ -218,6 +258,10 @@ class Arm {
             resetKeyAt.set(a.from, Date.now());
             Promise.resolve(this.signalKeys?.set({ 'sender-key-memory': { [a.from]: null } })).catch(() => {});
           }
+          // the member couldn't read one of our rides: send it again to that member only
+          // (what a normal WhatsApp client does), in a separate slow queue so reading is never delayed
+          const retryNode = (node.content || []).find?.((c) => c?.tag === 'retry');
+          this.queueResend(sock, a.from, a.id, a.participant, Number(retryNode?.attrs?.count) || 1);
           return;
         }
         pass(node);
@@ -228,8 +272,10 @@ class Arm {
     log.info({ arm: this.name }, 'connecting');
     // A socket that neither opens nor closes would leave the arm stuck on "connecting" forever
     clearTimeout(this.connectGuard);
+    const connectStart = Date.now();
     this.connectGuard = setTimeout(() => {
-      if (this.sock !== sock || this.online) return;
+      // showing a QR is not "stuck": WhatsApp keeps renewing it until it is scanned or expires by itself
+      if (this.sock !== sock || this.online || (this.lastQrAt || 0) > connectStart) return;
       log.warn({ arm: this.name }, 'still not connected after 90s – retrying');
       try {
         sock.end(new Error('connect stuck'));
@@ -336,8 +382,10 @@ class Arm {
     }, 30_000);
     if (!this.rawTimer) {
       this.rawTimer = setInterval(() => {
-        if (this.raw || this.upserts) log.info({ arm: this.name, rawMessages: this.raw, upsertEvents: this.upserts, retryReceipts: this.retryReceipts || 0 }, 'socket traffic (last minute)');
+        if (this.raw || this.upserts) log.info({ arm: this.name, rawMessages: this.raw, upsertEvents: this.upserts, retryReceipts: this.retryReceipts || 0, resent: this.resent || 0, resendFailed: this.resendFailed || 0, resendQueue: this.resendQueue?.length || 0 }, 'socket traffic (last minute)');
         this.retryReceipts = 0;
+        this.resent = 0;
+        this.resendFailed = 0;
         this.raw = 0;
         this.upserts = 0;
       }, 60_000);
@@ -420,6 +468,7 @@ class Arm {
     if (sock !== this.sock) return; // stale socket
 
     if (u.qr) {
+      this.lastQrAt = Date.now();
       await db.from('arm_qr').upsert({ arm_id: this.id, qr: u.qr, updated_at: new Date().toISOString() });
       await this.update({ status: 'qr', last_error: null });
     }
@@ -452,6 +501,24 @@ class Arm {
         await this.update({ status: 'pending', last_error: 'פג תוקף ה-QR. לחץ "QR חדש".' });
         this.stopped = true;
         return;
+      }
+      // 403 = WhatsApp refused this number (blocked/banned). Reconnecting again and again only
+      // makes it worse – stop and tell the manager. The session is kept (nothing is deleted).
+      if (code === 403) {
+        await this.update({ status: 'error', last_error: 'וואטסאפ חסם או הגביל את המספר הזה (קוד 403). בדוק בטלפון, ואז לחץ "התחבר".' });
+        this.stopped = true;
+        log.error({ arm: this.name }, 'WhatsApp refused the number (403) – not reconnecting');
+        return;
+      }
+      // 440 = the same session was opened somewhere else. Retrying forever makes the two fight.
+      if (code === DisconnectReason.connectionReplaced) {
+        this.replaced = (this.replaced || []).filter((t) => Date.now() - t < 10 * 60_000).concat(Date.now());
+        if (this.replaced.length >= 3) {
+          await this.update({ status: 'error', last_error: 'החיבור נפתח במקום אחר (קוד 440) שוב ושוב. ודא שהמספר לא מחובר לשרת אחר, ואז לחץ "התחבר".' });
+          this.stopped = true;
+          log.error({ arm: this.name }, 'session replaced repeatedly (440) – not reconnecting');
+          return;
+        }
       }
       await this.update({ status: 'offline', last_error: `החיבור נפל (קוד ${code ?? 'לא ידוע'}), מתחבר מחדש` });
       this.stopped = true;
@@ -568,18 +635,30 @@ class Arm {
     return ok;
   }
 
-  async send(jid, text) {
+  // messageId: a fixed id per distribution target, so a retry of the same send is the same
+  // WhatsApp message (recipients drop a repeated id) instead of a second copy of the ride.
+  async send(jid, text, messageId) {
     if (!this.sock || !this.online) throw new Error('הזרוע לא מחוברת');
     const t0 = Date.now();
     let timer;
     this.lastSendAt = Date.now();
     const sent = await Promise.race([
-      this.sock.sendMessage(jid, { text }),
+      this.sock.sendMessage(jid, { text }, messageId ? { messageId } : undefined),
       new Promise((_, rej) => {
-        timer = setTimeout(() => rej(new Error('Timed Out (שליחה לא הסתיימה תוך 45 שניות)')), 45_000);
+        timer = setTimeout(() => {
+          // the message may already be on its way – the caller must not send it again
+          const e = new Error('לא התקבל אישור תוך 45 שניות – ייתכן שנשלחה');
+          e.uncertain = true;
+          rej(e);
+        }, 45_000);
       }),
     ]).finally(() => clearTimeout(timer));
     this.rememberSent(sent?.key?.id);
+    if (sent?.key?.id && sent.message) {
+      this.sentStore = this.sentStore || new Map();
+      this.sentStore.set(sent.key.id, { message: sent.message, at: Date.now() });
+      if (this.sentStore.size > 1500) this.sentStore.delete(this.sentStore.keys().next().value);
+    }
     this.lastSendAt = Date.now();
     const ms = Date.now() - t0;
     if (ms > 8000) log.warn({ arm: this.name, jid, ms }, 'slow send');

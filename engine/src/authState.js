@@ -51,20 +51,62 @@ function localDir(armId) {
   }
 }
 
+// Write a file so that a crash mid-write never leaves a half-written key: write a temp file
+// (names starting with '.' are ignored on load), flush it to disk, then rename over the old one.
+async function writeAtomic(file, data, durable = true) {
+  const tmp = path.join(path.dirname(file), `.tmp-${path.basename(file)}-${process.pid}-${crypto.randomBytes(4).toString('hex')}`);
+  const fh = await fsp.open(tmp, 'w');
+  try {
+    await fh.writeFile(data);
+    if (durable) await fh.sync();
+  } finally {
+    await fh.close();
+  }
+  try {
+    await fsp.rename(tmp, file);
+  } catch (e) {
+    await fsp.unlink(tmp).catch(() => {});
+    throw e;
+  }
+}
+
 async function useDbAuthState(armId, secret) {
   const key = deriveKey(secret);
   const cache = new Map();
   const dir = localDir(armId);
 
+  const valid = (v) => {
+    try {
+      decrypt(key, v);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   let fromDisk = false;
   if (dir && fs.existsSync(path.join(dir, fname('creds')))) {
+    let bad = 0;
     for (const f of await fsp.readdir(dir)) {
-      if (f.startsWith('.')) continue;
+      if (f.startsWith('.')) {
+        if (f.startsWith('.tmp-')) await fsp.unlink(path.join(dir, f)).catch(() => {}); // leftover of an interrupted write
+        continue;
+      }
       try {
-        cache.set(decodeURIComponent(f), await fsp.readFile(path.join(dir, f), 'utf8'));
+        const v = await fsp.readFile(path.join(dir, f), 'utf8');
+        if (valid(v)) cache.set(decodeURIComponent(f), v);
+        else bad += 1; // damaged file: skip it (WhatsApp re-creates per-chat keys as needed)
       } catch {}
     }
+    if (bad) log.warn({ armId, bad }, 'damaged auth files skipped');
     fromDisk = true;
+    // the login identity on disk is damaged: take it from the database backup instead of losing the connection
+    if (!cache.has('creds')) {
+      const { data } = await db.from('arm_auth').select('key,value').eq('arm_id', armId).or('key.eq.creds,key.like.app-state-sync-key-%');
+      for (const r of data || []) if (valid(r.value) && !cache.has(r.key)) cache.set(r.key, r.value);
+      log.warn({ armId, restored: !!cache.get('creds') }, 'creds on disk unreadable – restored from database backup');
+      if (cache.has('creds')) await writeAtomic(path.join(dir, fname('creds')), cache.get('creds')).catch(() => {});
+    }
   } else {
     // keyset paging (by key) – offset paging re-read all earlier rows and timed out on large sessions
     let last = null;
@@ -80,7 +122,7 @@ async function useDbAuthState(armId, secret) {
       last = data[data.length - 1].key;
     }
     if (dir && cache.size) {
-      for (const [k, v] of cache) await fsp.writeFile(path.join(dir, fname(k)), v).catch(() => {});
+      for (const [k, v] of cache) await writeAtomic(path.join(dir, fname(k)), v, false).catch(() => {});
     }
   }
   log.info({ armId, keys: cache.size, source: fromDisk ? 'disk' : 'database' }, 'auth state loaded');
@@ -107,7 +149,7 @@ async function useDbAuthState(armId, secret) {
     diskWrites.clear();
     const ds = [...diskDeletes];
     diskDeletes.clear();
-    for (const [k, v] of ws) await fsp.writeFile(path.join(dir, fname(k)), v).catch((e) => log.error({ armId, err: e.message }, 'auth disk write failed'));
+    for (const [k, v] of ws) await writeAtomic(path.join(dir, fname(k)), v, k === 'creds' || k.startsWith('app-state-sync-key-')).catch((e) => log.error({ armId, err: e.message }, 'auth disk write failed'));
     for (const k of ds) await fsp.unlink(path.join(dir, fname(k))).catch(() => {});
   };
   const diskFlush = () => {
@@ -198,7 +240,8 @@ async function useDbAuthState(armId, secret) {
 
   // make sure the database backup has the identity keys (once per start, a few rows)
   if (dir) {
-    for (const [k, v] of cache) if (backupKey(k)) pendingWrites.set(k, v);
+    // only values that decrypt correctly – a damaged copy must never overwrite a good backup
+    for (const [k, v] of cache) if (backupKey(k) && valid(v)) pendingWrites.set(k, v);
     if (pendingWrites.size) timer = setTimeout(dbFlush, 30_000);
   }
 

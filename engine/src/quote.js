@@ -406,6 +406,26 @@ async function handleGroup(arm, m) {
     .eq('status', 'selecting');
 
   const quotedId = ctx.stanzaId || null;
+  // Two dispatchers writing "עזרה" on the same ride at the same moment both passed the check below
+  // (neither distribution existed yet) and the ride went out twice. One at a time per ride.
+  const rideKey = quotedId ? `${arm.stationId}|${quotedId}` : null;
+  if (rideKey) {
+    const t = ridesInProgress.get(rideKey);
+    if (t && Date.now() - t < 2 * 60_000) {
+      log.info({ arm: arm.name }, 'quote: same ride requested twice at once – second request ignored');
+      await arm.react(triggerKey, '🔁');
+      return true;
+    }
+    ridesInProgress.set(rideKey, Date.now());
+  }
+  try {
+    return await startRide();
+  } finally {
+    // keep the mark briefly: the distribution row now exists and the normal check takes over
+    if (rideKey) setTimeout(() => ridesInProgress.delete(rideKey), 15_000);
+  }
+
+  async function startRide() {
   // station setting (Settings → help): minutes during which the same ride isn't sent again. 0 = always send.
   const dupWindowMin = Number(getSettings(arm.stationId)?.duplicate_window_min ?? 10);
   if (quotedId && dupWindowMin > 0) {
@@ -477,7 +497,9 @@ async function handleGroup(arm, m) {
   await update(session, { status: 'cancelled' });
   await fail(arm, triggerKey, session.id, session.review_reason);
   return true;
+  }
 }
+const ridesInProgress = new Map();
 
 // ---------- private chat commands ----------
 

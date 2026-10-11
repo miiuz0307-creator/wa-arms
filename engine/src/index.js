@@ -3,6 +3,7 @@ const { db, log } = require('./config');
 const { Arm } = require('./arm');
 const help = require('./help');
 const quote = require('./quote');
+const backup = require('./backup');
 const { randomBetween, sleep } = require('./util');
 
 const arms = new Map(); // arm id -> Arm
@@ -19,6 +20,7 @@ async function reconcileArms() {
     db.rpc('engine_station_states'),
   ]);
   if (error) throw new Error('load arms failed: ' + error.message);
+  if (st.error) throw new Error('load station states failed: ' + st.error.message);
   // stations that are suspended or whose subscription ended: their arms stop
   const blocked = new Set((st.data || []).filter((s) => !s.allowed).map((s) => s.id));
   const ids = new Set(data.map((a) => a.id));
@@ -48,14 +50,37 @@ async function reconcileArms() {
       log.info({ arm: row.name }, 'arm paused');
     }
   }
+  // An arm missing from the list is logged out of WhatsApp only when it was really deleted:
+  // an empty/partial answer from the database (overload, permissions hiccup) must never
+  // log out every number. Require: the list is not empty, the arm is missing on two checks
+  // at least 30s apart, and a direct lookup by id confirms the row is gone.
+  if (!data.length && arms.size) {
+    log.warn({ running: arms.size }, 'arms list came back empty – ignoring (no arm is removed)');
+    return;
+  }
   for (const [id, arm] of arms) {
-    if (!ids.has(id)) {
-      arms.delete(id);
-      await arm.destroy();
-      log.info({ arm: arm.name }, 'arm removed');
+    if (ids.has(id)) {
+      missingSince.delete(id);
+      continue;
     }
+    const since = missingSince.get(id);
+    if (!since) {
+      missingSince.set(id, Date.now());
+      continue;
+    }
+    if (Date.now() - since < 30_000) continue;
+    const { data: row, error: e2 } = await db.from('arms').select('id').eq('id', id).maybeSingle();
+    if (e2 || row) {
+      missingSince.delete(id);
+      continue;
+    }
+    missingSince.delete(id);
+    arms.delete(id);
+    await arm.destroy();
+    log.info({ arm: arm.name }, 'arm removed (deleted in the app)');
   }
 }
+const missingSince = new Map();
 
 async function processCommands() {
   const { data, error } = await db
@@ -137,6 +162,26 @@ function speedUp(arm) {
   }
 }
 
+// WhatsApp-style message id (3EB0 + hex), the same for every retry of one target on one arm
+function msgIdFor(targetId, armId) {
+  return '3EB0' + require('crypto').createHash('sha1').update(`${targetId}|${armId}`).digest('hex').slice(0, 18).toUpperCase();
+}
+
+async function withRetry(fn, tries = 6) {
+  let last;
+  for (let i = 0; i < tries; i++) {
+    const res = await fn().catch((e) => ({ error: e }));
+    if (!res?.error) return res;
+    last = res.error;
+    await sleep(Math.min(8000, 500 * 2 ** i));
+  }
+  log.error({ err: String(last?.message || last).slice(0, 120) }, 'database write failed after retries');
+  return { error: last };
+}
+
+const recordResult = (id, armId, ok, err) =>
+  withRetry(() => db.rpc('target_result_engine', { p_id: id, p_arm: armId, p_ok: ok, p_error: err }));
+
 async function sendOne(arm) {
   const { data, error } = await db.rpc('claim_target_engine', { p_arm: arm.id });
   if (error) throw error;
@@ -154,13 +199,19 @@ async function sendOne(arm) {
 
   let ok = false;
   let errText = null;
+  let uncertain = false;
+  const messageId = msgIdFor(job.target_id, arm.id);
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      await arm.send(job.wa_group_id, job.final_text);
+      await arm.send(job.wa_group_id, job.final_text, messageId);
       ok = true;
       break;
     } catch (e) {
       errText = e?.message || 'שגיאת שליחה';
+      if (e?.uncertain) {
+        uncertain = true;
+        break;
+      }
       if (!HICCUP.test(errText) || attempt === 3) break;
       await sleep(1000 * attempt);
     }
@@ -168,7 +219,16 @@ async function sendOne(arm) {
 
   if (ok) {
     speedUp(arm);
-    await db.rpc('target_result_engine', { p_id: job.target_id, p_arm: arm.id, p_ok: true, p_error: null });
+    // the message is out: recording it must not be lost to a database hiccup, otherwise the
+    // group would look unsent and could get the ride again
+    await recordResult(job.target_id, arm.id, true, null);
+    return true;
+  }
+
+  // no confirmation from WhatsApp: it may have been delivered – close it, never re-send
+  if (uncertain) {
+    await withRetry(() => db.from('campaign_targets').update({ status: 'failed', error: `${errText}. לא נשלחה שוב כדי למנוע כפילות` }).eq('id', job.target_id));
+    log.warn({ arm: arm.name, group: job.wa_group_id }, 'send unconfirmed – not retried');
     return true;
   }
 
@@ -212,7 +272,7 @@ async function sendOne(arm) {
     }
   }
 
-  await db.rpc('target_result_engine', { p_id: job.target_id, p_arm: arm.id, p_ok: false, p_error: errText });
+  await recordResult(job.target_id, arm.id, false, errText);
   log.warn({ arm: arm.name, group: job.wa_group_id, err: errText }, 'send failed');
   return true;
 }
@@ -358,6 +418,8 @@ async function main() {
     if (error) throw error;
   }, 'finalize');
   every(30_000, heartbeat, 'heartbeat');
+  // daily database backup to the server disk (does not fail the loop – errors are logged)
+  every(10 * 60_000, () => backup.maybeBackup(), 'backup');
   every(5_000, () => quote.notifyFinished(arms), 'quote-notify');
   every(5_000, () => help.reactFinished(arms), 'help-react');
   every(250, async () => {
@@ -370,6 +432,9 @@ async function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
   log.info({ signal }, 'shutting down');
+  // no new sends start now (loops stop on shuttingDown); let sends already on the way finish and be recorded
+  const t0 = Date.now();
+  while (Date.now() - t0 < 12_000 && [...arms.values()].some((a) => a.inFlight > 0 || a.busy)) await sleep(200);
   await Promise.race([
     Promise.all([...arms.values()].map((a) => a.stop())),
     sleep(8000),
@@ -382,12 +447,17 @@ async function shutdown(signal) {
   process.exit(0);
 }
 
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
-process.on('unhandledRejection', (e) => log.error({ err: e?.message || String(e) }, 'unhandled rejection'));
-process.on('uncaughtException', (e) => log.error({ err: e?.message || String(e) }, 'uncaught exception'));
+if (require.main === module) {
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('unhandledRejection', (e) => log.error({ err: e?.message || String(e) }, 'unhandled rejection'));
+  process.on('uncaughtException', (e) => log.error({ err: e?.message || String(e) }, 'uncaught exception'));
 
-main().catch((e) => {
-  log.fatal({ err: e.message }, 'engine failed to start');
-  process.exit(1);
-});
+  main().catch((e) => {
+    log.fatal({ err: e.message }, 'engine failed to start');
+    process.exit(1);
+  });
+}
+
+// for the automated tests
+module.exports = { reconcileArms, sendOne, arms, msgIdFor };

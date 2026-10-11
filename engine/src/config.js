@@ -29,7 +29,11 @@ const SESSION_SECRET = required('SESSION_SECRET');
 
 const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
-  global: { headers: { 'x-engine-key': ENGINE_KEY } },
+  global: {
+    headers: { 'x-engine-key': ENGINE_KEY },
+    // a database call that hangs must not freeze a loop forever (every loop awaits its call)
+    fetch: (url, opts = {}) => fetch(url, { ...opts, signal: opts.signal || AbortSignal.timeout(25_000) }),
+  },
 });
 
 const log = pino({ level: process.env.LOG_LEVEL || 'info' });
