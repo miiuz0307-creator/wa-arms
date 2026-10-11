@@ -281,4 +281,34 @@ select testkit.as_engine();
 select testkit.check((select count(*) from public.engine_outbox_take(10)) >= 1, 'phone login: engine takes the code messages to send');
 reset role;
 
+-- update center
+insert into releases (version, title, changes, components, commit_sha, migration_sql, rollback_sql)
+values ('t1', 'test', array['x'], array['web', 'db'], 'abcdef1234567', 'create table public.rel_test (id int)', 'drop table public.rel_test');
+select id as rel from releases where version = 't1' \gset
+set role anon; select testkit.as_nobody('10.9.9.8');
+do $$ begin perform public.owner_releases(); perform testkit.check(false, 'updates: strangers cannot see updates');
+exception when others then perform testkit.check(true, 'updates: strangers cannot see updates'); end $$;
+reset role;
+set role authenticated; select testkit.as_station('tok-a');
+do $$ begin perform public.owner_release_decide(1, 'approve_now'); perform testkit.check(false, 'updates: a station cannot approve updates');
+exception when others then perform testkit.check(true, 'updates: a station cannot approve updates'); end $$;
+reset role;
+select testkit.as_owner();
+select testkit.check(json_array_length(public.owner_releases() -> 'releases') = 1, 'updates: the owner sees the waiting update');
+select testkit.check((public.owner_release_decide(:rel, 'approve_night') ->> 'ok')::boolean, 'updates: owner approves for tonight');
+reset role;
+select testkit.check((select status = 'approved' and deploy_after > now() and extract(hour from deploy_after at time zone 'Asia/Jerusalem') = 3 from releases where id = :rel),
+  'updates: night approval waits for 03:00 Israel time');
+select public.runner_snapshot(:rel);
+select testkit.check((select count(*) from ops.release_backups where release_id = :rel and tbl = 'stations' and jsonb_array_length(rows) >= 3) = 1,
+  'updates: data snapshot taken before deploying');
+select public.runner_exec(:rel);
+select testkit.check(to_regclass('public.rel_test') is not null, 'updates: the approved DB change is applied');
+select public.runner_exec(:rel, true);
+select testkit.check(to_regclass('public.rel_test') is null, 'updates: the DB undo script restores the previous state');
+set role authenticated;
+do $$ begin perform public.runner_exec(1); perform testkit.check(false, 'updates: only the runner can run DB changes');
+exception when others then perform testkit.check(true, 'updates: only the runner can run DB changes'); end $$;
+reset role;
+
 select n, case when ok then 'PASS' else 'FAIL' end as result, name, coalesce(left(detail, 80), '') from testkit.results where name not like '%(update attempted)%' order by n;

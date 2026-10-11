@@ -22,12 +22,14 @@ import {
   CalendarClock,
   Gauge,
   Wallet,
+  Rocket,
 } from 'lucide-react';
 import { useAuth, ROLE_LABEL, Role } from '@/lib/auth';
 import { actAsStation } from '@/lib/supabase';
 import { cx, Spinner } from './ui';
 import { StationBanners, useInbox } from './StationInbox';
 import { AppLock } from './AppLock';
+import { UpdateNotifier } from './UpdateNotifier';
 
 type Item = { href: string; label: string; icon: any; min: Role; superOnly?: boolean };
 
@@ -35,6 +37,7 @@ const NAV: Item[] = [
   { href: '/control', label: 'מרכז בקרה', icon: Gauge, min: 'owner', superOnly: true },
   { href: '/stations', label: 'תחנות', icon: Building2, min: 'owner', superOnly: true },
   { href: '/billing', label: 'תשלומים', icon: Wallet, min: 'owner', superOnly: true },
+  { href: '/updates', label: 'ניהול עדכונים', icon: Rocket, min: 'owner', superOnly: true },
   { href: '/', label: 'בית', icon: LayoutDashboard, min: 'viewer' },
   { href: '/send', label: 'שליחת הודעה', icon: Send, min: 'operator' },
   { href: '/history', label: 'היסטוריה', icon: History, min: 'viewer' },
@@ -123,6 +126,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
     >
     <div className="min-h-dvh md:flex">
       <Toasts />
+      <UpdateNotifier />
       {/* Desktop sidebar */}
       <aside className="sticky top-0 hidden h-dvh w-64 shrink-0 flex-col border-l border-slate-200/70 bg-white md:flex">
         <div className="flex items-center gap-3 px-5 py-5">
