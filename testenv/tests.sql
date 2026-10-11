@@ -113,6 +113,22 @@ select public.finalize_campaigns();
 select testkit.check((select status from campaign_targets where campaign_id = '00000000-0000-0000-0000-0000000000d1') = 'skipped'
   and (select status from campaigns where id = '00000000-0000-0000-0000-0000000000d1') = 'completed', 'late rides: a ride stuck 25 minutes is not sent late');
 select testkit.check((select status from campaign_targets where campaign_id = '00000000-0000-0000-0000-0000000000d2') = 'pending', 'late rides: a fresh ride keeps going');
+-- a slow arm keeps claiming (last claim 1 min ago) but the ride is 16 minutes old: the rest is not sent
+insert into campaigns (id, kind, status, message_text, final_text, station_id, created_at, last_claim_at)
+values ('00000000-0000-0000-0000-0000000000d3', 'quote', 'running', 'נסיעה איטית', 'נסיעה איטית', '0000000a-0000-0000-0000-000000000000', now() - interval '16 minutes', now() - interval '1 minute');
+insert into campaign_arms (campaign_id, arm_id, station_id) values ('00000000-0000-0000-0000-0000000000d3', '00000000-0000-0000-0001-00000000000a', '0000000a-0000-0000-0000-000000000000');
+insert into campaign_targets (campaign_id, wa_group_id, station_id) values ('00000000-0000-0000-0000-0000000000d3', '0000000a-0000-0000-0000-000000000000-4@g.us', '0000000a-0000-0000-0000-000000000000');
+insert into campaign_targets (campaign_id, wa_group_id, station_id, status, sent_at) values ('00000000-0000-0000-0000-0000000000d3', '0000000a-0000-0000-0000-000000000000-5@g.us', '0000000a-0000-0000-0000-000000000000', 'sent', now() - interval '10 minutes');
+-- a manual campaign of the same age keeps going
+insert into campaigns (id, kind, status, message_text, final_text, station_id, created_at, last_claim_at)
+values ('00000000-0000-0000-0000-0000000000d4', 'manual', 'running', 'הודעה ידנית', 'הודעה ידנית', '0000000a-0000-0000-0000-000000000000', now() - interval '16 minutes', now() - interval '1 minute');
+insert into campaign_arms (campaign_id, arm_id, station_id) values ('00000000-0000-0000-0000-0000000000d4', '00000000-0000-0000-0001-00000000000a', '0000000a-0000-0000-0000-000000000000');
+insert into campaign_targets (campaign_id, wa_group_id, station_id) values ('00000000-0000-0000-0000-0000000000d4', '0000000a-0000-0000-0000-000000000000-6@g.us', '0000000a-0000-0000-0000-000000000000');
+select public.finalize_campaigns();
+select testkit.check((select count(*) from campaign_targets where campaign_id = '00000000-0000-0000-0000-0000000000d3' and status = 'skipped') = 1
+  and (select count(*) from campaign_targets where campaign_id = '00000000-0000-0000-0000-0000000000d3' and status = 'sent') = 1,
+  'late rides: a slow arm cannot send a ride older than 15 minutes (what was sent stays sent)');
+select testkit.check((select status from campaign_targets where campaign_id = '00000000-0000-0000-0000-0000000000d4') = 'pending', 'late rides: manual campaigns are not cut at 15 minutes');
 
 -- ========== 6. login ==========
 set role anon;
