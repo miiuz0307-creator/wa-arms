@@ -12,7 +12,7 @@ function required(name) {
 
 // libsignal prints harmless decryption noise straight to the console (e.g. "Bad MAC" after a restart).
 // It floods the server logs, so drop those lines.
-const NOISE = /Bad MAC|Failed to decrypt message|Session error|Closing (open )?session|Closing stale|SessionEntry|No matching sessions|decryptWithSessions|doDecryptWhisperMessage|verifyMAC|_asyncQueueExecutor|session_cipher|queue_job|processTicksAndRejections|libsignal/;
+const NOISE = /Bad MAC|Decrypted message with closed session|Failed to decrypt message|Session error|Closing (open )?session|Closing stale|SessionEntry|No matching sessions|decryptWithSessions|doDecryptWhisperMessage|verifyMAC|_asyncQueueExecutor|session_cipher|queue_job|processTicksAndRejections|libsignal/;
 for (const level of ['error', 'warn', 'info', 'log']) {
   const orig = console[level].bind(console);
   console[level] = (...args) => {

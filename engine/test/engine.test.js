@@ -244,3 +244,24 @@ test('backup: whole database written to disk, restore SQL rebuilds the same rows
   assert.equal((out.match(/"campaign_targets" overriding/g) || []).length, 5, '1000 rows per statement');
   assert.match(out, /on conflict do nothing/, 'restore never overwrites existing rows');
 });
+
+test('auth: per-chat keys are read from disk on demand (memory stays small)', async () => {
+  dbAnswer(() => ({ data: [], error: null }));
+  const a = await useDbAuthState('arm-mem', 'test-secret');
+  a.state.creds.me = { id: '972500000009@s.whatsapp.net' };
+  await a.saveCreds();
+  const many = {};
+  for (let i = 0; i < 5000; i++) many[`u${i}.0`] = { n: i, pad: 'x'.repeat(200) };
+  await a.state.keys.set({ session: many });
+  await a.flush();
+  const b = await useDbAuthState('arm-mem', 'test-secret');
+  const got = await b.state.keys.get('session', ['u0.0', 'u4999.0', 'u2500.0', 'nope']);
+  assert.equal(got['u0.0'].n, 0);
+  assert.equal(got['u4999.0'].n, 4999);
+  assert.equal(got['nope'], null);
+  // a key written and immediately read back (before the disk flush) is the new value
+  await b.state.keys.set({ session: { 'u1.0': { n: 'new' } } });
+  assert.equal((await b.state.keys.get('session', ['u1.0']))['u1.0'].n, 'new');
+  await b.state.keys.set({ session: { 'u2.0': null } });
+  assert.equal((await b.state.keys.get('session', ['u2.0']))['u2.0'], null, 'deleted key stays deleted');
+});

@@ -84,6 +84,24 @@ async function useDbAuthState(armId, secret) {
     }
   };
 
+  // With a disk, per-chat keys (tens of thousands per number, ~250 MB) are read from the disk when
+  // WhatsApp needs them instead of all being held in memory – that was most of the engine's memory
+  // and limited how many numbers one server could carry. Only the login identity is kept loaded.
+  const known = new Set(); // keys that exist on disk
+  const LRU_MAX = 3000;
+  const isIdentity = (k) => k === 'creds' || k.startsWith('app-state-sync-key-');
+  const touch = (k, v) => {
+    cache.delete(k);
+    cache.set(k, v);
+    if (dir && cache.size > LRU_MAX) {
+      for (const old of cache.keys()) {
+        if (cache.size <= LRU_MAX) break;
+        if (isIdentity(old)) continue;
+        cache.delete(old);
+      }
+    }
+  };
+
   let fromDisk = false;
   if (dir && fs.existsSync(path.join(dir, fname('creds')))) {
     let bad = 0;
@@ -92,10 +110,16 @@ async function useDbAuthState(armId, secret) {
         if (f.startsWith('.tmp-')) await fsp.unlink(path.join(dir, f)).catch(() => {}); // leftover of an interrupted write
         continue;
       }
+      const k = decodeURIComponent(f);
+      known.add(k);
+      if (!isIdentity(k)) continue;
       try {
         const v = await fsp.readFile(path.join(dir, f), 'utf8');
-        if (valid(v)) cache.set(decodeURIComponent(f), v);
-        else bad += 1; // damaged file: skip it (WhatsApp re-creates per-chat keys as needed)
+        if (valid(v)) cache.set(k, v);
+        else {
+          bad += 1; // damaged file: skip it
+          known.delete(k);
+        }
       } catch {}
     }
     if (bad) log.warn({ armId, bad }, 'damaged auth files skipped');
@@ -103,7 +127,12 @@ async function useDbAuthState(armId, secret) {
     // the login identity on disk is damaged: take it from the database backup instead of losing the connection
     if (!cache.has('creds')) {
       const { data } = await db.from('arm_auth').select('key,value').eq('arm_id', armId).or('key.eq.creds,key.like.app-state-sync-key-%');
-      for (const r of data || []) if (valid(r.value) && !cache.has(r.key)) cache.set(r.key, r.value);
+      for (const r of data || []) {
+        if (valid(r.value) && !cache.has(r.key)) {
+          cache.set(r.key, r.value);
+          known.add(r.key);
+        }
+      }
       log.warn({ armId, restored: !!cache.get('creds') }, 'creds on disk unreadable – restored from database backup');
       if (cache.has('creds')) await writeAtomic(path.join(dir, fname('creds')), cache.get('creds')).catch(() => {});
     }
@@ -122,20 +151,35 @@ async function useDbAuthState(armId, secret) {
       last = data[data.length - 1].key;
     }
     if (dir && cache.size) {
-      for (const [k, v] of cache) await writeAtomic(path.join(dir, fname(k)), v, false).catch(() => {});
+      for (const [k, v] of cache) {
+        await writeAtomic(path.join(dir, fname(k)), v, false).catch(() => {});
+        known.add(k);
+      }
     }
   }
-  log.info({ armId, keys: cache.size, source: fromDisk ? 'disk' : 'database' }, 'auth state loaded');
+  log.info({ armId, keys: dir ? known.size : cache.size, source: fromDisk ? 'disk' : 'database' }, 'auth state loaded');
 
-  const read = (k) => {
-    const v = cache.get(k);
-    if (!v) return null;
+  const decode = (k, v) => {
     try {
       return JSON.parse(decrypt(key, v), BufferJSON.reviver);
     } catch (e) {
       log.warn({ armId, k }, 'auth value could not be decrypted');
       return null;
     }
+  };
+  // diskWrites/diskDeletes are declared below; read() only runs after setup is complete
+  const read = async (k) => {
+    let v = cache.get(k);
+    if (v) {
+      touch(k, v);
+      return decode(k, v);
+    }
+    if (!dir || diskDeletes.has(k)) return null;
+    v = diskWrites.get(k); // written a moment ago, not on disk yet
+    if (!v && known.has(k)) v = await fsp.readFile(path.join(dir, fname(k)), 'utf8').catch(() => null);
+    if (!v) return null;
+    touch(k, v);
+    return decode(k, v);
   };
 
   // disk: written within a second; database backup: every 10 minutes (or every 5s without a volume)
@@ -220,13 +264,15 @@ async function useDbAuthState(armId, secret) {
   const write = (k, val) => {
     if (val === null || val === undefined) {
       cache.delete(k);
+      known.delete(k);
       pendingWrites.delete(k);
       if (backupKey(k)) pendingDeletes.add(k);
       diskWrites.delete(k);
       diskDeletes.add(k);
     } else {
       const v = encrypt(key, JSON.stringify(val, BufferJSON.replacer));
-      cache.set(k, v);
+      touch(k, v);
+      known.add(k);
       pendingDeletes.delete(k);
       if (backupKey(k)) pendingWrites.set(k, v);
       diskDeletes.delete(k);
@@ -245,7 +291,7 @@ async function useDbAuthState(armId, secret) {
     if (pendingWrites.size) timer = setTimeout(dbFlush, 30_000);
   }
 
-  const creds = read('creds') || initAuthCreds();
+  const creds = (await read('creds')) || initAuthCreds();
 
   return {
     state: {
@@ -253,8 +299,14 @@ async function useDbAuthState(armId, secret) {
       keys: {
         get: async (type, ids) => {
           const out = {};
-          for (const id of ids) {
-            let v = read(`${type}-${id}`);
+          // read from disk in parallel (a group send can need a thousand member keys at once)
+          const vals = [];
+          for (let i = 0; i < ids.length; i += 64) {
+            vals.push(...(await Promise.all(ids.slice(i, i + 64).map((id) => read(`${type}-${id}`)))));
+          }
+          for (let i = 0; i < ids.length; i++) {
+            const id = ids[i];
+            let v = vals[i];
             if (type === 'app-state-sync-key' && v) {
               v = proto.Message.AppStateSyncKeyData.fromObject(v);
             }
@@ -288,6 +340,7 @@ async function useDbAuthState(armId, secret) {
       if (timer) clearTimeout(timer);
       timer = null;
       cache.clear();
+      known.clear();
       pendingWrites.clear();
       pendingDeletes.clear();
       if (diskTimer) clearTimeout(diskTimer);

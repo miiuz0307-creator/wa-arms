@@ -1,0 +1,4 @@
+-- one engine send cycle for a random arm: take a group, report it sent (no WhatsApp involved)
+\set r random(1, :narms)
+select set_config('request.headers', '{"x-engine-key":"test-engine-key"}', false);
+select testkit.cycle(:r);
