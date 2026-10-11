@@ -255,6 +255,22 @@ function OwnerLogin() {
       <Button type="submit" size="lg" className="w-full" loading={busy}>
         {mode === 'in' ? 'כניסה' : 'יצירת חשבון'}
       </Button>
+      {mode === 'in' && (
+        <button
+          type="button"
+          onClick={async () => {
+            if (!email) return setMsg({ text: 'כתוב קודם את האימייל, ואז לחץ שוב על "שכחתי סיסמה".' });
+            setBusy(true);
+            await sb().auth.resetPasswordForEmail(email, { redirectTo: window.location.origin + '/reset' });
+            setBusy(false);
+            // same answer whether or not the address is registered
+            setMsg({ ok: true, text: 'אם הכתובת רשומה במערכת, נשלח אליה מייל עם קישור לבחירת סיסמה חדשה. בדוק גם בספאם.' });
+          }}
+          className="w-full text-center text-sm font-medium text-indigo-600 hover:underline"
+        >
+          שכחתי סיסמה
+        </button>
+      )}
       <button
         type="button"
         onClick={() => {

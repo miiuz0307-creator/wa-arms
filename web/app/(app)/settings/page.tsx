@@ -7,6 +7,7 @@ import { ACTION_LABEL, fmtTime } from '@/lib/format';
 import { RequireRole } from '@/components/Shell';
 import { HelpSettings } from '@/components/settings/HelpSettings';
 import { DispatchersPanel } from '@/components/settings/DispatchersPanel';
+import { ChangePassword } from '@/components/settings/ChangePassword';
 import { Button, Card, Field, Input, PageHeader, Select, Spinner, toast } from '@/components/ui';
 
 const TABS = [
@@ -14,6 +15,7 @@ const TABS = [
   ['speed', 'קצב שליחה'],
   ['dispatchers', 'סדרנים'],
   ['log', 'יומן פעילות'],
+  ['account', 'סיסמה'],
 ] as const;
 
 export default function SettingsPage() {
@@ -44,6 +46,7 @@ export default function SettingsPage() {
       {tab === 'speed' && <Settings />}
       {tab === 'dispatchers' && <DispatchersPanel />}
       {tab === 'log' && <Log />}
+      {tab === 'account' && <ChangePassword />}
     </RequireRole>
   );
 }

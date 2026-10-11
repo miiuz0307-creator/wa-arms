@@ -105,6 +105,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setLoading(false);
       });
     const { data: sub } = sb().auth.onAuthStateChange((_e, s) => {
+      // a password-reset link that landed on another page: go choose the new password
+      if (_e === 'PASSWORD_RECOVERY' && !window.location.pathname.startsWith('/reset')) {
+        window.location.href = '/reset';
+        return;
+      }
       setSession(s);
       loadProfile(s);
     });
