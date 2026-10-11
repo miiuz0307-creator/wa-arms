@@ -1,0 +1,21 @@
+{
+  "name": "botix-repair",
+  "version": "1.0.0",
+  "private": true,
+  "description": "BotiX AI Repair – בוט וואטסאפ לאבחון ותיקון תקלות ב-BotiX בעזרת Claude Code",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "engines": {
+    "node": "22.x"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "NODE_PATH=test/stubs node --test --test-concurrency=1 test/*.test.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "6.7.24",
+    "pg": "8.13.1",
+    "pino": "9.4.0",
+    "qrcode": "1.5.4"
+  }
+}

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f172a">
+  <title>BotiX AI Repair</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800&display=swap">
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+</head>
+<body>
+  <div id="login" class="login hidden">
+    <form id="login-form" class="login-card">
+      <div class="brand big"><span class="logo">🛠️</span><div><b>BotiX</b> AI Repair</div></div>
+      <p class="muted">כניסה לממשק הניהול</p>
+      <label>סיסמה<input id="password" type="password" autocomplete="current-password" required></label>
+      <button class="btn primary wide" type="submit">כניסה</button>
+      <p id="login-error" class="error" role="alert"></p>
+    </form>
+  </div>
+
+  <div id="app" class="app hidden">
+    <aside class="side">
+      <div class="brand"><span class="logo">🛠️</span><div><b>BotiX</b> AI Repair</div></div>
+      <nav id="nav">
+        <a href="#/" data-route="home"><span>🏠</span>לוח בקרה</a>
+        <a href="#/tickets" data-route="tickets"><span>🧾</span>פניות</a>
+        <a href="#/numbers" data-route="numbers"><span>👥</span>מספרים מאושרים</a>
+        <a href="#/log" data-route="log"><span>📜</span>יומן פעולות</a>
+      </nav>
+      <button id="logout" class="btn ghost small">יציאה</button>
+    </aside>
+    <main id="main" class="main" aria-live="polite"></main>
+  </div>
+
+  <div id="toast" class="toast" role="status"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
