@@ -12,12 +12,58 @@ const LAST = 'wa-last-active';
 const IDLE_MS = 5 * 60_000;
 const ASKED = 'wa-lock-asked';
 
+const REMEMBER = 'wa-remember-until';
+const REMEMBER_CHOICE = 'wa-remember-choice';
+const REMEMBER_DAYS = 30;
+
+/** "Remember me" on this device: no lock screen for 30 days (until sign-out). */
+export function rememberValid() {
+  try {
+    return Number(localStorage.getItem(REMEMBER) || 0) > Date.now();
+  } catch {
+    return false;
+  }
+}
+export function forgetDevice() {
+  try {
+    localStorage.removeItem(REMEMBER);
+  } catch {}
+}
+
 /** Call right after a successful login, so the app doesn't ask again a second later. */
 export function markUnlocked() {
   try {
     localStorage.setItem(LAST, String(Date.now()));
     sessionStorage.setItem('wa-unlocked', '1');
+    if (localStorage.getItem(REMEMBER_CHOICE) === '1') localStorage.setItem(REMEMBER, String(Date.now() + REMEMBER_DAYS * 86_400_000));
   } catch {}
+}
+
+/** Checkbox shown on the login and lock screens. */
+export function RememberMe() {
+  const [on, setOn] = useState(false);
+  useEffect(() => {
+    try {
+      setOn(localStorage.getItem(REMEMBER_CHOICE) === '1');
+    } catch {}
+  }, []);
+  return (
+    <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-600">
+      <input
+        type="checkbox"
+        className="h-4 w-4 accent-indigo-600"
+        checked={on}
+        onChange={(e) => {
+          setOn(e.target.checked);
+          try {
+            localStorage.setItem(REMEMBER_CHOICE, e.target.checked ? '1' : '0');
+            if (!e.target.checked) localStorage.removeItem(REMEMBER);
+          } catch {}
+        }}
+      />
+      זכור אותי במכשיר הזה ({REMEMBER_DAYS} יום, בלי לבקש קוד בכל פתיחה)
+    </label>
+  );
 }
 
 const get = (k: string) => {
@@ -91,13 +137,14 @@ export function AppLock({
   onSignOut: () => void;
   children: React.ReactNode;
 }) {
-  const [locked, setLocked] = useState(true); // locked on every app start
+  const [locked, setLocked] = useState(true); // locked on every app start (unless "remember me")
   const [hasBio, setHasBio] = useState(false);
   const [offerBio, setOfferBio] = useState(false);
   const hiddenAt = useRef<number | null>(null);
 
   useEffect(() => {
     setHasBio(!!get(KEY));
+    if (rememberValid()) return setLocked(false);
     const last = Number(get(LAST) || 0);
     // a reload a moment ago (e.g. switching station) does not ask again
     if (last && Date.now() - last < 15_000 && sessionStorage.getItem('wa-unlocked') === '1') setLocked(false);
@@ -107,7 +154,7 @@ export function AppLock({
   useEffect(() => {
     const onVis = () => {
       if (document.visibilityState === 'hidden') hiddenAt.current = Date.now();
-      else if (hiddenAt.current && Date.now() - hiddenAt.current > IDLE_MS) setLocked(true);
+      else if (hiddenAt.current && Date.now() - hiddenAt.current > IDLE_MS && !rememberValid()) setLocked(true);
     };
     const beat = setInterval(() => !locked && set(LAST, String(Date.now())), 5_000);
     document.addEventListener('visibilitychange', onVis);
@@ -119,10 +166,7 @@ export function AppLock({
 
   const unlock = useCallback(() => {
     setLocked(false);
-    set(LAST, String(Date.now()));
-    try {
-      sessionStorage.setItem('wa-unlocked', '1');
-    } catch {}
+    markUnlocked();
   }, []);
 
   // after unlocking without biometrics: offer to turn them on (once per device)
@@ -131,7 +175,19 @@ export function AppLock({
     biometricAvailable().then((ok) => ok && setOfferBio(true));
   }, [locked, hasBio]);
 
-  if (locked) return <LockScreen isStation={isStation} ownerEmail={ownerEmail} hasBio={hasBio} onUnlock={unlock} onSignOut={onSignOut} />;
+  if (locked)
+    return (
+      <LockScreen
+        isStation={isStation}
+        ownerEmail={ownerEmail}
+        hasBio={hasBio}
+        onUnlock={unlock}
+        onSignOut={() => {
+          forgetDevice();
+          onSignOut();
+        }}
+      />
+    );
 
   return (
     <>
@@ -287,6 +343,9 @@ function LockScreen({
           </form>
         )}
         {err && <div className="mt-3 rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{err}</div>}
+        <div className="mt-4 flex justify-center">
+          <RememberMe />
+        </div>
 
         <div className="mt-6 flex flex-wrap justify-center gap-x-4 gap-y-2 text-sm font-medium text-slate-500">
           {hasBio && mode !== 'bio' && (

@@ -126,6 +126,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         rank,
         can: (min) => rank >= RANK[min],
         signOut: async () => {
+          try {
+            localStorage.removeItem('wa-remember-until'); // "remember me" ends with sign-out
+          } catch {}
           if (isStation) {
             await sb().rpc('station_logout');
             leaveStationMode();

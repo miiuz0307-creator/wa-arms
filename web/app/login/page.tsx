@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { KeyRound, MessageCircle, ShieldCheck } from 'lucide-react';
-import { markUnlocked } from '@/components/AppLock';
+import { markUnlocked, RememberMe } from '@/components/AppLock';
 import { sb, enterStationMode } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
 import { Button, Field, Input } from '@/components/ui';
@@ -110,6 +110,7 @@ function CodeLogin() {
         />
       </Field>
       {err && <div className="rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{err}</div>}
+      <RememberMe />
       <Button type="submit" size="lg" className="w-full" loading={busy}>
         כניסה
       </Button>
@@ -171,6 +172,7 @@ function PhoneLogin() {
         </Field>
       )}
       {err && <div className="rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{err}</div>}
+      <RememberMe />
       <Button type="submit" size="lg" className="w-full" loading={busy}>
         {sent ? 'כניסה' : 'שליחת קוד בוואטסאפ'}
       </Button>
@@ -249,6 +251,7 @@ function OwnerLogin() {
       {msg && (
         <div className={msg.ok ? 'rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800' : 'rounded-xl bg-rose-50 p-3 text-sm text-rose-700'}>{msg.text}</div>
       )}
+      <RememberMe />
       <Button type="submit" size="lg" className="w-full" loading={busy}>
         {mode === 'in' ? 'כניסה' : 'יצירת חשבון'}
       </Button>

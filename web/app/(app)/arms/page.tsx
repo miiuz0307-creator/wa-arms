@@ -7,8 +7,16 @@ import { useRealtime } from '@/lib/hooks';
 import { useAuth, myUid } from '@/lib/auth';
 import { ARM_STATUS, timeAgo } from '@/lib/format';
 import { RequireRole } from '@/components/Shell';
-import { Badge, Button, Card, Empty, Field, Input, Modal, PageHeader, Select, Spinner, Textarea, toast } from '@/components/ui';
+import { Badge, Button, Card, Empty, Field, Input, Modal, PageHeader, Select, Spinner, Textarea, Toggle, toast } from '@/components/ui';
 import { useInbox } from '@/components/StationInbox';
+
+const WARMUP_MS = 24 * 60 * 60_000;
+/** A new number sends slowly (6 msgs/min) for 24h after linking, so WhatsApp does not flag it. */
+const warmupUntil = (a: { linked_at?: string | null }) => {
+  const t = a.linked_at ? Date.parse(a.linked_at) + WARMUP_MS : 0;
+  return t > Date.now() ? new Date(t) : null;
+};
+const hhmm = (d: Date) => d.toLocaleString('he-IL', { weekday: 'short', hour: '2-digit', minute: '2-digit' });
 
 export default function ArmsPage() {
   return (
@@ -150,6 +158,11 @@ function Arms() {
                   <div className="mx-5 mb-4 flex items-center justify-center gap-2 rounded-2xl bg-slate-50 p-6 text-sm text-slate-500">
                     <Loader2 className="h-4 w-4 animate-spin" />
                     מתחבר לשרת…
+                  </div>
+                )}
+                {warmupUntil(a) && (
+                  <div className="mx-5 mb-4 rounded-xl bg-sky-50 px-3 py-2 text-xs text-sky-900">
+                    🔥 בחימום עד {hhmm(warmupUntil(a)!)} – שולחת לאט (6 הודעות בדקה) כדי להגן על המספר
                   </div>
                 )}
                 {a.last_error && a.status !== 'online' && (
@@ -341,17 +354,24 @@ function AddArm({ open, onClose, next }: { open: boolean; onClose: () => void; n
 function EditArm({ arm, onClose }: { arm: any; onClose: () => void }) {
   const [name, setName] = useState('');
   const [limit, setLimit] = useState(300);
+  const [warm, setWarm] = useState(false);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     if (arm) {
       setName(arm.name);
       setLimit(arm.daily_limit);
+      setWarm(!!warmupUntil(arm));
     }
   }, [arm]);
 
   async function save() {
     setBusy(true);
-    const { error } = await sb().from('arms').update({ name: name.trim(), daily_limit: limit }).eq('id', arm.id);
+    const wasWarm = !!warmupUntil(arm);
+    const patch: any = { name: name.trim(), daily_limit: limit };
+    // switching warm-up on starts a fresh 24 hours; switching it off ends it now. The engine picks it up within a minute.
+    if (warm !== wasWarm) patch.linked_at = warm ? new Date().toISOString() : null;
+    const { error } = await sb().from('arms').update(patch).eq('id', arm.id);
+    if (!error && warm !== wasWarm) await logAct(warm ? 'arm_warmup_on' : 'arm_warmup_off', 'arm', arm.id, { name: arm.name });
     setBusy(false);
     if (error) return toast(error.message, 'error');
     toast('נשמר');
@@ -392,6 +412,18 @@ function EditArm({ arm, onClose }: { arm: any; onClose: () => void }) {
               {n === 1000000 ? 'ללא הגבלה' : n}
             </button>
           ))}
+        </div>
+        <div className="flex items-start justify-between gap-3 rounded-xl border border-slate-200 p-3">
+          <div className="text-sm">
+            <div className="font-medium">חימום מספר חדש</div>
+            <div className="text-xs text-slate-500">
+              {warm && warmupUntil(arm)
+                ? `פעיל עד ${hhmm(warmupUntil(arm)!)}. `
+                : ''}
+              24 שעות של שליחה איטית (6 הודעות בדקה) כדי ש-WhatsApp לא יחסום מספר חדש. כיבוי – הזרוע שולחת בקצב הרגיל תוך דקה.
+            </div>
+          </div>
+          <Toggle checked={warm} onChange={setWarm} />
         </div>
         {limit > 500 && (
           <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">
