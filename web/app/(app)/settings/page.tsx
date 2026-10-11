@@ -8,6 +8,7 @@ import { RequireRole } from '@/components/Shell';
 import { HelpSettings } from '@/components/settings/HelpSettings';
 import { DispatchersPanel } from '@/components/settings/DispatchersPanel';
 import { ChangePassword } from '@/components/settings/ChangePassword';
+import { MailSettings } from '@/components/settings/MailSettings';
 import { Button, Card, Field, Input, PageHeader, Select, Spinner, toast } from '@/components/ui';
 
 const TABS = [
@@ -16,6 +17,7 @@ const TABS = [
   ['dispatchers', 'סדרנים'],
   ['log', 'יומן פעילות'],
   ['account', 'סיסמה'],
+  ['mail', 'מייל המערכת'],
 ] as const;
 
 export default function SettingsPage() {
@@ -47,6 +49,7 @@ export default function SettingsPage() {
       {tab === 'dispatchers' && <DispatchersPanel />}
       {tab === 'log' && <Log />}
       {tab === 'account' && <ChangePassword />}
+      {tab === 'mail' && <MailSettings />}
     </RequireRole>
   );
 }

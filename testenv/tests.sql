@@ -345,4 +345,27 @@ select testkit.check((select failed_hour = 12 and resent_hour = 10 and lost_hour
   where arm_id = '00000000-0000-0000-0001-00000000000a'), 'delivery: owner sees failures, re-sends and losses per arm');
 reset role;
 
+-- system mail settings
+set role anon; select testkit.as_nobody('10.9.9.7');
+do $$ begin perform public.owner_mail_settings(); perform testkit.check(false, 'mail: strangers cannot read the mail settings');
+exception when others then perform testkit.check(true, 'mail: strangers cannot read the mail settings'); end $$;
+reset role;
+set role authenticated; select testkit.as_station('tok-a');
+do $$ begin perform public.owner_mail_settings_save('{"address":"x@y.z"}'); perform testkit.check(false, 'mail: a station cannot change the mail settings');
+exception when others then perform testkit.check(true, 'mail: a station cannot change the mail settings'); end $$;
+reset role;
+select testkit.as_owner();
+select public.owner_mail_settings_save('{"address":"botix@gmail.com","smtp_pass":"abcd efgh ijkl mnop"}');
+select testkit.check((public.owner_mail_settings() ->> 'has_pass')::boolean and (public.owner_mail_settings() ->> 'smtp_pass') is null,
+  'mail: the owner saves the mailbox; the password is never sent back to the app');
+select public.owner_mail_settings_save('{"address":"botix@gmail.com","smtp_pass":""}');
+reset role;
+select testkit.check((select smtp_pass = 'abcdefghijklmnop' and smtp_user = 'botix@gmail.com' from mail_settings), 'mail: saving with an empty password keeps the saved one (spaces removed)');
+set role authenticated;
+do $$ begin perform 1 from public.mail_settings; perform testkit.check(false, 'mail: the mailbox password is not readable by app users');
+exception when others then perform testkit.check(true, 'mail: the mailbox password is not readable by app users'); end $$;
+do $$ begin perform public.auth_user_by_email('a@b.c'); perform testkit.check(false, 'mail: only the server can look up logins by e-mail');
+exception when others then perform testkit.check(true, 'mail: only the server can look up logins by e-mail'); end $$;
+reset role;
+
 select n, case when ok then 'PASS' else 'FAIL' end as result, name, coalesce(left(detail, 80), '') from testkit.results where name not like '%(update attempted)%' order by n;

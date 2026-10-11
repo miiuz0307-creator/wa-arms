@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { KeyRound, MessageCircle, ShieldCheck } from 'lucide-react';
 import { markUnlocked, RememberMe } from '@/components/AppLock';
+import { ForgotPassword } from '@/components/ForgotPassword';
 import { sb, enterStationMode } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
 import { Button, Field, Input } from '@/components/ui';
@@ -200,6 +201,7 @@ function OwnerLogin() {
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ text: string; ok?: boolean } | null>(null);
+  const [forgot, setForgot] = useState(false);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -220,6 +222,8 @@ function OwnerLogin() {
     }
     setBusy(false);
   }
+
+  if (forgot) return <ForgotPassword initialEmail={email} onBack={() => setForgot(false)} />;
 
   return (
     <form onSubmit={submit} className="space-y-5">
@@ -256,18 +260,7 @@ function OwnerLogin() {
         {mode === 'in' ? 'כניסה' : 'יצירת חשבון'}
       </Button>
       {mode === 'in' && (
-        <button
-          type="button"
-          onClick={async () => {
-            if (!email) return setMsg({ text: 'כתוב קודם את האימייל, ואז לחץ שוב על "שכחתי סיסמה".' });
-            setBusy(true);
-            await sb().auth.resetPasswordForEmail(email, { redirectTo: window.location.origin + '/reset' });
-            setBusy(false);
-            // same answer whether or not the address is registered
-            setMsg({ ok: true, text: 'אם הכתובת רשומה במערכת, נשלח אליה מייל עם קישור לבחירת סיסמה חדשה. בדוק גם בספאם.' });
-          }}
-          className="w-full text-center text-sm font-medium text-indigo-600 hover:underline"
-        >
+        <button type="button" onClick={() => setForgot(true)} className="w-full text-center text-sm font-medium text-indigo-600 hover:underline">
           שכחתי סיסמה
         </button>
       )}
