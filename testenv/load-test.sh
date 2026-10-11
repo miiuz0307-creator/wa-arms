@@ -8,7 +8,7 @@ N=${1:-10}; C=${2:-8}; T=${3:-20}; R=${4:-3}; DB=botix_load
 su postgres -c "psql -q -c 'drop database if exists $DB' -c 'create database $DB'"
 su postgres -c "psql -q -d $DB -f supabase_shim.sql" >/dev/null 2>&1
 su postgres -c "psql -q -d $DB -v ON_ERROR_STOP=1 -f schema_ordered.sql" >/dev/null
-for f in ../supabase/migrations/20261011_*.sql; do su postgres -c "psql -q -d $DB -v ON_ERROR_STOP=1 -f $f" >/dev/null; done
+for f in ../supabase/migrations/20261011_*.sql ../supabase/pending/*.sql; do su postgres -c "psql -q -d $DB -v ON_ERROR_STOP=1 -f $f" >/dev/null; done
 su postgres -c "psql -q -d $DB -v ON_ERROR_STOP=1 -f seed.sql" >/dev/null
 su postgres -c "psql -q -d $DB -v ON_ERROR_STOP=1 -v n=$N -v rides=$R -f load_seed.sql" >/dev/null
 ARMS=$((N*2))

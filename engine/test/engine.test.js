@@ -265,3 +265,51 @@ test('auth: per-chat keys are read from disk on demand (memory stays small)', as
   await b.state.keys.set({ session: { 'u2.0': null } });
   assert.equal((await b.state.keys.get('session', ['u2.0']))['u2.0'], null, 'deleted key stays deleted');
 });
+
+// ---------- only source/target groups are processed and kept ----------
+test('messages: only source groups are decrypted; others are confirmed and dropped; private chats always processed', () => {
+  const rel = { sourcesReady: true, targetsReady: true, isSource: (st, j) => j === 'src@g.us', isTarget: (st, j) => j === 'tgt@g.us' };
+  Arm.setRelevance(rel);
+  const arm = new Arm({ id: 'r1', name: 'r', station_id: 'st' }, () => {});
+  arm.creds = { me: { id: '972500000001:3@s.whatsapp.net', lid: '111:3@lid' } };
+  const node = (from, participant) => ({ tag: 'message', attrs: { id: 'M1', from, participant, type: 'text' } });
+  assert.equal(arm.skipIncoming(node('src@g.us', 'x@lid')), false, 'source group read');
+  assert.equal(arm.skipIncoming(node('tgt@g.us', 'x@lid')), true, 'target group: nothing to read there');
+  assert.equal(arm.skipIncoming(node('other@g.us', 'x@lid')), true);
+  assert.equal(arm.skipIncoming(node('other@g.us', '111:5@lid')), false, "the arm's own phone still goes through");
+  assert.equal(arm.skipIncoming(node('972500000009@s.whatsapp.net')), false, 'private chats always processed');
+  assert.equal(arm.skipIncoming(node('status@broadcast', 'x@s.whatsapp.net')), true);
+  // skipped messages are confirmed (receipt + ack) so WhatsApp does not send them again
+  const sent = [];
+  const sock = { sendNode: async (n) => sent.push(n) };
+  arm.confirmSkipped(sock, node('other@g.us', 'x@lid'));
+  return new Promise((r) => setTimeout(r, 10)).then(() => {
+    assert.deepEqual(sent.map((n) => n.tag), ['receipt', 'ack']);
+    assert.equal(sent[1].attrs.class, 'message');
+    assert.equal(sent[0].attrs.participant, 'x@lid');
+  });
+});
+
+test('messages: until the group settings are loaded nothing is dropped', () => {
+  Arm.setRelevance({ sourcesReady: false, targetsReady: false, isSource: () => false, isTarget: () => false });
+  const arm = new Arm({ id: 'r2', name: 'r', station_id: 'st' }, () => {});
+  assert.equal(arm.skipIncoming({ attrs: { id: '1', from: 'any@g.us', participant: 'x@lid' } }), false);
+  assert.equal(arm.groupMatters('any@g.us', { needTarget: true }), true);
+});
+
+test('groups: member lists kept only for source and target groups; the full list still goes to the app', async () => {
+  Arm.setRelevance({ sourcesReady: true, targetsReady: true, isSource: (st, j) => j === 'src@g.us', isTarget: (st, j) => j === 'tgt@g.us' });
+  const arm = new Arm({ id: 'r3', name: 'r', station_id: 'st' }, () => {});
+  const meta = (id) => ({ id, subject: 'g ' + id, participants: [{ id: 'a@lid' }, { id: 'b@lid' }] });
+  arm.sock = { groupFetchAllParticipating: async () => ({ 'src@g.us': meta('src@g.us'), 'tgt@g.us': meta('tgt@g.us'), 'x@g.us': meta('x@g.us'), 'y@g.us': meta('y@g.us') }) };
+  arm.online = true;
+  const upserts = [];
+  dbAnswer((op) => {
+    if (op.table === 'groups' && op.action === 'upsert') upserts.push(...op.payload);
+    return { data: [], error: null };
+  });
+  await arm.syncGroups();
+  assert.deepEqual([...arm.groupMeta.keys()].sort(), ['src@g.us', 'tgt@g.us']);
+  assert.equal(upserts.length, 4, 'id + name of every group still saved, so new groups can be picked in the app');
+  assert.deepEqual(Object.keys(upserts[0]).sort(), ['arm_id', 'name', 'participants', 'updated_at', 'wa_group_id']);
+});

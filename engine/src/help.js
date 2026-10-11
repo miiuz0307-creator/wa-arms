@@ -15,15 +15,52 @@ quote.setTriggerSource(triggersOf);
 quote.setSettingsSource((stationId) => state.settings.get(stationId));
 quote.setSourceGroupCheck((stationId, jid) => state.sources.has(`${stationId}|${jid}`));
 
+// Which groups matter to each station: source groups (where "עזרה"/"נ" are read) and target groups
+// (in a distribution list). Arms decrypt messages only from source groups and keep member lists only
+// for source + target groups – everything else WhatsApp sends is confirmed and dropped unread.
+const relevance = {
+  sourcesReady: false, // false until loaded once: until then nothing is filtered
+  targetsReady: false,
+  targets: new Map(), // station_id -> Set(wa_group_id)
+  isSource: (stationId, jid) => state.sources.has(`${stationId}|${jid}`),
+  isTarget: (stationId, jid) => !!relevance.targets.get(stationId)?.has(jid),
+};
+let targetsAt = 0;
+
 async function refreshConfig() {
-  const [s, src, trg] = await Promise.all([
+  const loadTargets = Date.now() - targetsAt > 60_000;
+  const [s, src, trg, lg] = await Promise.all([
     db.from('app_settings').select('*'),
     db.from('source_groups').select('*').eq('is_active', true),
     db.from('triggers').select('*').eq('is_active', true),
+    loadTargets ? loadAllTargets() : null,
   ]);
   if (!s.error) state.settings = new Map(s.data.map((r) => [r.station_id, r]));
-  if (!src.error) state.sources = new Map(src.data.map((r) => [`${r.station_id}|${r.wa_group_id}`, r]));
+  if (!src.error && Array.isArray(src.data)) {
+    state.sources = new Map(src.data.map((r) => [`${r.station_id}|${r.wa_group_id}`, r]));
+    relevance.sourcesReady = true;
+  }
   if (!trg.error) state.triggers = trg.data.sort((a, b) => b.keyword.length - a.keyword.length);
+  if (lg) {
+    relevance.targets = lg;
+    relevance.targetsReady = true;
+    targetsAt = Date.now();
+  }
+}
+
+// every group in any distribution list, per station (paged – thousands of rows are fine)
+async function loadAllTargets() {
+  const map = new Map();
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await db.from('list_groups').select('station_id,wa_group_id').order('wa_group_id').range(from, from + 999);
+    if (error || !Array.isArray(data)) return null; // keep the previous set
+    for (const r of data) {
+      if (!map.has(r.station_id)) map.set(r.station_id, new Set());
+      map.get(r.station_id).add(r.wa_group_id);
+    }
+    if (data.length < 1000) break;
+  }
+  return map;
 }
 
 async function logActivity(stationId, action, entity, entityId, details) {
@@ -259,4 +296,5 @@ async function reactFinished(armsMap) {
   }
 }
 
-module.exports = { refreshConfig, onMessage, prepareHelpCampaigns, reactFinished };
+module.exports = {
+  relevance, refreshConfig, onMessage, prepareHelpCampaigns, reactFinished };

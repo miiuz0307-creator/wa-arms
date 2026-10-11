@@ -8,6 +8,7 @@ const { randomBetween, sleep } = require('./util');
 
 const arms = new Map(); // arm id -> Arm
 quote.setArmsSource(() => arms);
+Arm.setRelevance(help.relevance);
 // settings per station (station_id -> app_settings row)
 const settingsByStation = new Map();
 const settingsFor = (arm) => settingsByStation.get(arm.stationId) || { min_delay_sec: 8, max_delay_sec: 20 };
@@ -419,6 +420,15 @@ async function main() {
     if (error) throw error;
   }, 'finalize');
   every(30_000, heartbeat, 'heartbeat');
+  // memory picture every 5 minutes (to size servers by measurement, not guesses)
+  every(5 * 60_000, async () => {
+    const m = process.memoryUsage();
+    const mb = (x) => Math.round(x / 1048576);
+    log.info({
+      rssMb: mb(m.rss), heapMb: mb(m.heapUsed), externalMb: mb(m.external), buffersMb: mb(m.arrayBuffers),
+      arms: [...arms.values()].map((a) => ({ arm: a.name, online: a.online, groupsKept: a.groupMeta?.size || 0, devices: a.devCache?.keys?.().length || 0, sentKept: a.sentStore?.size || 0 })),
+    }, 'memory');
+  }, 'memory');
   // daily database backup to the server disk (does not fail the loop – errors are logged)
   every(10 * 60_000, () => backup.maybeBackup(), 'backup');
   every(5_000, () => quote.notifyFinished(arms), 'quote-notify');

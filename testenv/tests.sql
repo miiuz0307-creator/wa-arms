@@ -164,4 +164,20 @@ do $$ begin perform public.owner_health(); perform testkit.check(false, 'monitor
 exception when others then perform testkit.check(true, 'monitoring: stations cannot see the system monitor'); end $$;
 reset role;
 
+-- temporary data cleanup keeps history
+reset role;
+insert into processed_messages (station_id, source_group_id, message_id, processed_at) values
+ ('0000000a-0000-0000-0000-000000000000', 'g', 'old', now() - interval '4 days'),
+ ('0000000a-0000-0000-0000-000000000000', 'g', 'new', now() - interval '1 hour');
+select count(*) as camps_before from campaigns \gset
+set role anon; select testkit.as_engine();
+select public.engine_cleanup();
+reset role;
+select testkit.check((select count(*) from processed_messages where message_id = 'old') = 0 and (select count(*) from processed_messages where message_id = 'new') = 1
+  and (select count(*) from campaigns) = :camps_before, 'cleanup: old temporary rows removed, recent ones and distribution history kept');
+set role anon; select testkit.as_station('tok-a');
+do $$ begin perform public.engine_cleanup(); perform testkit.check(false, 'cleanup: engine only');
+exception when others then perform testkit.check(true, 'cleanup: engine only'); end $$;
+reset role;
+
 select n, case when ok then 'PASS' else 'FAIL' end as result, name, coalesce(left(detail, 80), '') from testkit.results where name not like '%(update attempted)%' order by n;

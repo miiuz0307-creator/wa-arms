@@ -59,7 +59,50 @@ async function waVersion() {
   return cachedVersion;
 }
 
+// Set by the engine: which groups matter to which station (see help.js `relevance`).
+let relevance = null;
+
 class Arm {
+  static setRelevance(r) {
+    relevance = r;
+  }
+
+  // Is this group one the station works with? Unknown (config not loaded yet) counts as yes.
+  groupMatters(jid, { needTarget = false } = {}) {
+    if (!relevance?.sourcesReady || (needTarget && !relevance.targetsReady)) return true;
+    return relevance.isSource(this.stationId, jid) || (needTarget && relevance.isTarget(this.stationId, jid));
+  }
+
+  // Incoming message node from a group that is not a source group: nothing in it is ever used
+  // (only source groups are read), so don't decrypt it – confirm it so WhatsApp doesn't send it again.
+  // Saves the decryption work and the keys/caches it fills for hundreds of busy groups.
+  skipIncoming(node) {
+    const a = node?.attrs || {};
+    const from = a.from || '';
+    if (!a.id) return false;
+    if (from === 'status@broadcast' || from.endsWith('@newsletter')) return true;
+    if (!from.endsWith('@g.us')) return false; // private chats: always processed
+    if (this.groupMatters(from)) return false;
+    // messages the arm's own number writes (from its phone) still go through
+    const p = String(a.participant || '').replace(/:\d+(?=@)/, '');
+    if (p && this.ownJids().includes(p)) return false;
+    return true;
+  }
+
+  confirmSkipped(sock, node) {
+    const a = node.attrs;
+    const receipt = { tag: 'receipt', attrs: { id: a.id, to: a.from } };
+    if (a.participant) receipt.attrs.participant = a.participant;
+    const ack = { tag: 'ack', attrs: { id: a.id, to: a.from, class: 'message' } };
+    if (a.participant) ack.attrs.participant = a.participant;
+    if (a.recipient) ack.attrs.recipient = a.recipient;
+    if (a.type) ack.attrs.type = a.type;
+    Promise.resolve(sock.sendNode?.(receipt))
+      .then(() => sock.sendNode?.(ack))
+      .catch(() => {});
+    this.skipped = (this.skipped || 0) + 1;
+  }
+
   constructor(row, onMessage) {
     this.id = row.id;
     this.name = row.name;
@@ -269,6 +312,22 @@ class Arm {
     } else {
       log.warn({ arm: this.name }, 'could not find Baileys receipt handler – retry receipts handled by Baileys');
     }
+    const baileysMessage = sock.ws.listeners('CB:message');
+    if (baileysMessage.length) {
+      sock.ws.removeAllListeners('CB:message');
+      sock.ws.on('CB:message', (node) => {
+        if (this.skipIncoming(node)) return this.confirmSkipped(sock, node);
+        for (const fn of baileysMessage) {
+          try {
+            fn(node);
+          } catch (e) {
+            log.warn({ arm: this.name, err: e.message }, 'message handler failed');
+          }
+        }
+      });
+    } else {
+      log.warn({ arm: this.name }, 'could not find Baileys message handler – all groups are decrypted');
+    }
     log.info({ arm: this.name }, 'connecting');
     // A socket that neither opens nor closes would leave the arm stuck on "connecting" forever
     clearTimeout(this.connectGuard);
@@ -382,8 +441,9 @@ class Arm {
     }, 30_000);
     if (!this.rawTimer) {
       this.rawTimer = setInterval(() => {
-        if (this.raw || this.upserts) log.info({ arm: this.name, rawMessages: this.raw, upsertEvents: this.upserts, retryReceipts: this.retryReceipts || 0, resent: this.resent || 0, resendFailed: this.resendFailed || 0, resendQueue: this.resendQueue?.length || 0 }, 'socket traffic (last minute)');
+        if (this.raw || this.upserts) log.info({ arm: this.name, rawMessages: this.raw, upsertEvents: this.upserts, retryReceipts: this.retryReceipts || 0, resent: this.resent || 0, resendFailed: this.resendFailed || 0, resendQueue: this.resendQueue?.length || 0, skippedUnread: this.skipped || 0 }, 'socket traffic (last minute)');
         this.retryReceipts = 0;
+        this.skipped = 0;
         this.resent = 0;
         this.resendFailed = 0;
         this.raw = 0;
@@ -546,7 +606,9 @@ class Arm {
     this.lastGroupSync = Date.now();
     if (!this.sock || !this.online) return;
     const all = await this.sock.groupFetchAllParticipating();
-    this.groupMeta = new Map(Object.entries(all));
+    // member lists are kept only for groups the station uses (source or in a distribution list);
+    // for any other group WhatsApp is asked if it is ever needed (e.g. a one-off manual send)
+    this.groupMeta = new Map(Object.entries(all).filter(([jid]) => this.groupMatters(jid, { needTarget: true })));
     const groups = Object.values(all);
     const now = new Date().toISOString();
 
@@ -566,7 +628,7 @@ class Arm {
         const meta = await Promise.race([this.sock.groupMetadata(g.id), new Promise((r) => setTimeout(() => r(null), 8000))]);
         if (meta?.subject) {
           Object.assign(g, meta);
-          this.groupMeta.set(g.id, meta);
+          if (this.groupMatters(g.id, { needTarget: true })) this.groupMeta.set(g.id, meta);
         }
       } catch {}
       await new Promise((r) => setTimeout(r, 1500));
