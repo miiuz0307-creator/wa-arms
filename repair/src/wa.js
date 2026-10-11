@@ -146,6 +146,7 @@ function createWhatsApp({ store, secret, log, onMessage, onOpen }) {
   let reconnectTimer = null;
   let retries = 0;
   let auth = null;
+  let undecryptable = 0;
   const status = { state: 'disconnected', qr: null, me: null, error: null, since: new Date().toISOString() };
 
   const set = (patch) => Object.assign(status, patch, { since: new Date().toISOString() });
@@ -185,6 +186,7 @@ function createWhatsApp({ store, secret, log, onMessage, onOpen }) {
     if (u.connection === 'open') {
       retries = 0;
       const me = (s.user?.id || '').split(':')[0].split('@')[0];
+      undecryptable = 0;
       set({ state: 'connected', qr: null, me, error: null });
       log.info({ me }, 'WhatsApp connected');
       if (onOpen) Promise.resolve(onOpen()).catch((e) => log.warn({ err: e.message }, 'after-connect task failed'));
@@ -223,7 +225,16 @@ function createWhatsApp({ store, secret, log, onMessage, onOpen }) {
 
   async function handleIncoming(s, m) {
     const jid = m.key?.remoteJid || '';
-    if (m.key?.fromMe || !m.message) return;
+    if (m.key?.fromMe) return;
+    if (!m.message) {
+      // a private message that could not be decrypted (broken encryption session with that sender)
+      if (!ignoredJid(jid) && m.messageStubType === 2) {
+        undecryptable++;
+        log.warn({ undecryptable, params: m.messageStubParameters }, 'private message could not be decrypted');
+        if (undecryptable >= 3) set({ error: 'הודעות פרטיות מגיעות אבל לא ניתנות לפענוח. לחצו "ניתוק ומחיקת החיבור" וסרקו QR מחדש.' });
+      }
+      return;
+    }
     // private chats only: ignore groups, status updates, channels and broadcasts
     if (ignoredJid(jid)) return;
     const msg = m.message.ephemeralMessage?.message || m.message.viewOnceMessage?.message || m.message;
