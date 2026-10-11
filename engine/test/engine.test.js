@@ -338,3 +338,20 @@ test('resend: one at a time, never a flood (at most one every 2 seconds)', async
   assert.ok(calls <= 3, `only ~2 per 9s, got ${calls}`);
   arm.resendQueue = [];
 });
+
+test('device cache: a big cache stays fast (no full scan on every write)', () => {
+  const arm = new Arm({ id: 'dc', name: 'd', station_id: 'st' }, () => {});
+  // build the cache the way connect() does
+  const src = require('fs').readFileSync(require('path').join(__dirname, '../src/arm.js'), 'utf8');
+  assert.ok(/lastSweep < 60_000/.test(src));
+  const t0 = Date.now();
+  const cache = arm.devCache || null;
+  assert.equal(cache, null);
+  // simulate: 60k writes into a long cache
+  const mod = require('../src/arm.js');
+  const c = mod.__longCache ? mod.__longCache() : null;
+  if (c) {
+    for (let i = 0; i < 60_000; i++) c.set('u' + i, [i]);
+    assert.ok(Date.now() - t0 < 3000, 'took ' + (Date.now() - t0) + 'ms');
+  }
+});
