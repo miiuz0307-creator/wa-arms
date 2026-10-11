@@ -270,7 +270,13 @@ class Arm {
       shouldSyncHistoryMessage: () => false,
       generateHighQualityLinkPreview: false,
       // answer group-metadata lookups from memory instead of asking WhatsApp every time
-      cachedGroupMetadata: async (jid) => this.groupMeta?.get(jid),
+      // Only complete details: WhatsApp sometimes returns a group without its member list. Sending with an
+      // empty list hands our encryption key to nobody (and may use the wrong addressing), so every member
+      // sees "waiting for this message". Incomplete → Baileys asks WhatsApp for the full details itself.
+      cachedGroupMetadata: async (jid) => {
+        const m = this.groupMeta?.get(jid);
+        return m?.participants?.length && m.subject ? m : undefined;
+      },
       userDevicesCache: (this.devCache = this.devCache || longCache()),
     });
     this.sock = sock;
