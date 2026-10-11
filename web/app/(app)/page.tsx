@@ -29,10 +29,12 @@ export default function Dashboard() {
     // owner (own account, not inside a station): stations whose subscription ends this week or already ended
     let stationAlerts: any[] = [];
     let health: any[] = [];
+    let armRequests: any[] = [];
     let engineSeen: string | null = null;
     if (isSuper && !station?.acting) {
       // system monitor: disconnected numbers and failed sends in every station, engine heartbeat
-      const { data: h } = await sb().rpc('owner_health');
+      const [{ data: h }, { data: rq }] = await Promise.all([sb().rpc('owner_health'), sb().rpc('owner_arm_requests')]);
+      armRequests = ((rq as any[]) || []).filter((r) => r.status === 'pending');
       engineSeen = (h || [])[0]?.engine_seen || null;
       health = (h || []).filter((r: any) => r.station_id && r.station_name && (r.arm_id || r.failed_hour > 0));
       const { data: st } = await sb().rpc('stations_overview');
@@ -77,6 +79,7 @@ export default function Dashboard() {
       noPerm,
       stationAlerts,
       health,
+      armRequests,
       engineDown: isSuper && !station?.acting && engineSeen && Date.now() - new Date(engineSeen).getTime() > 3 * 60_000 ? engineSeen : null,
     });
   }, [can, isSuper, station?.acting]);
@@ -117,7 +120,7 @@ export default function Dashboard() {
         <Stat label="הפצות פעילות" value={d.active.length} icon={<Radio className="h-5 w-5" />} tone="pink" />
       </div>
 
-      {(problems.length > 0 || d.pendingPhone > 0 || d.recentFailed > 0 || d.noPerm.count > 0 || d.stationAlerts.length > 0 || d.health.length > 0 || d.engineDown) && (
+      {(problems.length > 0 || d.pendingPhone > 0 || d.recentFailed > 0 || d.noPerm.count > 0 || d.stationAlerts.length > 0 || d.health.length > 0 || d.engineDown || d.armRequests.length > 0) && (
         <Card className="mt-4 border-amber-200 bg-amber-50/60 p-4">
           <div className="mb-2 flex items-center gap-2 font-semibold text-amber-900">
             <AlertTriangle className="h-4 w-4" />
@@ -139,6 +142,13 @@ export default function Dashboard() {
                 </Link>
               </li>
             )}
+            {d.armRequests.map((r: any) => (
+              <li key={`r${r.id}`}>
+                <Link href="/billing" className="font-medium hover:underline">
+                  תחנה <b>{r.station_name}</b> מבקשת עוד {r.count} {r.count === 1 ? 'זרוע' : 'זרועות'} – לאישור
+                </Link>
+              </li>
+            ))}
             {d.engineDown && (
               <li className="font-semibold text-rose-700">המנוע לא דיווח מאז {fmtTime(d.engineDown)} – ייתכן שהשרת נפל. בדוק ב-Railway.</li>
             )}

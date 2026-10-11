@@ -26,6 +26,7 @@ import {
 import { useAuth, ROLE_LABEL, Role } from '@/lib/auth';
 import { actAsStation } from '@/lib/supabase';
 import { cx, Spinner } from './ui';
+import { StationBanners, useInbox } from './StationInbox';
 
 type Item = { href: string; label: string; icon: any; min: Role; superOnly?: boolean };
 
@@ -78,6 +79,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const path = usePathname();
   const router = useRouter();
   const [more, setMore] = useState(false);
+  // messages and payment reminders from the system owner (station logins and the owner inside a station)
+  const { inbox } = useInbox(!!session && (isStation || !!station?.acting));
 
   useEffect(() => {
     if (!loading && !session) router.replace('/login');
@@ -178,12 +181,13 @@ export function Shell({ children }: { children: React.ReactNode }) {
             </button>
           </div>
         )}
-        {isStation && daysLeft !== null && daysLeft <= 7 && (
+        {isStation && !inbox && daysLeft !== null && daysLeft <= 7 && (
           <div className="mx-auto mb-4 flex max-w-6xl items-center gap-2 rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-900 ring-1 ring-amber-200">
             <CalendarClock className="h-4 w-4 shrink-0" />
             {daysLeft <= 0 ? 'המנוי מסתיים היום.' : `המנוי מסתיים בעוד ${daysLeft} ימים.`} לחידוש פנה למנהל המערכת.
           </div>
         )}
+        <StationBanners inbox={inbox} />
         <div className="mx-auto max-w-6xl">{children}</div>
       </main>
 

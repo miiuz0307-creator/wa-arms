@@ -3,12 +3,12 @@
 // Owner only. Buttons act on any station without entering it.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Activity, Ban, LogIn, PauseCircle, PlayCircle, Plug, QrCode, RefreshCw, Send, Smartphone, XCircle } from 'lucide-react';
+import { Activity, Ban, LogIn, Megaphone, PauseCircle, PlayCircle, Plug, QrCode, RefreshCw, Send, Smartphone, XCircle } from 'lucide-react';
 import { sb, actAsStation } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
 import { useRealtime } from '@/lib/hooks';
 import { ARM_STATUS, CAMPAIGN_STATUS, KIND_LABEL, firstLine, fmtTime, timeAgo } from '@/lib/format';
-import { Badge, Button, Card, Empty, PageHeader, Progress, Select, Spinner, Stat, cx, toast } from '@/components/ui';
+import { Badge, Button, Card, Empty, Field, Input, PageHeader, Progress, Select, Spinner, Stat, Textarea, cx, toast } from '@/components/ui';
 
 type Arm = {
   arm_id: string;
@@ -116,6 +116,8 @@ function Control() {
         <Stat label="הפצות פעילות" value={shownCamps.length} icon={<Activity className="h-5 w-5" />} tone="violet" />
         <Stat label="נשלחו היום" value={sentToday.toLocaleString('he-IL')} icon={<Send className="h-5 w-5" />} tone="sky" />
       </div>
+
+      <Messages stations={stations} />
 
       {/* live distributions */}
       <Card className="mb-6">
@@ -306,5 +308,131 @@ function Control() {
         עצירת שליחה לא מנתקת את המספר: הוא ממשיך להאזין, וההפצות עוברות לזרועות האחרות של התחנה.
       </p>
     </>
+  );
+}
+
+type Msg = { id: number; title: string; body: string | null; level: string; station_id: string | null; station_name: string | null; starts_at: string; ends_at: string | null; active: boolean };
+
+// system messages: shown at the top of the app of every station (or one station)
+function Messages({ stations }: { stations: [string, string][] }) {
+  const [list, setList] = useState<Msg[]>([]);
+  const [title, setTitle] = useState('');
+  const [body, setBody] = useState('');
+  const [level, setLevel] = useState('info');
+  const [target, setTarget] = useState('');
+  const [days, setDays] = useState(3);
+  const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
+  const load = useCallback(async () => {
+    const { data } = await sb().rpc('owner_messages');
+    setList((data as Msg[]) || []);
+  }, []);
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function send() {
+    if (!title.trim()) return toast('חסרה כותרת', 'error');
+    setBusy(true);
+    const { error } = await sb().rpc('owner_message_send', { p_title: title, p_body: body || null, p_level: level, p_station: target || null, p_days: days });
+    setBusy(false);
+    if (error) return toast(error.message, 'error');
+    toast(target ? 'ההודעה נשלחה לתחנה' : 'ההודעה נשלחה לכל התחנות');
+    setTitle('');
+    setBody('');
+    setOpen(false);
+    load();
+  }
+  async function end(id: number) {
+    const { error } = await sb().rpc('owner_message_end', { p_id: id });
+    if (error) return toast(error.message, 'error');
+    load();
+  }
+  const active = list.filter((m) => m.active);
+
+  return (
+    <Card className="mb-6">
+      <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+        <div className="flex items-center gap-2 font-semibold">
+          <Megaphone className="h-4 w-4 text-indigo-600" />
+          הודעות מערכת לתחנות
+          {active.length > 0 && <Badge tone="violet">{active.length} מוצגות</Badge>}
+        </div>
+        <Button size="sm" onClick={() => setOpen((v) => !v)}>
+          {open ? 'סגירה' : 'הודעה חדשה'}
+        </Button>
+      </div>
+      {open && (
+        <div className="grid gap-3 border-b border-slate-100 p-5 md:grid-cols-2">
+          <Field label="כותרת">
+            <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="לדוגמה: עדכון מערכת הלילה" />
+          </Field>
+          <Field label="נשלח אל">
+            <Select value={target} onChange={(e) => setTarget(e.target.value)}>
+              <option value="">כל התחנות</option>
+              {stations.map(([id, name]) => (
+                <option key={id} value={id}>
+                  {name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <div className="md:col-span-2">
+            <Field label="תוכן">
+              <Textarea rows={3} value={body} onChange={(e) => setBody(e.target.value)} className="min-h-0" />
+            </Field>
+          </div>
+          <Field label="סוג">
+            <Select value={level} onChange={(e) => setLevel(e.target.value)}>
+              <option value="info">מידע (כחול)</option>
+              <option value="warning">שים לב (כתום)</option>
+              <option value="urgent">דחוף (אדום)</option>
+            </Select>
+          </Field>
+          <Field label="מוצג למשך">
+            <Select value={days} onChange={(e) => setDays(Number(e.target.value))}>
+              <option value={1}>יום</option>
+              <option value={3}>3 ימים</option>
+              <option value={7}>שבוע</option>
+              <option value={30}>חודש</option>
+              <option value={0}>עד שאפסיק</option>
+            </Select>
+          </Field>
+          <div className="md:col-span-2 flex justify-end">
+            <Button onClick={send} loading={busy}>
+              <Send className="h-4 w-4" />
+              שליחה
+            </Button>
+          </div>
+        </div>
+      )}
+      {list.length === 0 ? (
+        <div className="p-5 text-center text-sm text-slate-500">עדיין לא נשלחו הודעות. הודעה מופיעה בראש האפליקציה של התחנה עד שתפוג או שתפסיק אותה.</div>
+      ) : (
+        <ul className="divide-y divide-slate-100">
+          {list.slice(0, 8).map((m) => (
+            <li key={m.id} className={cx('flex items-start gap-3 px-5 py-3', !m.active && 'opacity-50')}>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium">{m.title}</span>
+                  <Badge tone={m.level === 'urgent' ? 'red' : m.level === 'warning' ? 'amber' : 'sky'}>{m.station_name || 'כל התחנות'}</Badge>
+                  {!m.active && <Badge tone="slate">הסתיים</Badge>}
+                </div>
+                {m.body && <div className="mt-0.5 line-clamp-2 text-sm text-slate-600">{m.body}</div>}
+                <div className="mt-0.5 text-xs text-slate-400">
+                  {fmtTime(m.starts_at)}
+                  {m.ends_at ? ` · עד ${fmtTime(m.ends_at)}` : ' · ללא הגבלה'}
+                </div>
+              </div>
+              {m.active && (
+                <Button size="sm" variant="ghost" onClick={() => end(m.id)}>
+                  הפסקה
+                </Button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
   );
 }

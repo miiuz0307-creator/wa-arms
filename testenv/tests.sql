@@ -209,4 +209,31 @@ exception when others then perform testkit.check(true, 'control: a station canno
 select testkit.check((select count(*) from information_schema.role_table_grants where grantee in ('anon','authenticated') and table_name = 'station_payments') = 0, 'billing: payments table not reachable directly');
 reset role;
 
+-- arm requests, system messages, payment reminders
+update stations set max_arms = 2, price = 200, sub_end = current_date + 3 where id = '0000000a-0000-0000-0000-000000000000';
+set role authenticated; select testkit.as_owner();
+select public.owner_settings_save('ביט ל-0501234567', 60, 5);
+reset role;
+set role anon; select testkit.as_station('tok-a');
+select public.station_request_arms(2, 'צריך עוד שתיים');
+select public.station_request_arms(1, 'בעצם אחת');
+select testkit.check((public.station_inbox() -> 'arm_request' ->> 'count')::int = 1, 'requests: asking again updates the one open request');
+select testkit.check((public.station_inbox() -> 'billing' ->> 'remind')::boolean and (public.station_inbox() -> 'billing' ->> 'payment_note') like 'ביט%',
+  'reminder: station sees the payment reminder 3 days before, with how to pay');
+reset role;
+set role authenticated; select testkit.as_owner();
+select testkit.check((select count(*) from public.owner_arm_requests() where status = 'pending') = 1, 'requests: owner sees the request');
+select public.owner_decide_arm_request((select id from public.owner_arm_requests() where status = 'pending' limit 1), true, 260);
+select public.owner_message_send('עדכון מערכת', 'תחזוקה הלילה ב-02:00', 'warning', null, 2);
+reset role;
+select testkit.check((select max_arms from stations where id = '0000000a-0000-0000-0000-000000000000') = 3
+  and (select price from stations where id = '0000000a-0000-0000-0000-000000000000') = 260, 'requests: approval raises the arm limit and sets the new monthly price');
+set role anon; select testkit.as_station('tok-a');
+select testkit.check((select count(*) from json_array_elements(public.station_inbox() -> 'messages')) = 2, 'messages: station A sees the approval and the message to everyone');
+select testkit.as_station('tok-b');
+select testkit.check((select count(*) from json_array_elements(public.station_inbox() -> 'messages')) = 1, 'messages: station B sees only the message to everyone');
+do $$ begin perform public.owner_message_send('x', 'y'); perform testkit.check(false, 'messages: only the owner can send');
+exception when others then perform testkit.check(true, 'messages: only the owner can send'); end $$;
+reset role;
+
 select n, case when ok then 'PASS' else 'FAIL' end as result, name, coalesce(left(detail, 80), '') from testkit.results where name not like '%(update attempted)%' order by n;

@@ -7,7 +7,8 @@ import { useRealtime } from '@/lib/hooks';
 import { useAuth, myUid } from '@/lib/auth';
 import { ARM_STATUS, timeAgo } from '@/lib/format';
 import { RequireRole } from '@/components/Shell';
-import { Badge, Button, Card, Empty, Field, Input, Modal, PageHeader, Spinner, toast } from '@/components/ui';
+import { Badge, Button, Card, Empty, Field, Input, Modal, PageHeader, Select, Spinner, Textarea, toast } from '@/components/ui';
+import { useInbox } from '@/components/StationInbox';
 
 export default function ArmsPage() {
   return (
@@ -18,7 +19,11 @@ export default function ArmsPage() {
 }
 
 function Arms() {
-  const { profile } = useAuth();
+  const { profile, station } = useAuth();
+  // stations have a number of arms in their plan; past it they ask the system owner for more
+  const { inbox, reload: reloadInbox } = useInbox(!!station && !station.is_home);
+  const atLimit = !!inbox && inbox.arms.max != null && inbox.arms.count >= inbox.arms.max;
+  const [asking, setAsking] = useState(false);
   const [arms, setArms] = useState<any[] | null>(null);
   const [qr, setQr] = useState<Record<string, string>>({});
   const [groups, setGroups] = useState<Record<string, number>>({});
@@ -75,10 +80,21 @@ function Arms() {
         title="חיבור זרועות"
         subtitle="כל זרוע היא מספר WhatsApp עצמאי שמחובר לשרת 24/7"
         actions={
-          <Button onClick={() => setAdding(true)}>
-            <Plus className="h-4 w-4" />
-            הוסף זרוע
-          </Button>
+          atLimit ? (
+            inbox?.arm_request ? (
+              <Badge tone="amber">ביקשת עוד {inbox.arm_request.count} – ממתין לאישור מנהל המערכת</Badge>
+            ) : (
+              <Button onClick={() => setAsking(true)}>
+                <Plus className="h-4 w-4" />
+                בקשת זרוע נוספת
+              </Button>
+            )
+          ) : (
+            <Button onClick={() => setAdding(true)}>
+              <Plus className="h-4 w-4" />
+              הוסף זרוע
+            </Button>
+          )
         }
       />
 
@@ -209,8 +225,72 @@ function Arms() {
       )}
 
       <AddArm open={adding} onClose={() => setAdding(false)} next={arms.length + 1} />
+      <RequestArms
+        open={asking}
+        max={inbox?.arms.max ?? null}
+        onClose={() => setAsking(false)}
+        onDone={() => {
+          setAsking(false);
+          reloadInbox();
+        }}
+      />
       <EditArm arm={editing} onClose={() => setEditing(null)} />
     </>
+  );
+}
+
+function RequestArms({ open, max, onClose, onDone }: { open: boolean; max: number | null; onClose: () => void; onDone: () => void }) {
+  const [count, setCount] = useState(1);
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (open) {
+      setCount(1);
+      setNote('');
+    }
+  }, [open]);
+  async function send() {
+    setBusy(true);
+    const { error } = await sb().rpc('station_request_arms', { p_count: count, p_note: note || null });
+    setBusy(false);
+    if (error) return toast(error.message, 'error');
+    toast('הבקשה נשלחה למנהל המערכת');
+    onDone();
+  }
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="בקשת זרוע נוספת"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            ביטול
+          </Button>
+          <Button onClick={send} loading={busy}>
+            שליחת בקשה
+          </Button>
+        </>
+      }
+    >
+      <p className="mb-4 text-sm text-slate-600">
+        החבילה שלך כוללת {max ?? '—'} זרועות, וכולן בשימוש. מנהל המערכת יקבל את הבקשה, ואחרי אישור יופיע כאן כפתור להוספה.
+      </p>
+      <div className="grid gap-4">
+        <Field label="כמה זרועות נוספות">
+          <Select value={count} onChange={(e) => setCount(Number(e.target.value))}>
+            {[1, 2, 3, 4, 5].map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="הערה למנהל (אופציונלי)">
+          <Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} className="min-h-0" />
+        </Field>
+      </div>
+    </Modal>
   );
 }
 

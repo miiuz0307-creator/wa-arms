@@ -2,10 +2,10 @@
 // Payments: what each station pays, what was received, who is behind. Owner only.
 // Recording a payment for N months extends the station's subscription by N months.
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CalendarCheck, Plus, Receipt, Wallet } from 'lucide-react';
+import { AlertTriangle, CalendarCheck, Check, Pencil, Plus, Receipt, Settings2, Smartphone, Wallet, X } from 'lucide-react';
 import { sb } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
-import { Badge, Button, Card, Empty, Field, Input, Modal, PageHeader, Select, Spinner, Stat, cx, toast } from '@/components/ui';
+import { Badge, Button, Card, Empty, Field, Input, Modal, PageHeader, Select, Spinner, Stat, Textarea, cx, toast } from '@/components/ui';
 
 type Bill = {
   station_id: string;
@@ -20,6 +20,20 @@ type Bill = {
   months_overdue: number;
   owed: number;
 };
+type Req = {
+  id: number;
+  station_id: string;
+  station_name: string;
+  count: number;
+  note: string | null;
+  status: 'pending' | 'approved' | 'declined';
+  price_before: number | null;
+  price_after: number | null;
+  max_arms: number | null;
+  arms_count: number;
+  created_at: string;
+};
+type Settings = { payment_note: string | null; extra_arm_price: number | null; reminder_days: number | null };
 type Pay = { id: number; station_id: string; station_name: string; amount: number; months: number; paid_at: string; method: string | null; note: string | null };
 
 const money = (n: number | null | undefined) => `${Math.round(Number(n || 0)).toLocaleString('he-IL')} ₪`;
@@ -47,12 +61,23 @@ function Billing() {
   const [bills, setBills] = useState<Bill[] | null>(null);
   const [pays, setPays] = useState<Pay[]>([]);
   const [payFor, setPayFor] = useState<Bill | null>(null);
+  const [priceFor, setPriceFor] = useState<Bill | null>(null);
+  const [reqs, setReqs] = useState<Req[]>([]);
+  const [settings, setSettings] = useState<Settings | null>(null);
+  const [editSettings, setEditSettings] = useState(false);
 
   const load = useCallback(async () => {
-    const [b, p] = await Promise.all([sb().rpc('owner_billing'), sb().rpc('owner_payments', { p_limit: 300 })]);
+    const [b, p, r, st] = await Promise.all([
+      sb().rpc('owner_billing'),
+      sb().rpc('owner_payments', { p_limit: 300 }),
+      sb().rpc('owner_arm_requests'),
+      sb().rpc('owner_settings_get'),
+    ]);
     if (b.error) toast(b.error.message, 'error');
     setBills((b.data as Bill[]) || []);
     setPays((p.data as Pay[]) || []);
+    setReqs((r.data as Req[]) || []);
+    setSettings((st.data as Settings) || null);
   }, []);
   useEffect(() => {
     load();
@@ -77,10 +102,16 @@ function Billing() {
         title="תשלומים"
         subtitle="מי שילם, מי בפיגור, וכמה נכנס החודש. רישום תשלום מאריך את המנוי של התחנה."
         actions={
-          <Button onClick={() => setPayFor({} as Bill)} disabled={!bills?.length}>
-            <Plus className="h-4 w-4" />
-            רישום תשלום
-          </Button>
+          <>
+            <Button variant="secondary" onClick={() => setEditSettings(true)}>
+              <Settings2 className="h-4 w-4" />
+              הגדרות תשלום
+            </Button>
+            <Button onClick={() => setPayFor({} as Bill)} disabled={!bills?.length}>
+              <Plus className="h-4 w-4" />
+              רישום תשלום
+            </Button>
+          </>
         }
       />
 
@@ -90,6 +121,8 @@ function Billing() {
         <Stat label="חובות פתוחים" value={money(sum.owed)} sub={sum.behind ? `${sum.behind} תחנות בפיגור` : 'אין פיגורים'} icon={<AlertTriangle className="h-5 w-5" />} tone={sum.owed ? 'red' : 'slate'} />
         <Stat label="לתשלום השבוע" value={sum.soon} icon={<CalendarCheck className="h-5 w-5" />} tone="amber" />
       </div>
+
+      <Requests reqs={reqs} extra={Number(settings?.extra_arm_price || 0)} onDone={load} />
 
       <Card className="mb-6">
         <div className="border-b border-slate-100 px-5 py-4 font-semibold">מצב לפי תחנה</div>
@@ -115,10 +148,16 @@ function Billing() {
                       <span>סה״כ שולם: {money(b.paid_total)}</span>
                     </div>
                   </div>
-                  <Button size="sm" variant={b.owed > 0 ? 'primary' : 'secondary'} onClick={() => setPayFor(b)}>
-                    <Plus className="h-4 w-4" />
-                    תשלום
-                  </Button>
+                  <div className="flex gap-1.5">
+                    <Button size="sm" variant="secondary" title="התשלום החודשי הקבוע" onClick={() => setPriceFor(b)}>
+                      <Pencil className="h-4 w-4" />
+                      {b.price != null ? money(b.price) : 'מחיר'}
+                    </Button>
+                    <Button size="sm" variant={b.owed > 0 ? 'primary' : 'secondary'} onClick={() => setPayFor(b)}>
+                      <Plus className="h-4 w-4" />
+                      תשלום
+                    </Button>
+                  </div>
                 </li>
               );
             })}
@@ -161,6 +200,8 @@ function Billing() {
       </Card>
 
       <PayForm bills={bills || []} value={payFor} onClose={() => setPayFor(null)} onDone={load} />
+      <PriceForm bill={priceFor} onClose={() => setPriceFor(null)} onDone={load} />
+      <SettingsForm open={editSettings} value={settings} onClose={() => setEditSettings(false)} onDone={load} />
     </>
   );
 }
@@ -279,6 +320,164 @@ function PayForm({ bills, value, onClose, onDone }: { bills: Bill[]; value: Bill
           {sel.owed > 0 ? ' מהיום (התחנה בפיגור)' : sel.sub_end ? ` מ-${fmtDate(sel.sub_end)}` : ''}, ותחנה מושעית תופעל מחדש.
         </p>
       )}
+    </Modal>
+  );
+}
+
+function Requests({ reqs, extra, onDone }: { reqs: Req[]; extra: number; onDone: () => void }) {
+  const [busy, setBusy] = useState<number | null>(null);
+  const [prices, setPrices] = useState<Record<number, string>>({});
+  if (!reqs.length) return null;
+  const suggested = (r: Req) => (r.price_before != null ? Number(r.price_before) + extra * r.count : null);
+  async function decide(r: Req, approve: boolean) {
+    const raw = prices[r.id] ?? (suggested(r) != null ? String(suggested(r)) : '');
+    if (approve && raw !== '' && !(Number(raw) >= 0)) return toast('מחיר לא תקין', 'error');
+    setBusy(r.id);
+    const { error } = await sb().rpc('owner_decide_arm_request', { p_id: r.id, p_approve: approve, p_new_price: approve && raw !== '' ? Number(raw) : null });
+    setBusy(null);
+    if (error) return toast(error.message, 'error');
+    toast(approve ? 'אושר – התחנה קיבלה הודעה' : 'נדחה – התחנה קיבלה הודעה');
+    onDone();
+  }
+  return (
+    <Card className="mb-6">
+      <div className="flex items-center gap-2 border-b border-slate-100 px-5 py-4 font-semibold">
+        <Smartphone className="h-4 w-4 text-indigo-600" />
+        בקשות לזרועות נוספות
+        {reqs.some((r) => r.status === 'pending') && <Badge tone="amber">{reqs.filter((r) => r.status === 'pending').length} ממתינות</Badge>}
+      </div>
+      <ul className="divide-y divide-slate-100">
+        {reqs.map((r) => (
+          <li key={r.id} className={cx('flex flex-col gap-3 px-5 py-3 md:flex-row md:items-center', r.status === 'pending' && 'bg-amber-50/40')}>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium">{r.station_name}</span>
+                <span className="text-sm">מבקשת עוד {r.count} {r.count === 1 ? 'זרוע' : 'זרועות'}</span>
+                {r.status !== 'pending' && <Badge tone={r.status === 'approved' ? 'green' : 'slate'}>{r.status === 'approved' ? 'אושר' : 'נדחה'}</Badge>}
+              </div>
+              <div className="mt-1 text-xs text-slate-500">
+                כרגע {r.arms_count} מתוך {r.max_arms ?? '—'} · תשלום נוכחי {r.price_before != null ? money(r.price_before) : '—'}
+                {r.price_after != null && r.status === 'approved' ? ` → ${money(r.price_after)}` : ''} · {new Date(r.created_at).toLocaleString('he-IL', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' })}
+              </div>
+              {r.note && <div className="mt-1 text-sm text-slate-700">״{r.note}״</div>}
+            </div>
+            {r.status === 'pending' && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <div className="w-36">
+                  <Input
+                    type="number"
+                    min={0}
+                    placeholder="תשלום חודשי חדש"
+                    value={prices[r.id] ?? (suggested(r) != null ? String(suggested(r)) : '')}
+                    onChange={(e) => setPrices({ ...prices, [r.id]: e.target.value })}
+                    title="התשלום החודשי אחרי האישור (ריק = בלי שינוי)"
+                  />
+                </div>
+                <Button size="sm" variant="success" loading={busy === r.id} onClick={() => decide(r, true)}>
+                  <Check className="h-4 w-4" />
+                  אישור
+                </Button>
+                <Button size="sm" variant="danger" disabled={busy === r.id} onClick={() => confirm('לדחות את הבקשה?') && decide(r, false)}>
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
+function PriceForm({ bill, onClose, onDone }: { bill: Bill | null; onClose: () => void; onDone: () => void }) {
+  const [price, setPrice] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (bill) setPrice(bill.price != null ? String(Number(bill.price)) : '');
+  }, [bill]);
+  async function save() {
+    if (price !== '' && !(Number(price) >= 0)) return toast('מחיר לא תקין', 'error');
+    setBusy(true);
+    const { error } = await sb().rpc('owner_set_price', { p_station: bill!.station_id, p_price: price === '' ? null : Number(price) });
+    setBusy(false);
+    if (error) return toast(error.message, 'error');
+    toast('התשלום הקבוע עודכן');
+    onClose();
+    onDone();
+  }
+  return (
+    <Modal
+      open={!!bill}
+      onClose={onClose}
+      title={`תשלום חודשי קבוע – ${bill?.station_name}`}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            ביטול
+          </Button>
+          <Button onClick={save} loading={busy}>
+            שמירה
+          </Button>
+        </>
+      }
+    >
+      <Field label="סכום לחודש (₪)" hint="משמש לחישוב חובות, לתזכורת לתחנה ולסכום המוצע ברישום תשלום">
+        <Input type="number" min={0} value={price} onChange={(e) => setPrice(e.target.value)} autoFocus />
+      </Field>
+    </Modal>
+  );
+}
+
+function SettingsForm({ open, value, onClose, onDone }: { open: boolean; value: Settings | null; onClose: () => void; onDone: () => void }) {
+  const [note, setNote] = useState('');
+  const [extra, setExtra] = useState('');
+  const [days, setDays] = useState('5');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (open) {
+      setNote(value?.payment_note || '');
+      setExtra(value?.extra_arm_price != null ? String(Number(value.extra_arm_price)) : '50');
+      setDays(String(value?.reminder_days ?? 5));
+    }
+  }, [open, value]);
+  async function save() {
+    setBusy(true);
+    const { error } = await sb().rpc('owner_settings_save', { p_payment_note: note, p_extra_arm_price: Number(extra || 0), p_reminder_days: Number(days || 5) });
+    setBusy(false);
+    if (error) return toast(error.message, 'error');
+    toast('נשמר');
+    onClose();
+    onDone();
+  }
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="הגדרות תשלום"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            ביטול
+          </Button>
+          <Button onClick={save} loading={busy}>
+            שמירה
+          </Button>
+        </>
+      }
+    >
+      <div className="grid gap-4">
+        <Field label="איך משלמים" hint="מוצג לתחנה בתזכורת התשלום. לדוגמה: ביט / פייבוקס ל-050-0000000 על שם ...">
+          <Textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} className="min-h-0" />
+        </Field>
+        <div className="grid gap-4 md:grid-cols-2">
+          <Field label="תזכורת לפני סיום המנוי (ימים)" hint="מכאן והלאה התחנה רואה תזכורת עד שתשלם">
+            <Input type="number" min={0} max={30} value={days} onChange={(e) => setDays(e.target.value)} />
+          </Field>
+          <Field label="מחיר לזרוע נוספת (₪ לחודש)" hint="מוצע אוטומטית כשמאשרים בקשה לזרוע">
+            <Input type="number" min={0} value={extra} onChange={(e) => setExtra(e.target.value)} />
+          </Field>
+        </div>
+      </div>
     </Modal>
   );
 }
