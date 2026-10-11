@@ -20,12 +20,8 @@ function longCache(ttlMs = 12 * 60 * 60 * 1000) {
     return e.v;
   };
   // expired entries were only dropped when read again, so the cache grew for as long as the engine ran
-  // at most once a minute: scanning the whole cache on every write (it is written thousands of times a
-  // minute in big groups) blocked the engine for over a minute and dropped every WhatsApp connection
-  let lastSweep = 0;
   const sweep = () => {
-    if (m.size < 20_000 || Date.now() - lastSweep < 60_000) return;
-    lastSweep = Date.now();
+    if (m.size < 20_000) return;
     const now = Date.now();
     for (const [k, e] of m) if (e.exp < now) m.delete(k);
     while (m.size > 50_000) m.delete(m.keys().next().value);
@@ -793,4 +789,4 @@ class Arm {
   }
 }
 
-module.exports = { Arm, __longCache: longCache };
+module.exports = { Arm };

@@ -351,34 +351,6 @@ async function sendTick(arm) {
   }
 }
 
-// Private WhatsApp messages from the system (login codes). Sent by an online arm of the home station –
-// preferably one past its 24h warm-up – never by a station's own numbers.
-let homeStationId = null;
-async function sendOutbox() {
-  if (!homeStationId) {
-    const { data, error } = await db.rpc('engine_home_station');
-    if (error) throw error;
-    homeStationId = data;
-  }
-  const ready = [...arms.values()].filter((a) => a.stationId === homeStationId && a.online);
-  if (!ready.length) return;
-  const settled = ready.filter((a) => !(a.linkedAt && Date.now() - a.linkedAt < WARMUP_MS));
-  const pool = settled.length ? settled : ready;
-  const { data: jobs, error } = await db.rpc('engine_outbox_take', { p_limit: 5 });
-  if (error) throw error;
-  for (const job of jobs || []) {
-    const arm = pool[Math.floor(Math.random() * pool.length)];
-    try {
-      await arm.send(`${String(job.to_phone).replace(/\D/g, '')}@s.whatsapp.net`, job.body);
-      await withRetry(() => db.rpc('engine_outbox_done', { p_id: job.id, p_ok: true, p_arm: arm.id }));
-      log.info({ arm: arm.name, id: job.id }, 'system message sent');
-    } catch (e) {
-      await withRetry(() => db.rpc('engine_outbox_done', { p_id: job.id, p_ok: false, p_error: String(e?.message || e).slice(0, 200), p_arm: arm.id }));
-      log.warn({ arm: arm.name, err: e?.message }, 'system message failed');
-    }
-  }
-}
-
 async function heartbeat() {
   const online = [...arms.values()].filter((a) => a.online).map((a) => a.id);
   if (online.length) {
@@ -456,8 +428,6 @@ async function main() {
     if (error) throw error;
   }, 'finalize');
   every(30_000, heartbeat, 'heartbeat');
-  // login codes and other private system messages – sent by one of the system's own numbers
-  every(2_000, sendOutbox, 'outbox');
   // memory picture every 5 minutes (to size servers by measurement, not guesses)
   every(5 * 60_000, async () => {
     const m = process.memoryUsage();
