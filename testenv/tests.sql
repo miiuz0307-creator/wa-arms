@@ -368,4 +368,15 @@ do $$ begin perform public.auth_user_by_email('a@b.c'); perform testkit.check(fa
 exception when others then perform testkit.check(true, 'mail: only the server can look up logins by e-mail'); end $$;
 reset role;
 
+-- a blocked arm does not hold rides
+reset role;
+update arms set status = 'error' where id = '00000000-0000-0000-0001-00000000000a';
+insert into campaigns (id, kind, status, message_text, final_text, station_id, created_at)
+values ('00000000-0000-0000-0000-0000000000d5', 'quote', 'running', 'נסיעה', 'נסיעה', '0000000a-0000-0000-0000-000000000000', now() - interval '1 minute');
+insert into campaign_arms (campaign_id, arm_id, station_id) values ('00000000-0000-0000-0000-0000000000d5', '00000000-0000-0000-0001-00000000000a', '0000000a-0000-0000-0000-000000000000');
+insert into campaign_targets (campaign_id, wa_group_id, station_id) values ('00000000-0000-0000-0000-0000000000d5', '0000000a-0000-0000-0000-000000000000-2@g.us', '0000000a-0000-0000-0000-000000000000');
+select public.finalize_campaigns();
+select testkit.check((select status from campaigns where id = '00000000-0000-0000-0000-0000000000d5') = 'completed', 'late rides: a group only a blocked arm can reach does not hold the ride for 15 minutes');
+update arms set status = 'online' where id = '00000000-0000-0000-0001-00000000000a';
+
 select n, case when ok then 'PASS' else 'FAIL' end as result, name, coalesce(left(detail, 80), '') from testkit.results where name not like '%(update attempted)%' order by n;
