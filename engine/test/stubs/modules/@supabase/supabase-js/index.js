@@ -12,7 +12,6 @@ function builder(base) {
     single() { op.single = true; return b; },
     maybeSingle() { op.maybeSingle = true; return b; },
     then(res, rej) { return run().then(res, rej); },
-    catch(rej) { return run().catch(rej); },
   };
   for (const f of ['eq', 'neq', 'in', 'gt', 'lt', 'gte', 'lte', 'is', 'not', 'or', 'filter', 'like', 'ilike', 'contains'])
     b[f] = (...a) => (op.filters.push([f, ...a]), b);

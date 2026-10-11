@@ -170,7 +170,8 @@ function msgIdFor(targetId, armId) {
 async function withRetry(fn, tries = 6) {
   let last;
   for (let i = 0; i < tries; i++) {
-    const res = await fn().catch((e) => ({ error: e }));
+    // supabase queries are 'thenable' but not real promises (no .catch) – wrap them
+    const res = await Promise.resolve().then(fn).catch((e) => ({ error: e }));
     if (!res?.error) return res;
     last = res.error;
     await sleep(Math.min(8000, 500 * 2 ** i));
