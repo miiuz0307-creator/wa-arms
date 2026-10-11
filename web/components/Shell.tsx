@@ -27,6 +27,7 @@ import { useAuth, ROLE_LABEL, Role } from '@/lib/auth';
 import { actAsStation } from '@/lib/supabase';
 import { cx, Spinner } from './ui';
 import { StationBanners, useInbox } from './StationInbox';
+import { AppLock } from './AppLock';
 
 type Item = { href: string; label: string; icon: any; min: Role; superOnly?: boolean };
 
@@ -114,6 +115,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const mobileMore = items.filter((i) => !MOBILE_MAIN.includes(i.href));
 
   return (
+    <AppLock
+      isStation={isStation}
+      ownerEmail={isStation ? null : profile.email}
+      name={(isStation ? station?.name : profile.full_name || profile.email) || 'משתמש'}
+      onSignOut={signOut}
+    >
     <div className="min-h-dvh md:flex">
       <Toasts />
       {/* Desktop sidebar */}
@@ -235,6 +242,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         </div>
       )}
     </div>
+    </AppLock>
   );
 }
 

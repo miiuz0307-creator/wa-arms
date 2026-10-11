@@ -258,4 +258,27 @@ update profiles set is_active = false where id = '00000000-0000-0000-0000-000000
 reset role;
 select testkit.check((select not is_active from profiles where id = '00000000-0000-0000-0000-0000000000ce'), 'ceo: the main owner can turn the CEO off');
 
+-- phone login (WhatsApp code)
+reset role;
+update stations set phone = '+972 54-111-2222', status = 'active', sub_end = current_date + 30 where id = '0000000b-0000-0000-0000-000000000000';
+set role anon; select testkit.as_nobody('10.9.9.9');
+select testkit.check((public.otp_request('054-1112222') ->> 'ok')::boolean, 'phone login: code requested for the manager phone');
+select testkit.check((public.otp_request('054-9999999') ->> 'ok')::boolean, 'phone login: unknown number gets the same answer (no probing)');
+reset role;
+select testkit.check((select count(*) from wa_outbox where to_phone = '972541112222') = 1 and (select count(*) from wa_outbox where to_phone = '972549999999') = 0,
+  'phone login: a WhatsApp message is queued only for the registered number');
+-- read the code from the queued message (test only)
+select substring(body from '\*(\d{6})\*') as otp from wa_outbox where to_phone = '972541112222' order by id desc limit 1 \gset
+set role anon; select testkit.as_nobody('10.9.9.9');
+select testkit.check((public.otp_verify('0541112222', '000000') ->> 'error') is not null or :'otp' = '000000', 'phone login: wrong code refused');
+select testkit.check((public.otp_verify('+972 54 111 2222', :'otp') ->> 'token') is not null, 'phone login: right code logs in (any phone format)');
+select testkit.check((public.otp_verify('0541112222', :'otp') ->> 'token') is null, 'phone login: a code works only once');
+select public.otp_request('0541112222'); select public.otp_request('0541112222'); select public.otp_request('0541112222');
+select testkit.check((public.otp_request('0541112222') ->> 'error') is not null, 'phone login: requests are rate-limited');
+do $$ begin perform public.engine_outbox_take(5); perform testkit.check(false, 'phone login: only the engine reads the outbox');
+exception when others then perform testkit.check(true, 'phone login: only the engine reads the outbox'); end $$;
+select testkit.as_engine();
+select testkit.check((select count(*) from public.engine_outbox_take(10)) >= 1, 'phone login: engine takes the code messages to send');
+reset role;
+
 select n, case when ok then 'PASS' else 'FAIL' end as result, name, coalesce(left(detail, 80), '') from testkit.results where name not like '%(update attempted)%' order by n;

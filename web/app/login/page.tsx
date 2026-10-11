@@ -1,7 +1,8 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { KeyRound, ShieldCheck } from 'lucide-react';
+import { KeyRound, MessageCircle, ShieldCheck } from 'lucide-react';
+import { markUnlocked } from '@/components/AppLock';
 import { sb, enterStationMode } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
 import { Button, Field, Input } from '@/components/ui';
@@ -9,7 +10,7 @@ import { Button, Field, Input } from '@/components/ui';
 export default function LoginPage() {
   const { session } = useAuth();
   const router = useRouter();
-  const [view, setView] = useState<'code' | 'owner'>('code');
+  const [view, setView] = useState<'code' | 'phone' | 'owner'>('code');
 
   useEffect(() => {
     if (session) router.replace('/');
@@ -39,24 +40,27 @@ export default function LoginPage() {
           <div className="md:hidden">
             <div className="brand-gradient mb-6 grid h-12 w-12 place-items-center rounded-xl text-xl font-bold text-white">ז</div>
           </div>
-          {view === 'code' ? <CodeLogin /> : <OwnerLogin />}
-          <button
-            type="button"
-            onClick={() => setView(view === 'code' ? 'owner' : 'code')}
-            className="mt-6 flex w-full items-center justify-center gap-1.5 text-center text-sm font-medium text-slate-500 hover:text-indigo-600"
-          >
-            {view === 'code' ? (
-              <>
-                <ShieldCheck className="h-4 w-4" />
-                כניסת מנהל ראשי
-              </>
-            ) : (
-              <>
+          {view === 'code' ? <CodeLogin /> : view === 'phone' ? <PhoneLogin /> : <OwnerLogin />}
+          <div className="mt-6 flex flex-wrap justify-center gap-x-5 gap-y-2 text-sm font-medium text-slate-500">
+            {view !== 'code' && (
+              <button type="button" onClick={() => setView('code')} className="flex items-center gap-1.5 hover:text-indigo-600">
                 <KeyRound className="h-4 w-4" />
-                כניסה עם קוד תחנה
-              </>
+                קוד תחנה
+              </button>
             )}
-          </button>
+            {view !== 'phone' && (
+              <button type="button" onClick={() => setView('phone')} className="flex items-center gap-1.5 hover:text-indigo-600">
+                <MessageCircle className="h-4 w-4" />
+                כניסה עם הטלפון
+              </button>
+            )}
+            {view !== 'owner' && (
+              <button type="button" onClick={() => setView('owner')} className="flex items-center gap-1.5 hover:text-indigo-600">
+                <ShieldCheck className="h-4 w-4" />
+                מנהל ראשי
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -79,7 +83,10 @@ function CodeLogin() {
     setBusy(false);
     if (error) return setErr('לא הצלחנו להתחבר. נסה שוב.');
     if (data?.error) return setErr(data.error);
-    if (data?.token) enterStationMode(data.token);
+    if (data?.token) {
+      markUnlocked();
+      enterStationMode(data.token);
+    }
   }
 
   return (
@@ -106,7 +113,80 @@ function CodeLogin() {
       <Button type="submit" size="lg" className="w-full" loading={busy}>
         כניסה
       </Button>
-      <p className="text-center text-xs text-slate-400">החיבור נשמר במכשיר הזה – לא צריך להקליד את הקוד בכל כניסה.</p>
+      <p className="text-center text-xs text-slate-400">בכל פתיחה של האפליקציה תתבקש לאשר שזה אתה – בטביעת אצבע / זיהוי פנים, או בקוד.</p>
+    </form>
+  );
+}
+
+// manager's phone → a 6-digit code on WhatsApp → in
+function PhoneLogin() {
+  const [phone, setPhone] = useState('');
+  const [code, setCode] = useState('');
+  const [sent, setSent] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setErr(null);
+    if (!sent) {
+      const { data, error } = await sb().rpc('otp_request', { p_phone: phone });
+      setBusy(false);
+      if (error || data?.error) return setErr(data?.error || 'לא הצלחנו לשלוח קוד. נסה שוב.');
+      setSent(true);
+      return;
+    }
+    const { data, error } = await sb().rpc('otp_verify', { p_phone: phone, p_code: code });
+    setBusy(false);
+    if (error || data?.error) return setErr(data?.error || 'קוד שגוי');
+    markUnlocked();
+    enterStationMode(data.token);
+  }
+
+  return (
+    <form onSubmit={submit} className="space-y-5">
+      <div>
+        <h2 className="text-2xl font-bold">כניסה עם הטלפון</h2>
+        <p className="mt-1 text-sm text-slate-500">
+          {sent ? 'אם המספר רשום כמנהל תחנה, נשלח אליו קוד בוואטסאפ.' : 'הזן את מספר הטלפון של מנהל התחנה. נשלח אליו קוד בוואטסאפ.'}
+        </p>
+      </div>
+      <Field label="מספר טלפון">
+        <Input dir="ltr" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="050-0000000" disabled={sent} required autoComplete="tel" />
+      </Field>
+      {sent && (
+        <Field label="הקוד מוואטסאפ">
+          <Input
+            dir="ltr"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            value={code}
+            onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+            placeholder="000000"
+            className="text-center font-mono text-xl tracking-[0.4em]"
+            autoFocus
+            required
+          />
+        </Field>
+      )}
+      {err && <div className="rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{err}</div>}
+      <Button type="submit" size="lg" className="w-full" loading={busy}>
+        {sent ? 'כניסה' : 'שליחת קוד בוואטסאפ'}
+      </Button>
+      {sent && (
+        <button
+          type="button"
+          onClick={() => {
+            setSent(false);
+            setCode('');
+            setErr(null);
+          }}
+          className="w-full text-center text-xs font-medium text-slate-400 hover:text-indigo-600"
+        >
+          מספר אחר / שליחה מחדש
+        </button>
+      )}
     </form>
   );
 }
@@ -125,6 +205,7 @@ function OwnerLogin() {
     setMsg(null);
     if (mode === 'in') {
       const { error } = await sb().auth.signInWithPassword({ email, password });
+      if (!error) markUnlocked();
       if (error) setMsg({ text: error.message.includes('Email not confirmed') ? 'יש לאשר קודם את המייל (בדוק את תיבת הדואר).' : 'אימייל או סיסמה שגויים.' });
     } else {
       const { data, error } = await sb().auth.signUp({
