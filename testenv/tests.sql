@@ -168,7 +168,7 @@ reset role;
 reset role;
 insert into processed_messages (station_id, source_group_id, message_id, processed_at) values
  ('0000000a-0000-0000-0000-000000000000', 'g', 'old', now() - interval '4 days'),
- ('0000000a-0000-0000-0000-000000000000', 'g', 'new', now() - interval '1 hour');
+ ('0000000a-0000-0000-0000-000000000000', 'g', 'new', now() - interval '10 minutes');
 select count(*) as camps_before from campaigns \gset
 set role anon; select testkit.as_engine();
 select public.engine_cleanup();
@@ -178,6 +178,35 @@ select testkit.check((select count(*) from processed_messages where message_id =
 set role anon; select testkit.as_station('tok-a');
 do $$ begin perform public.engine_cleanup(); perform testkit.check(false, 'cleanup: engine only');
 exception when others then perform testkit.check(true, 'cleanup: engine only'); end $$;
+reset role;
+
+-- owner control center + payments
+set role authenticated; select testkit.as_owner();
+select testkit.check((select count(*) from public.owner_arms()) = 6, 'control: owner sees every arm of every station');
+select testkit.check((select count(distinct station_id) from public.owner_today()) >= 3, 'control: today summary per station');
+select public.owner_arm_command('00000000-0000-0000-0001-00000000000b', 'connect');
+select public.owner_arm_limit('00000000-0000-0000-0002-00000000000b', 0);
+reset role;
+select testkit.check((select station_id from arm_commands where arm_id = '00000000-0000-0000-0001-00000000000b' order by id desc limit 1) = '0000000b-0000-0000-0000-000000000000',
+  'control: a button pressed in the center reaches the right station''s arm');
+select testkit.check((select daily_limit from arms where id = '00000000-0000-0000-0002-00000000000b') = 0, 'control: stop sending keeps the arm connected (limit 0)');
+update stations set sub_end = current_date - 40 where id = '0000000c-0000-0000-0000-000000000000';
+update stations set price = 200 where id = '0000000c-0000-0000-0000-000000000000';
+set role authenticated; select testkit.as_owner();
+select testkit.check((select owed from public.owner_billing() where station_id = '0000000c-0000-0000-0000-000000000000') = 400, 'billing: 40 days overdue at 200/month = 400 owed',
+  (select owed::text from public.owner_billing() where station_id = '0000000c-0000-0000-0000-000000000000'));
+select public.owner_payment_add('0000000c-0000-0000-0000-000000000000', 400, 2, 'ביט', 'בדיקה');
+select testkit.check((select sub_end from stations where id = '0000000c-0000-0000-0000-000000000000') = (current_date + interval '2 months')::date
+  and (select paid_total from public.owner_billing() where station_id = '0000000c-0000-0000-0000-000000000000') = 400
+  and (select owed from public.owner_billing() where station_id = '0000000c-0000-0000-0000-000000000000') = 0, 'billing: a payment of 2 months extends the subscription and clears the debt');
+select testkit.check((select count(*) from public.owner_payments()) = 1, 'billing: payment listed');
+reset role;
+set role anon; select testkit.as_station('tok-a');
+do $$ begin perform public.owner_billing(); perform testkit.check(false, 'billing: stations cannot see payments');
+exception when others then perform testkit.check(true, 'billing: stations cannot see payments'); end $$;
+do $$ begin perform public.owner_arm_command('00000000-0000-0000-0001-00000000000b', 'reset'); perform testkit.check(false, 'control: a station cannot press buttons on another station');
+exception when others then perform testkit.check(true, 'control: a station cannot press buttons on another station'); end $$;
+select testkit.check((select count(*) from information_schema.role_table_grants where grantee in ('anon','authenticated') and table_name = 'station_payments') = 0, 'billing: payments table not reachable directly');
 reset role;
 
 select n, case when ok then 'PASS' else 'FAIL' end as result, name, coalesce(left(detail, 80), '') from testkit.results where name not like '%(update attempted)%' order by n;

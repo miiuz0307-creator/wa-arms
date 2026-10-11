@@ -20,6 +20,8 @@ import {
   Building2,
   ArrowRightLeft,
   CalendarClock,
+  Gauge,
+  Wallet,
 } from 'lucide-react';
 import { useAuth, ROLE_LABEL, Role } from '@/lib/auth';
 import { actAsStation } from '@/lib/supabase';
@@ -28,7 +30,9 @@ import { cx, Spinner } from './ui';
 type Item = { href: string; label: string; icon: any; min: Role; superOnly?: boolean };
 
 const NAV: Item[] = [
+  { href: '/control', label: 'מרכז בקרה', icon: Gauge, min: 'owner', superOnly: true },
   { href: '/stations', label: 'תחנות', icon: Building2, min: 'owner', superOnly: true },
+  { href: '/billing', label: 'תשלומים', icon: Wallet, min: 'owner', superOnly: true },
   { href: '/', label: 'בית', icon: LayoutDashboard, min: 'viewer' },
   { href: '/send', label: 'שליחת הודעה', icon: Send, min: 'operator' },
   { href: '/history', label: 'היסטוריה', icon: History, min: 'viewer' },
@@ -100,7 +104,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
     );
   }
 
-  const items = NAV.filter((n) => can(n.min) && (!n.superOnly || isSuper));
+  const items = NAV.filter((n) => can(n.min) && (!n.superOnly || (isSuper && !station?.acting)));
   const daysLeft = station?.sub_end ? Math.ceil((new Date(station.sub_end + 'T23:59:59').getTime() - Date.now()) / 86400000) : null;
   const active = (href: string) => (href === '/' ? path === '/' : path.startsWith(href));
   const mobileMain = items.filter((i) => MOBILE_MAIN.includes(i.href));

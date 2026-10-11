@@ -55,9 +55,9 @@ export function leaveStationMode() {
   write(TOKEN_KEY, null);
   window.location.href = '/login';
 }
-export function actAsStation(id: string | null) {
+export function actAsStation(id: string | null, path = '/') {
   write(ACT_KEY, id);
-  window.location.href = id ? '/' : '/stations';
+  window.location.href = id ? path : '/stations';
 }
 
 export async function logAct(action: string, entity?: string, entityId?: string, details?: Record<string, unknown>) {
