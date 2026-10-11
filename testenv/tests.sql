@@ -236,4 +236,26 @@ do $$ begin perform public.owner_message_send('x', 'y'); perform testkit.check(f
 exception when others then perform testkit.check(true, 'messages: only the owner can send'); end $$;
 reset role;
 
+-- CEO
+reset role;
+update profiles set is_primary = true where id = '00000000-0000-0000-0000-00000000000f';
+insert into auth.users (id) values ('00000000-0000-0000-0000-0000000000ce');
+insert into profiles (id, email, role, is_active, station_id) values ('00000000-0000-0000-0000-0000000000ce', 'ceo@test', 'viewer', false, '00000000-0000-0000-0000-000000000000');
+set role authenticated; select testkit.as_owner();
+update profiles set role = 'owner', is_active = true, title = 'מנכ"ל' where id = '00000000-0000-0000-0000-0000000000ce';
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-0000000000ce', false);
+select testkit.check(public.is_super() and (select count(*) from public.owner_arms()) = 6, 'ceo: the CEO has full owner access (all stations)');
+do $$ begin
+  update profiles set role = 'viewer' where id = '00000000-0000-0000-0000-00000000000f';
+  perform testkit.check(false, 'ceo: the CEO cannot demote the main owner');
+exception when others then perform testkit.check(true, 'ceo: the CEO cannot demote the main owner'); end $$;
+do $$ begin
+  update profiles set is_primary = true where id = '00000000-0000-0000-0000-0000000000ce';
+  perform testkit.check(false, 'ceo: nobody can make himself the main owner');
+exception when others then perform testkit.check(true, 'ceo: nobody can make himself the main owner'); end $$;
+select testkit.as_owner();
+update profiles set is_active = false where id = '00000000-0000-0000-0000-0000000000ce';
+reset role;
+select testkit.check((select not is_active from profiles where id = '00000000-0000-0000-0000-0000000000ce'), 'ceo: the main owner can turn the CEO off');
+
 select n, case when ok then 'PASS' else 'FAIL' end as result, name, coalesce(left(detail, 80), '') from testkit.results where name not like '%(update attempted)%' order by n;
