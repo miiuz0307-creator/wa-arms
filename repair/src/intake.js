@@ -65,6 +65,7 @@ function createIntake({ cfg, store, wa, pipeline, log }) {
     const sender = await findSender(phone, lid);
     if (!sender) {
       const who = phone || `lid:${lid}`;
+      log.warn({ from: phone ? `${phone.slice(0, 5)}***${phone.slice(-2)}` : null, lid: Boolean(lid) }, 'message from a number that is not on the approved list');
       await pipeline.audit(null, who, 'rejected_sender', `הודעה ממספר לא מאושר (${phone ? formatLocal(phone) : 'מספר מוסתר'})`, { phone, lid, name });
       const last = lastStrangerReply.get(who) || 0;
       if (Date.now() - last > 24 * 3600_000) {

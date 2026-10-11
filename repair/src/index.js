@@ -4,7 +4,7 @@ const pino = require('pino');
 const { load } = require('./config');
 const { createMemoryStore } = require('./store/memory');
 const { createPgStore } = require('./store/pg');
-const { createWhatsApp, useDbAuthState } = require('./wa');
+const { createWhatsApp, hasSession } = require('./wa');
 const { createRailway } = require('./railway');
 const { createGitHub } = require('./github');
 const { createWorkspace } = require('./workspace');
@@ -14,6 +14,18 @@ const { createIntake } = require('./intake');
 const { createServer } = require('./server');
 
 const log = pino({ level: process.env.LOG_LEVEL || 'info' });
+
+// libsignal prints harmless decryption noise straight to the console (e.g. "Bad MAC" after a restart).
+// It floods the server log (Railway drops lines above 500/s), so drop those lines.
+const NOISE = /Bad MAC|Decrypted message with closed session|Failed to decrypt message|Session error|SessionError|Closing (open )?session|Closing stale|SessionEntry|No matching sessions|decryptWithSessions|doDecryptWhisperMessage|verifyMAC|fillMessageKeys|_asyncQueueExecutor|session_cipher|queue_job|processTicksAndRejections|libsignal|messages into the future/;
+for (const level of ['error', 'warn', 'info', 'log']) {
+  const orig = console[level].bind(console);
+  console[level] = (...args) => {
+    const first = args.map((a) => (a instanceof Error ? a.stack || a.message : String(a))).join(' ');
+    if (NOISE.test(first)) return;
+    orig(...args);
+  };
+}
 
 async function main() {
   const cfg = load();
@@ -39,6 +51,14 @@ async function main() {
     secret: cfg.sessionSecret,
     log,
     onMessage: (msg) => (intake ? intake.handle(msg) : null),
+    // learn the hidden WhatsApp id of every approved number, so their messages are recognised
+    onOpen: async () => {
+      for (const n of await store.listNumbers()) {
+        if (n.lid) continue;
+        const lid = await wa.lidOf(n.phone);
+        if (lid) await store.updateNumber(n.id, { lid });
+      }
+    },
   });
   const railway = createRailway(cfg.railway);
   const github = createGitHub(cfg.github);
@@ -57,8 +77,7 @@ async function main() {
   }
 
   // reconnect automatically when a session from an earlier scan exists
-  const { state } = await useDbAuthState(store, cfg.sessionSecret);
-  if (state.creds?.me) wa.connect().catch((e) => log.error({ err: e.message }, 'auto-connect failed'));
+  if (await hasSession(store, cfg.sessionSecret)) wa.connect().catch((e) => log.error({ err: e.message }, 'auto-connect failed'));
 
   pipeline.start();
   const server = createServer({ cfg, store, wa, railway, github, claude, pipeline, log, ws });

@@ -155,6 +155,15 @@ function createMemoryStore() {
     async authDel(key) {
       auth.delete(key);
     },
+    async authAll() {
+      return [...auth].map(([key, value]) => ({ key, value }));
+    },
+    async authSetMany(entries) {
+      for (const [k, v] of entries) auth.set(k, v);
+    },
+    async authDelMany(keys) {
+      for (const k of keys) auth.delete(k);
+    },
     async authClear() {
       auth.clear();
     },

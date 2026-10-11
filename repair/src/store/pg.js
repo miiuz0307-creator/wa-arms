@@ -127,6 +127,18 @@ async function createPgStore(url) {
     authSet: (key, value) =>
       q('insert into wa_auth(key,value) values($1,$2) on conflict(key) do update set value=excluded.value', [key, value]),
     authDel: (key) => q('delete from wa_auth where key=$1', [key]),
+    authAll: () => q('select key, value from wa_auth'),
+    async authSetMany(entries) {
+      for (let i = 0; i < entries.length; i += 500) {
+        const part = entries.slice(i, i + 500);
+        await q(
+          `insert into wa_auth(key,value) select * from unnest($1::text[], $2::text[])
+           on conflict(key) do update set value=excluded.value`,
+          [part.map((e) => e[0]), part.map((e) => e[1])],
+        );
+      }
+    },
+    authDelMany: (keys) => q('delete from wa_auth where key = any($1::text[])', [keys]),
     authClear: () => q('delete from wa_auth'),
   };
 }

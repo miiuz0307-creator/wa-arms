@@ -6,13 +6,63 @@ const { encrypt, decrypt } = require('./secure');
 const { senderOf, jidOf } = require('./phones');
 
 const makeWASocket = baileys.default || baileys.makeWASocket;
-const { DisconnectReason, Browsers, BufferJSON, initAuthCreds, proto } = baileys;
+const { DisconnectReason, Browsers, BufferJSON, initAuthCreds, proto, makeCacheableSignalKeyStore } = baileys;
+
+// The bot only talks in private chats: never decrypt group, status, broadcast or channel traffic.
+// A busy number receives thousands of group messages; decrypting them was pure load and noise.
+const ignoredJid = (jid = '') => jid.endsWith('@g.us') || jid.endsWith('@broadcast') || jid.endsWith('@newsletter');
 const quiet = pino({ level: 'silent' });
 const MAX_IMAGE = 8 * 1024 * 1024;
 
-async function useDbAuthState(store, secret) {
-  const read = async (k) => {
-    const v = await store.authGet(k);
+// Baileys after 6.7.16 keeps sender keys as raw JSON bytes
+const WANTS_BYTES = (() => {
+  try {
+    const [a, b, c] = require('@whiskeysockets/baileys/package.json').version.split('.').map(Number);
+    return a > 6 || (a === 6 && (b > 7 || (b === 7 && c > 16)));
+  } catch {
+    return true;
+  }
+})();
+
+/**
+ * Session keys live in memory (always current – WhatsApp's encryption breaks with "Bad MAC" if a
+ * key is read before the previous write landed) and are saved to the database in batches.
+ */
+async function useDbAuthState(store, secret, log = quiet) {
+  const cache = new Map(); // key -> encrypted string
+  for (const r of await store.authAll()) cache.set(r.key, r.value);
+
+  const pendingSet = new Map();
+  const pendingDel = new Set();
+  let timer = null;
+  let flushing = Promise.resolve();
+  const doFlush = async () => {
+    const sets = [...pendingSet];
+    const dels = [...pendingDel];
+    pendingSet.clear();
+    pendingDel.clear();
+    try {
+      if (sets.length) await store.authSetMany(sets);
+      if (dels.length) await store.authDelMany(dels);
+    } catch (e) {
+      log.error({ err: e.message }, 'saving WhatsApp session failed – will retry');
+      for (const [k, v] of sets) if (!pendingSet.has(k) && !pendingDel.has(k)) pendingSet.set(k, v);
+      for (const k of dels) if (!pendingSet.has(k)) pendingDel.add(k);
+      schedule(5000);
+    }
+  };
+  const flush = () => {
+    clearTimeout(timer);
+    timer = null;
+    flushing = flushing.then(doFlush, doFlush);
+    return flushing;
+  };
+  const schedule = (ms = 1500) => {
+    if (!timer) timer = setTimeout(flush, ms);
+  };
+
+  const read = (k) => {
+    const v = cache.get(k);
     if (!v) return null;
     try {
       return JSON.parse(decrypt(secret, v), BufferJSON.reviver);
@@ -20,47 +70,82 @@ async function useDbAuthState(store, secret) {
       return null; // wrong SESSION_SECRET or damaged row – treated as missing
     }
   };
-  const write = (k, data) => store.authSet(k, encrypt(secret, JSON.stringify(data, BufferJSON.replacer)));
-  const creds = (await read('creds')) || initAuthCreds();
+  const write = (k, data) => {
+    if (data === null || data === undefined) {
+      cache.delete(k);
+      pendingSet.delete(k);
+      pendingDel.add(k);
+    } else {
+      const v = encrypt(secret, JSON.stringify(data, BufferJSON.replacer));
+      cache.set(k, v);
+      pendingDel.delete(k);
+      pendingSet.set(k, v);
+    }
+    schedule(k === 'creds' ? 200 : 1500);
+  };
+
+  const creds = read('creds') || initAuthCreds();
   return {
     state: {
       creds,
       keys: {
         get: async (type, ids) => {
           const out = {};
-          await Promise.all(
-            ids.map(async (id) => {
-              let v = await read(`${type}-${id}`);
-              if (type === 'app-state-sync-key' && v) v = proto.Message.AppStateSyncKeyData.fromObject(v);
-              out[id] = v;
-            }),
-          );
+          for (const id of ids) {
+            let v = read(`${type}-${id}`);
+            if (type === 'app-state-sync-key' && v) v = proto.Message.AppStateSyncKeyData.fromObject(v);
+            if (type === 'sender-key' && v) {
+              const isBytes = Buffer.isBuffer(v) || v instanceof Uint8Array;
+              try {
+                if (WANTS_BYTES && !isBytes) v = Buffer.from(JSON.stringify(v, BufferJSON.replacer), 'utf8');
+                else if (!WANTS_BYTES && isBytes) v = JSON.parse(Buffer.from(v).toString('utf8'), BufferJSON.reviver);
+              } catch {
+                v = null;
+              }
+            }
+            out[id] = v;
+          }
           return out;
         },
         set: async (data) => {
-          for (const type of Object.keys(data)) {
-            for (const id of Object.keys(data[type])) {
-              const v = data[type][id];
-              const k = `${type}-${id}`;
-              if (v) await write(k, v);
-              else await store.authDel(k);
-            }
-          }
+          for (const type of Object.keys(data)) for (const id of Object.keys(data[type])) write(`${type}-${id}`, data[type][id]);
         },
       },
     },
-    saveCreds: () => write('creds', creds),
+    saveCreds: async () => write('creds', creds),
+    flush,
+    clear: async () => {
+      clearTimeout(timer);
+      timer = null;
+      pendingSet.clear();
+      pendingDel.clear();
+      cache.clear();
+      await flushing.catch(() => {});
+      await store.authClear();
+    },
   };
+}
+
+/** Is there a scanned session to reconnect with? */
+async function hasSession(store, secret) {
+  const v = (await store.authAll()).find((r) => r.key === 'creds')?.value;
+  if (!v) return false;
+  try {
+    return Boolean(JSON.parse(decrypt(secret, v), BufferJSON.reviver)?.me);
+  } catch {
+    return false;
+  }
 }
 
 const textOf = (m = {}) =>
   m.conversation || m.extendedTextMessage?.text || m.imageMessage?.caption || m.documentMessage?.caption || '';
 
-function createWhatsApp({ store, secret, log, onMessage }) {
+function createWhatsApp({ store, secret, log, onMessage, onOpen }) {
   let sock = null;
   let stopped = true;
   let reconnectTimer = null;
   let retries = 0;
+  let auth = null;
   const status = { state: 'disconnected', qr: null, me: null, error: null, since: new Date().toISOString() };
 
   const set = (patch) => Object.assign(status, patch, { since: new Date().toISOString() });
@@ -70,10 +155,13 @@ function createWhatsApp({ store, secret, log, onMessage }) {
     if (sock) return status;
     stopped = false;
     set({ state: 'connecting', error: null });
-    const { state, saveCreds } = await useDbAuthState(store, secret);
+    auth = auth || (await useDbAuthState(store, secret, log));
+    const { state, saveCreds } = auth;
+    const keys = makeCacheableSignalKeyStore ? makeCacheableSignalKeyStore(state.keys, quiet) : state.keys;
     const s = makeWASocket({
-      auth: state,
+      auth: { creds: state.creds, keys },
       logger: quiet,
+      shouldIgnoreJid: ignoredJid,
       browser: Browsers.ubuntu('Chrome'),
       printQRInTerminal: false,
       markOnlineOnConnect: false,
@@ -99,20 +187,24 @@ function createWhatsApp({ store, secret, log, onMessage }) {
       const me = (s.user?.id || '').split(':')[0].split('@')[0];
       set({ state: 'connected', qr: null, me, error: null });
       log.info({ me }, 'WhatsApp connected');
+      if (onOpen) Promise.resolve(onOpen()).catch((e) => log.warn({ err: e.message }, 'after-connect task failed'));
     }
     if (u.connection !== 'close') return;
     sock = null;
     const code = u.lastDisconnect?.error?.output?.statusCode;
     log.warn({ code }, 'WhatsApp connection closed');
+    await auth?.flush().catch(() => {});
     if (stopped) return set({ state: 'disconnected', qr: null });
     if (code === DisconnectReason.restartRequired) return connect(); // normal right after scanning
     if (code === DisconnectReason.loggedOut) {
-      await store.authClear();
+      await auth?.clear();
+      auth = null;
       stopped = true;
       return set({ state: 'disconnected', qr: null, me: null, error: 'החיבור נותק מהטלפון. לחצו "חיבור WhatsApp" וסרקו שוב.' });
     }
     if (!state.creds?.me) {
       stopped = true;
+      auth = null;
       return set({ state: 'disconnected', qr: null, error: 'פג תוקף ה-QR. לחצו "חיבור WhatsApp" כדי לקבל חדש.' });
     }
     if (code === 403) {
@@ -133,9 +225,17 @@ function createWhatsApp({ store, secret, log, onMessage }) {
     const jid = m.key?.remoteJid || '';
     if (m.key?.fromMe || !m.message) return;
     // private chats only: ignore groups, status updates, channels and broadcasts
-    if (jid.endsWith('@g.us') || jid === 'status@broadcast' || jid.endsWith('@newsletter') || jid.endsWith('@broadcast')) return;
+    if (ignoredJid(jid)) return;
     const msg = m.message.ephemeralMessage?.message || m.message.viewOnceMessage?.message || m.message;
-    const { phone, lid } = senderOf(m.key);
+    let { phone, lid } = senderOf(m.key);
+    // WhatsApp increasingly hides the number behind a private id (LID): ask Baileys for the number
+    if (!phone && lid) {
+      try {
+        const pn = await s.signalRepository?.lidMapping?.getPNForLID?.(`${lid}@lid`);
+        if (pn) phone = String(pn).split('@')[0].split(':')[0];
+      } catch {}
+    }
+    log.info({ from: phone ? `${phone.slice(0, 5)}***${phone.slice(-2)}` : null, lid: lid ? 'yes' : 'no', image: Boolean(msg.imageMessage) }, 'private message received');
     let image = null;
     if (msg.imageMessage) {
       const size = Number(msg.imageMessage.fileLength || 0);
@@ -159,6 +259,18 @@ function createWhatsApp({ store, secret, log, onMessage }) {
     await onMessage({ jid, phone, lid, name: m.pushName || '', text: textOf(msg).trim(), image });
   }
 
+  /** WhatsApp's private id (LID) of a phone number, when WhatsApp tells us. */
+  async function lidOf(phone) {
+    if (!sock || status.state !== 'connected') return null;
+    try {
+      const [r] = (await sock.onWhatsApp(phone)) || [];
+      const lid = r?.lid || null;
+      return lid ? String(lid).split('@')[0].split(':')[0] : null;
+    } catch {
+      return null;
+    }
+  }
+
   async function send(to, text) {
     if (!sock || status.state !== 'connected') throw new Error('WhatsApp לא מחובר');
     const jid = to.includes('@') ? to : jidOf(to);
@@ -174,11 +286,16 @@ function createWhatsApp({ store, secret, log, onMessage }) {
       if (logout) await s.logout().catch(() => {});
       else s.end?.(undefined);
     }
-    if (logout) await store.authClear();
+    await auth?.flush().catch(() => {});
+    if (logout) {
+      await auth?.clear();
+      await store.authClear();
+      auth = null;
+    }
     set({ state: 'disconnected', qr: null, ...(logout ? { me: null } : {}), error: null });
   }
 
-  return { connect, disconnect, send, status: () => ({ ...status }) };
+  return { connect, disconnect, send, lidOf, status: () => ({ ...status }) };
 }
 
-module.exports = { createWhatsApp, useDbAuthState, textOf };
+module.exports = { createWhatsApp, useDbAuthState, hasSession, textOf, ignoredJid };
