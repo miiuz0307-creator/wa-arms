@@ -277,7 +277,12 @@ test('messages: only source groups are decrypted; others are confirmed and dropp
   assert.equal(arm.skipIncoming(node('tgt@g.us', 'x@lid')), true, 'target group: nothing to read there');
   assert.equal(arm.skipIncoming(node('other@g.us', 'x@lid')), true);
   assert.equal(arm.skipIncoming(node('other@g.us', '111:5@lid')), false, "the arm's own phone still goes through");
-  assert.equal(arm.skipIncoming(node('972500000009@s.whatsapp.net')), false, 'private chats always processed');
+  assert.equal(arm.skipIncoming(node('972500000009@s.whatsapp.net')), true, 'private chats from others: not read');
+  assert.equal(arm.skipIncoming(node('222@lid')), true, 'private chats from others (lid): not read');
+  assert.equal(arm.skipIncoming(node('972500000001:5@s.whatsapp.net')), false, "the arm's own phone (other device) still goes through");
+  assert.equal(arm.skipIncoming(node('111:7@lid')), false, "the arm's own lid still goes through");
+  assert.equal(arm.skipIncoming({ tag: 'message', attrs: { id: 'P', from: '972500000009@s.whatsapp.net', category: 'peer' } }), false, 'peer protocol messages go through');
+  assert.equal(arm.skipIncoming(node('972500000009@broadcast')), false, 'other kinds untouched');
   assert.equal(arm.skipIncoming(node('status@broadcast', 'x@s.whatsapp.net')), true);
   // skipped messages are confirmed (receipt + ack) so WhatsApp does not send them again
   const sent = [];

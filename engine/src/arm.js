@@ -20,8 +20,12 @@ function longCache(ttlMs = 12 * 60 * 60 * 1000) {
     return e.v;
   };
   // expired entries were only dropped when read again, so the cache grew for as long as the engine ran
+  // at most once a minute: scanning the whole cache on every write (it is written thousands of times a
+  // minute in big groups) blocked the engine for over a minute and dropped every WhatsApp connection
+  let lastSweep = 0;
   const sweep = () => {
-    if (m.size < 20_000) return;
+    if (m.size < 20_000 || Date.now() - lastSweep < 60_000) return;
+    lastSweep = Date.now();
     const now = Date.now();
     for (const [k, e] of m) if (e.exp < now) m.delete(k);
     while (m.size > 50_000) m.delete(m.keys().next().value);
@@ -81,7 +85,17 @@ class Arm {
     const from = a.from || '';
     if (!a.id) return false;
     if (from === 'status@broadcast' || from.endsWith('@newsletter')) return true;
-    if (!from.endsWith('@g.us')) return false; // private chats: always processed
+    if (!from.endsWith('@g.us')) {
+      // Private chats are never used (only source groups are read). A number that was away for hours can
+      // get hundreds of private messages it cannot decrypt; Baileys then answers each one with new keys and
+      // retry requests, which kept the whole engine busy and dropped every arm (11 Oct, arm 050-4107826).
+      // Messages from the arm's own phone (its other devices, key sharing) always go through.
+      if (!from.endsWith('@s.whatsapp.net') && !from.endsWith('@lid')) return false;
+      if (a.category === 'peer') return false;
+      const f = from.replace(/:\d+(?=@)/, '');
+      if (this.ownJids().includes(f)) return false;
+      return true;
+    }
     if (this.groupMatters(from)) return false;
     // messages the arm's own number writes (from its phone) still go through
     const p = String(a.participant || '').replace(/:\d+(?=@)/, '');
@@ -789,4 +803,4 @@ class Arm {
   }
 }
 
-module.exports = { Arm };
+module.exports = { Arm, __longCache: longCache };
