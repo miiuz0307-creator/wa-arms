@@ -351,6 +351,34 @@ async function sendTick(arm) {
   }
 }
 
+// Per arm, per minute: members who could not decrypt our messages, repairs, re-sends, losses.
+async function saveDelivery() {
+  const rows = [];
+  for (const a of arms.values()) {
+    const d = a.takeDelivery?.();
+    if (!d) continue;
+    const lost = (d.resendExpired || 0) + (d.resendGaveUp || 0) + (d.resendDropped || 0);
+    const row = {
+      arm_id: a.id,
+      sent: d.sent || 0,
+      retry_receipts: d.retryReceipts || 0,
+      failing_devices: d.failingDevices || 0,
+      resent: d.resent || 0,
+      resend_failed: d.resendFailed || 0,
+      resend_lost: lost,
+      sessions_learned: d.sessionsLearned || 0,
+      undecrypted_in: d.undecryptedIn || 0,
+      detail: d,
+    };
+    rows.push(row);
+    if (row.retry_receipts || row.undecrypted_in) log.info({ arm: a.name, ...row, detail: undefined, queue: a.resendQueue?.length || 0 }, 'delivery (last minute)');
+  }
+  if (!rows.length) return;
+  // monitoring must never slow the other loops (they share the database back-off): log and move on
+  const { error } = await db.rpc('engine_delivery_stats', { p_rows: rows });
+  if (error) log.warn({ err: String(error.message).slice(0, 120) }, 'delivery stats not saved');
+}
+
 async function heartbeat() {
   const online = [...arms.values()].filter((a) => a.online).map((a) => a.id);
   if (online.length) {
@@ -428,6 +456,8 @@ async function main() {
     if (error) throw error;
   }, 'finalize');
   every(30_000, heartbeat, 'heartbeat');
+  // delivery monitoring: once a minute, per arm (see arm.count / arm_delivery_stats)
+  every(60_000, saveDelivery, 'delivery');
   // memory picture every 5 minutes (to size servers by measurement, not guesses)
   every(5 * 60_000, async () => {
     const m = process.memoryUsage();

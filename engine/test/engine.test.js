@@ -319,29 +319,126 @@ test('groups: member lists kept only for source and target groups; the full list
   assert.deepEqual(Object.keys(upserts[0]).sort(), ['arm_id', 'name', 'participants', 'updated_at', 'wa_group_id']);
 });
 
-test('resend: one at a time, never a flood (at most one every 2 seconds)', async () => {
+test('resend: batches with one session refresh, one worker, bounded rate', async () => {
+  const saved = { gap: Arm.RESEND_GAP_MS, first: Arm.RESEND_FIRST_MS, item: Arm.RESEND_ITEM_MS, batch: Arm.RESEND_BATCH };
+  Object.assign(Arm, { RESEND_GAP_MS: 300, RESEND_FIRST_MS: 10, RESEND_ITEM_MS: 1, RESEND_BATCH: 5 });
   const arm = new Arm({ id: 'rs', name: 'r', station_id: 'st' }, () => {});
   let inFlight = 0;
   let maxInFlight = 0;
-  let calls = 0;
+  let relays = 0;
+  const asserted = [];
   const sock = {
-    assertSessions: async () => {},
+    assertSessions: async (jids, force) => asserted.push({ n: jids.length, force }),
     relayMessage: async () => {
-      calls++;
+      relays++;
       inFlight++;
       maxInFlight = Math.max(maxInFlight, inFlight);
-      await new Promise((r) => setTimeout(r, 2500)); // slower than the 2s gap – used to start a second chain
+      await new Promise((r) => setTimeout(r, 5));
       inFlight--;
     },
   };
   arm.sock = sock;
   arm.online = true;
   arm.sentStore = new Map([['ID1', { message: { conversation: 'x' }, at: Date.now() }]]);
-  for (let i = 0; i < 20; i++) arm.queueResend(sock, 'g@g.us', 'ID1', `p${i}@lid`, 1);
-  await new Promise((r) => setTimeout(r, 9000));
+  for (let i = 0; i < 12; i++) arm.queueResend(sock, 'g@g.us', 'ID1', `p${i}@lid`, 1);
+  arm.queueResend(sock, 'g@g.us', 'ID1', 'p0@lid', 1); // same device + message: only once
+  await new Promise((r) => setTimeout(r, 120));
+  assert.equal(relays, 5, 'first batch only – the next waits for the gap');
+  await new Promise((r) => setTimeout(r, 900));
+  assert.equal(relays, 12);
   assert.equal(maxInFlight, 1);
-  assert.ok(calls <= 3, `only ~2 per 9s, got ${calls}`);
+  assert.deepEqual(asserted.map((a) => a.n), [5, 5, 2], 'one session refresh per batch');
+  assert.ok(asserted.every((a) => a.force));
+  const d = arm.takeDelivery();
+  assert.equal(d.resent, 12);
+  assert.equal(d.failingDevices, 12);
+  Object.assign(Arm, { RESEND_GAP_MS: saved.gap, RESEND_FIRST_MS: saved.first, RESEND_ITEM_MS: saved.item, RESEND_BATCH: saved.batch });
+});
+
+test('resend: rate-overlimit pauses the queue instead of hammering WhatsApp', async () => {
+  const saved = { gap: Arm.RESEND_GAP_MS, first: Arm.RESEND_FIRST_MS, item: Arm.RESEND_ITEM_MS };
+  Object.assign(Arm, { RESEND_GAP_MS: 10, RESEND_FIRST_MS: 5, RESEND_ITEM_MS: 1 });
+  const arm = new Arm({ id: 'rl', name: 'r', station_id: 'st' }, () => {});
+  let relays = 0;
+  const sock = {
+    assertSessions: async () => {},
+    relayMessage: async () => {
+      relays++;
+      if (relays === 2) throw new Error('rate-overlimit');
+    },
+  };
+  arm.sock = sock;
+  arm.online = true;
+  arm.sentStore = new Map([['ID1', { message: { conversation: 'x' }, at: Date.now() }]]);
+  for (let i = 0; i < 6; i++) arm.queueResend(sock, 'g@g.us', 'ID1', `q${i}@lid`, 1);
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(relays, 2, 'stopped after rate-overlimit');
+  assert.equal(arm.resendQueue.length, 4, 'the rest kept for later');
+  clearTimeout(arm.resendTimer);
   arm.resendQueue = [];
+  Object.assign(Arm, { RESEND_GAP_MS: saved.gap, RESEND_FIRST_MS: saved.first, RESEND_ITEM_MS: saved.item });
+});
+
+test('resend: too old / gave up / no copy are counted as lost, not silently ignored', () => {
+  const arm = new Arm({ id: 'lost', name: 'r', station_id: 'st' }, () => {});
+  arm.sentStore = new Map([['OLD', { message: {}, at: Date.now() - 11 * 60_000 }], ['NEW', { message: {}, at: Date.now() }]]);
+  arm.queueResend({}, 'g@g.us', 'OLD', 'a@lid', 1);
+  arm.queueResend({}, 'g@g.us', 'NEW', 'b@lid', 3);
+  arm.queueResend({}, 'g@g.us', 'MISSING', 'c@lid', 1);
+  const d = arm.takeDelivery();
+  assert.equal(d.resendExpired, 2);
+  assert.equal(d.resendGaveUp, 1);
+  assert.equal(d.failingDevices, 3);
+  assert.equal(arm.takeDelivery(), null, 'counters reset each minute');
+});
+
+test('incoming: a group message carrying a new session (pkmsg) is decrypted even in an unused group', () => {
+  Arm.setRelevance({ sourcesReady: true, targetsReady: true, isSource: () => false, isTarget: () => false });
+  const arm = new Arm({ id: 'pk', name: 'r', station_id: 'st' }, () => {});
+  const node = (types) => ({ attrs: { id: 'M1', from: 'x@g.us', participant: '111@lid' }, content: types.map((t) => ({ tag: 'enc', attrs: { type: t } })) });
+  assert.equal(arm.skipIncoming(node(['skmsg'])), true, 'ordinary traffic in an unused group: skipped');
+  assert.equal(arm.skipIncoming(node(['pkmsg', 'skmsg'])), false, 'new session: processed');
+  assert.equal(arm.takeDelivery().sessionsLearned, 1);
+  assert.ok(arm.learnOnly.has('M1'), 'its content is not handed to the help / quote handlers');
+});
+
+test('incoming: private new sessions (pkmsg) are learned, within a per-minute budget', () => {
+  const arm = new Arm({ id: 'pp', name: 'r', station_id: 'st' }, () => {});
+  const node = (id, types) => ({ attrs: { id, from: '972500000009@s.whatsapp.net' }, content: types.map((t) => ({ tag: 'enc', attrs: { type: t } })) });
+  assert.equal(arm.skipIncoming(node('A', ['msg'])), true, 'ordinary private message from a stranger: skipped');
+  assert.equal(arm.skipIncoming(node('B', ['pkmsg'])), false, 'new session: learned');
+  for (let i = 0; i < 70; i++) arm.skipIncoming(node('C' + i, ['pkmsg']));
+  assert.equal(arm.takeDelivery().sessionsLearned, 60, 'at most 60 a minute – a backlog cannot freeze the engine');
+});
+
+test('retry: only the failing device loses "has our key"; its device list is fetched again', async () => {
+  const arm = new Arm({ id: 'sk', name: 'r', station_id: 'st' }, () => {});
+  let mem = { 'g@g.us': { '111:2@lid': true, '111@lid': true, '222@lid': true } };
+  arm.signalKeys = {
+    get: async (type, ids) => Object.fromEntries(ids.map((id) => [id, mem[id]])),
+    set: async (data) => Object.assign(mem, data['sender-key-memory']),
+  };
+  await arm.forgetDeviceKey('g@g.us', '111:2@lid');
+  assert.deepEqual(Object.keys(mem['g@g.us']).sort(), ['111@lid', '222@lid']);
+  await arm.forgetDeviceKey('g@g.us', '333:5@lid'); // unknown device of an unknown member: nothing else touched
+  assert.deepEqual(Object.keys(mem['g@g.us']).sort(), ['111@lid', '222@lid']);
+  await arm.forgetDeviceKey('g@g.us', '222:7@lid'); // new device of a known member: all that member's devices
+  assert.deepEqual(Object.keys(mem['g@g.us']), ['111@lid']);
+  const dropped = [];
+  arm.devCache = { del: (k) => dropped.push(...k) };
+  arm.forgetDevices('111:2@lid');
+  assert.deepEqual(dropped, ['111', '111@lid']);
+});
+
+test('members joining/leaving update the kept member list at once', () => {
+  const arm = new Arm({ id: 'gp', name: 'r', station_id: 'st' }, () => {});
+  arm.groupMeta = new Map([['g@g.us', { id: 'g@g.us', subject: 'g', participants: [{ id: 'a@lid' }, { id: 'b@lid' }] }]]);
+  arm.applyParticipants({ id: 'g@g.us', action: 'add', participants: ['c@lid', 'a@lid'] });
+  assert.deepEqual(arm.groupMeta.get('g@g.us').participants.map((p) => p.id), ['a@lid', 'b@lid', 'c@lid']);
+  arm.applyParticipants({ id: 'g@g.us', action: 'remove', participants: [{ id: 'a@lid' }] });
+  assert.deepEqual(arm.groupMeta.get('g@g.us').participants.map((p) => p.id), ['b@lid', 'c@lid']);
+  arm.applyParticipants({ id: 'other@g.us', action: 'add', participants: ['z@lid'] }); // not kept: ignored
+  assert.equal(arm.groupMeta.has('other@g.us'), false);
 });
 
 test('device cache: a big cache stays fast (no full scan on every write)', () => {

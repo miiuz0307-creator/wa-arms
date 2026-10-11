@@ -31,9 +31,16 @@ export default function Dashboard() {
     let health: any[] = [];
     let armRequests: any[] = [];
     let engineSeen: string | null = null;
+    let delivery: any[] = [];
     if (isSuper && !station?.acting) {
       // system monitor: disconnected numbers and failed sends in every station, engine heartbeat
-      const [{ data: h }, { data: rq }] = await Promise.all([sb().rpc('owner_health'), sb().rpc('owner_arm_requests')]);
+      const [{ data: h }, { data: rq }, { data: dl }] = await Promise.all([
+        sb().rpc('owner_health'),
+        sb().rpc('owner_arm_requests'),
+        sb().rpc('owner_delivery'),
+      ]);
+      // delivery monitor: members who could not decrypt our messages ("waiting for this message"), per arm
+      delivery = (dl as any[]) || [];
       armRequests = ((rq as any[]) || []).filter((r) => r.status === 'pending');
       engineSeen = (h || [])[0]?.engine_seen || null;
       health = (h || []).filter((r: any) => r.station_id && r.station_name && (r.arm_id || r.failed_hour > 0));
@@ -80,6 +87,7 @@ export default function Dashboard() {
       stationAlerts,
       health,
       armRequests,
+      delivery,
       engineDown: isSuper && !station?.acting && engineSeen && Date.now() - new Date(engineSeen).getTime() > 3 * 60_000 ? engineSeen : null,
     });
   }, [can, isSuper, station?.acting]);
@@ -119,6 +127,8 @@ export default function Dashboard() {
         <Stat label="נשלחו היום" value={d.sentToday} sub={`סה״כ ${d.sentTotal.toLocaleString('he-IL')}`} icon={<Send className="h-5 w-5" />} tone="violet" />
         <Stat label="הפצות פעילות" value={d.active.length} icon={<Radio className="h-5 w-5" />} tone="pink" />
       </div>
+
+      {d.delivery.length > 0 && <DeliveryMonitor rows={d.delivery} />}
 
       {(problems.length > 0 || d.pendingPhone > 0 || d.recentFailed > 0 || d.noPerm.count > 0 || d.stationAlerts.length > 0 || d.health.length > 0 || d.engineDown || d.armRequests.length > 0) && (
         <Card className="mt-4 border-amber-200 bg-amber-50/60 p-4">
@@ -279,5 +289,60 @@ export default function Dashboard() {
         </Card>
       )}
     </>
+  );
+}
+
+// Owner: per arm, how many member devices could not decrypt our messages in the last hour, how many were
+// fixed by a re-send, and how many stayed unreadable ("waiting for this message").
+function DeliveryMonitor({ rows }: { rows: any[] }) {
+  const pct = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 1000) / 10 : 0);
+  const lostTotal = rows.reduce((n, r) => n + (r.lost_hour || 0), 0);
+  return (
+    <Card className="mt-4 p-4">
+      <div className="mb-3 flex items-center gap-2 font-semibold">
+        <Activity className="h-4 w-4" />
+        מסירת הודעות – שעה אחרונה
+        {lostTotal > 0 ? (
+          <Badge tone="red">{lostTotal} לא תוקנו</Badge>
+        ) : (
+          <Badge tone="green">תקין</Badge>
+        )}
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[560px] text-sm">
+          <thead className="text-xs text-slate-500">
+            <tr className="text-right">
+              <th className="py-1 font-medium">זרוע</th>
+              <th className="py-1 font-medium">נשלחו</th>
+              <th className="py-1 font-medium">לא פוענחו אצל מקבלים</th>
+              <th className="py-1 font-medium">נשלחו שוב</th>
+              <th className="py-1 font-medium">נשארו "בהמתנה"</th>
+              <th className="py-1 font-medium">נכנסות שלא פוענחו</th>
+              <th className="py-1 font-medium">24 שעות</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.arm_id} className="border-t border-slate-100">
+                <td className="py-1.5">
+                  <b>{r.arm_name}</b>
+                  <div className="text-xs text-slate-500">{r.station_name}</div>
+                </td>
+                <td>{r.sent_hour}</td>
+                <td className={r.failed_hour > 0 ? 'text-amber-700' : ''}>
+                  {r.failed_hour} {r.devices_hour ? <span className="text-xs text-slate-500">({r.devices_hour} מכשירים)</span> : null}
+                </td>
+                <td>{r.resent_hour}</td>
+                <td className={r.lost_hour > 0 ? 'font-semibold text-red-700' : ''}>{r.lost_hour}</td>
+                <td className={r.undecrypted_hour > 0 ? 'text-amber-700' : ''}>{r.undecrypted_hour}</td>
+                <td className="text-xs text-slate-500">
+                  {r.failed_day} תקלות · {r.resent_day} תוקנו · {pct(r.lost_day, r.failed_day)}% נשארו
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
   );
 }

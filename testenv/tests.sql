@@ -327,4 +327,22 @@ do $$ begin perform public.runner_exec(1); perform testkit.check(false, 'updates
 exception when others then perform testkit.check(true, 'updates: only the runner can run DB changes'); end $$;
 reset role;
 
+-- delivery monitor ("waiting for this message")
+set role authenticated; select testkit.as_station('tok-a');
+do $$ begin perform public.engine_delivery_stats('[]'::jsonb); perform testkit.check(false, 'delivery: a station cannot write delivery stats');
+exception when others then perform testkit.check(true, 'delivery: a station cannot write delivery stats'); end $$;
+do $$ begin perform public.owner_delivery(); perform testkit.check(false, 'delivery: a station cannot read the owner delivery monitor');
+exception when others then perform testkit.check(true, 'delivery: a station cannot read the owner delivery monitor'); end $$;
+reset role;
+select testkit.as_engine();
+select public.engine_delivery_stats(jsonb_build_array(
+  jsonb_build_object('arm_id', '00000000-0000-0000-0001-00000000000a', 'sent', 40, 'retry_receipts', 12, 'failing_devices', 9, 'resent', 10, 'resend_lost', 2),
+  jsonb_build_object('arm_id', '99999999-9999-9999-9999-999999999999', 'sent', 1)));
+reset role;
+select testkit.check((select count(*) from arm_delivery_stats) = 1, 'delivery: engine stats saved, unknown arms ignored');
+select testkit.as_owner();
+select testkit.check((select failed_hour = 12 and resent_hour = 10 and lost_hour = 2 and sent_hour = 40 from public.owner_delivery()
+  where arm_id = '00000000-0000-0000-0001-00000000000a'), 'delivery: owner sees failures, re-sends and losses per arm');
+reset role;
+
 select n, case when ok then 'PASS' else 'FAIL' end as result, name, coalesce(left(detail, 80), '') from testkit.results where name not like '%(update attempted)%' order by n;

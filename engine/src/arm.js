@@ -8,7 +8,10 @@ const makeWASocket = baileys.default || baileys.makeWASocket;
 
 // Who-has-which-devices cache. Baileys' default forgets it after 5 minutes, so every
 // distribution re-asked WhatsApp about hundreds of members per group (slow, and it stalls sends).
-function longCache(ttlMs = 12 * 60 * 60 * 1000) {
+// One hour, not 12: a member who adds a device (new phone, WhatsApp Web) is not in a stale list, never
+// gets our key, and sees "waiting for this message" until the entry expires. A retry from a member also
+// drops that member's entry right away (forgetDevices).
+function longCache(ttlMs = 60 * 60 * 1000) {
   const m = new Map();
   const live = (k) => {
     const e = m.get(k);
@@ -94,12 +97,47 @@ class Arm {
       if (a.category === 'peer') return false;
       const f = from.replace(/:\d+(?=@)/, '');
       if (this.ownJids().includes(f)) return false;
+      // ...except a member's device setting up a NEW session with us ('pkmsg'): that session is the one our
+      // group key is sent through, and skipping it means that member can't read our next ride. Budgeted
+      // (60 a minute per arm), so a big backlog can't freeze the engine again.
+      if (this.hasNewSession(node) && this.privateBudget()) {
+        this.count('sessionsLearned');
+        this.markLearnOnly(a.id);
+        return false;
+      }
       return true;
     }
     if (this.groupMatters(from)) return false;
+    // A member's device that (re)built its encryption session with us sends it inside a group message
+    // ('pkmsg'). Skipping that node left us on the old session, which the member's device no longer has –
+    // so it could not decrypt our next ride ("waiting for this message"). These nodes are rare: decrypt them.
+    if (this.hasNewSession(node)) {
+      this.count('sessionsLearned');
+      // decrypted only to learn the session – its content must not trigger anything (the group is not used)
+      this.markLearnOnly(a.id);
+      return false;
+    }
     // messages the arm's own number writes (from its phone) still go through
     const p = String(a.participant || '').replace(/:\d+(?=@)/, '');
     if (p && this.ownJids().includes(p)) return false;
+    return true;
+  }
+
+  hasNewSession(node) {
+    return !!(node?.content || []).some?.((c) => c?.tag === 'enc' && c.attrs?.type === 'pkmsg');
+  }
+
+  markLearnOnly(id) {
+    this.learnOnly = this.learnOnly || new Set();
+    this.learnOnly.add(id);
+    if (this.learnOnly.size > 2000) this.learnOnly.delete(this.learnOnly.values().next().value);
+  }
+
+  privateBudget() {
+    const now = Date.now();
+    if (!this.pkWindow || now - this.pkWindow.at > 60_000) this.pkWindow = { at: now, n: 0 };
+    if (this.pkWindow.n >= 60) return false;
+    this.pkWindow.n += 1;
     return true;
   }
 
@@ -115,6 +153,22 @@ class Arm {
       .then(() => sock.sendNode?.(ack))
       .catch(() => {});
     this.skipped = (this.skipped || 0) + 1;
+  }
+
+  // ── delivery monitoring: counters for the current minute, saved by the engine (arm_delivery_stats) ──
+  count(name, n = 1) {
+    this.dlv = this.dlv || {};
+    this.dlv[name] = (this.dlv[name] || 0) + n;
+  }
+
+  /** Returns and resets this minute's delivery counters (null when nothing happened). */
+  takeDelivery() {
+    const d = this.dlv;
+    this.dlv = {};
+    if (!d || !Object.values(d).some(Boolean)) return null;
+    if (this.failingDevices?.size) d.failingDevices = this.failingDevices.size;
+    this.failingDevices = new Set();
+    return d;
   }
 
   constructor(row, onMessage) {
@@ -162,6 +216,7 @@ class Arm {
     const jid = m.key?.remoteJid || '';
     if (!m.message && m.messageStubType) {
       this.undecrypted = (this.undecrypted || 0) + 1;
+      this.count('undecryptedIn');
       if (this.undecrypted <= 2) {
         log.info(
           { arm: this.name, group: jid.endsWith('@g.us'), stub: m.messageStubType, params: m.messageStubParameters, sender: m.key?.participant },
@@ -190,42 +245,98 @@ class Arm {
     }
   }
 
-  // Re-send to one member who reported "couldn't decrypt". Limits (to respect WhatsApp and keep the
-  // arm light): only our own messages from the last 10 minutes, once per member per message,
-  // at most 2 tries by the member, at most 30 re-sends a minute per arm.
+  // Re-send to one member who reported "couldn't decrypt" – what a normal WhatsApp client does.
+  // Limits: only our own messages from the last 10 minutes, once per member device per message, at
+  // most 2 tries by the member. Resends are handled in batches: one session refresh for the whole
+  // batch, then one small message per device – fast enough to keep up with a distribution, without
+  // the flood (>1,000/min) that made WhatsApp answer rate-overlimit.
   queueResend(sock, jid, id, participant, count) {
+    if (!participant) return;
+    this.failingDevices = this.failingDevices || new Set();
+    this.failingDevices.add(participant);
     const m = this.sentStore?.get(id);
-    if (!m || !participant || count > 2 || Date.now() - m.at > 10 * 60_000) return;
+    if (!m || Date.now() - m.at > 10 * 60_000) return this.count('resendExpired');
+    if (count > 2) return this.count('resendGaveUp');
     this.resendDone = this.resendDone || new Set();
     const k = `${id}|${participant}`;
     if (this.resendDone.has(k)) return;
     this.resendDone.add(k);
-    if (this.resendDone.size > 5000) this.resendDone.delete(this.resendDone.values().next().value);
+    if (this.resendDone.size > 20_000) this.resendDone.delete(this.resendDone.values().next().value);
     this.resendQueue = this.resendQueue || [];
-    if (this.resendQueue.length > 500) return; // a flood: drop the excess rather than pile up
-    this.resendQueue.push({ sock, jid, id, participant, count, message: m.message });
-    if (!this.resendTimer && !this.resending) this.resendTimer = setTimeout(() => this.runResends(), 2000);
+    if (this.resendQueue.length >= Arm.RESEND_QUEUE_MAX) return this.count('resendDropped');
+    this.resendQueue.push({ sock, jid, id, participant, count, message: m.message, at: Date.now() });
+    if (!this.resendTimer && !this.resending) this.resendTimer = setTimeout(() => this.runResends(), Arm.RESEND_FIRST_MS);
   }
 
-  // one worker at a time (a second chain started while the first awaited its network call, and under
-  // a flood they multiplied – over 1,000 re-sends a minute, which WhatsApp answered with rate-overlimit)
+  // one worker at a time per arm; each round: up to RESEND_BATCH jobs, one assertSessions for all of
+  // their devices, then the messages one after the other
   async runResends() {
     this.resendTimer = null;
     if (this.resending) return;
-    const job = this.resendQueue?.shift();
-    if (!job) return;
+    const batch = (this.resendQueue || []).splice(0, Arm.RESEND_BATCH);
+    if (!batch.length) return;
     this.resending = true;
-    if (job.sock === this.sock && this.online) {
-      try {
-        await job.sock.assertSessions([job.participant], true);
-        await job.sock.relayMessage(job.jid, job.message, { messageId: job.id, participant: { jid: job.participant, count: job.count } });
-        this.resent = (this.resent || 0) + 1;
-      } catch (e) {
-        this.resendFailed = (this.resendFailed || 0) + 1;
+    let pause = Arm.RESEND_GAP_MS;
+    try {
+      const live = batch.filter((j) => j.sock === this.sock && this.online && Date.now() - j.at < 10 * 60_000);
+      this.count('resendExpired', batch.length - live.length);
+      if (live.length) {
+        const sock = live[0].sock;
+        try {
+          // new encryption sessions with exactly the devices that failed (one request for the batch)
+          await sock.assertSessions([...new Set(live.map((j) => j.participant))], true);
+          this.count('sessionsRepaired', live.length);
+        } catch (e) {
+          this.count('repairFailed', live.length);
+        }
+        for (const job of live) {
+          try {
+            await job.sock.relayMessage(job.jid, job.message, { messageId: job.id, participant: { jid: job.participant, count: job.count } });
+            this.count('resent');
+          } catch (e) {
+            this.count('resendFailed');
+            if (/rate-overlimit|429/.test(String(e?.message || e?.data || ''))) {
+              // WhatsApp asks to slow down: put the rest back and wait a minute
+              this.resendQueue.unshift(...live.slice(live.indexOf(job) + 1));
+              this.count('resendRateLimited');
+              pause = 60_000;
+              break;
+            }
+          }
+          await new Promise((r) => setTimeout(r, Arm.RESEND_ITEM_MS));
+        }
+      }
+    } finally {
+      this.resending = false;
+    }
+    if (this.resendQueue.length && !this.resendTimer) this.resendTimer = setTimeout(() => this.runResends(), pause);
+  }
+
+  /** Remove one member device from the group's "already has our key" list. */
+  async forgetDeviceKey(groupJid, deviceJid) {
+    if (!this.signalKeys || !groupJid || !deviceJid) return;
+    const user = (j) => String(j || '').split('@')[0].split(':')[0];
+    const dev = (j) => String(j || '').split('@')[0].split(':')[1] || '0';
+    const mem = (await this.signalKeys.get('sender-key-memory', [groupJid]))?.[groupJid];
+    if (!mem || typeof mem !== 'object') return;
+    const next = { ...mem };
+    let removed = 0;
+    for (const k of Object.keys(next)) {
+      if (user(k) === user(deviceJid) && dev(k) === dev(deviceJid)) {
+        delete next[k];
+        removed += 1;
       }
     }
-    this.resending = false;
-    if (this.resendQueue.length && !this.resendTimer) this.resendTimer = setTimeout(() => this.runResends(), 2000);
+    // the exact device wasn't listed (new device): drop every device of that member, they all get the key
+    if (!removed) for (const k of Object.keys(next)) if (user(k) === user(deviceJid)) delete next[k];
+    await this.signalKeys.set({ 'sender-key-memory': { [groupJid]: next } });
+  }
+
+  /** Forget the cached device list of a member, so the next send asks WhatsApp again. */
+  forgetDevices(deviceJid) {
+    const user = String(deviceJid || '').split('@')[0].split(':')[0];
+    if (!user || !this.devCache) return;
+    this.devCache.del([user, String(deviceJid).replace(/:\d+(?=@)/, '')]);
   }
 
   rememberSent(id) {
@@ -292,6 +403,8 @@ class Arm {
         return m?.participants?.length && m.subject ? m : undefined;
       },
       userDevicesCache: (this.devCache = this.devCache || longCache()),
+      // a private chat member who couldn't decrypt asks again; Baileys re-sends only if it gets the message
+      getMessage: async (key) => this.sentStore?.get(key?.id)?.message,
     });
     this.sock = sock;
 
@@ -315,7 +428,6 @@ class Arm {
       // one (with network calls) in the same queue as incoming messages – "עזרה"/"נ" then waited minutes.
       // Baileys can't re-send the message anyway (we keep no copies), so handle them here instantly:
       // acknowledge, and mark the group so the next message hands the encryption key to everyone again.
-      const resetKeyAt = new Map();
       sock.ws.on('CB:receipt', (node) => {
         const a = node?.attrs || {};
         if (a.type === 'retry' && String(a.from || '').endsWith('@g.us')) {
@@ -323,10 +435,13 @@ class Arm {
           if (a.participant) ack.attrs.participant = a.participant;
           if (a.recipient) ack.attrs.recipient = a.recipient;
           Promise.resolve(sock.sendNode?.(ack)).catch(() => {});
-          if (Date.now() - (resetKeyAt.get(a.from) || 0) > 60_000) {
-            resetKeyAt.set(a.from, Date.now());
-            Promise.resolve(this.signalKeys?.set({ 'sender-key-memory': { [a.from]: null } })).catch(() => {});
-          }
+          this.count('retryReceipts');
+          // Only the device that failed gets our group key again (with the next message). Resetting the
+          // whole group re-sent the key to every member each minute – and every member device with an
+          // outdated session failed again, which kept the "waiting for this message" cycle going.
+          this.forgetDeviceKey(a.from, a.participant).catch(() => {});
+          // its device list may have changed (new phone, WhatsApp re-installed, new linked device)
+          this.forgetDevices(a.participant);
           // the member couldn't read one of our rides: send it again to that member only
           // (what a normal WhatsApp client does), in a separate slow queue so reading is never delayed
           const retryNode = (node.content || []).find?.((c) => c?.tag === 'retry');
@@ -492,6 +607,7 @@ class Arm {
         this.clearStuck(sock, m, type);
         // learn our own LID from our own group messages
         if (m.key?.fromMe && m.key?.participant?.endsWith('@lid')) this.learnedLid = m.key.participant.replace(/:\d+(?=@)/, '');
+        if (this.learnOnly?.delete(m.key?.id)) continue;
         this.onMessage(this, m, type).catch((e) =>
           log.error({ arm: this.name, err: e.message }, 'message handler failed'),
         );
@@ -499,6 +615,9 @@ class Arm {
     });
 
     // group changes arrive in bursts – refresh the list at most once every 2 minutes
+    // members joining/leaving: update the kept member list at once. A new member missing from the list
+    // never received our group key and saw "waiting for this message" until the next full sync.
+    sock.ev.on('group-participants.update', (u) => this.applyParticipants(u));
     sock.ev.on('groups.upsert', () => this.scheduleGroupSync());
     sock.ev.on('groups.update', () => this.scheduleGroupSync());
   }
@@ -618,6 +737,21 @@ class Arm {
     const delay = Math.min(60_000, 2_000 * 2 ** this.retry);
     this.retry += 1;
     this.reconnectTimer = setTimeout(() => this.start(), delay);
+  }
+
+  applyParticipants({ id, participants, action } = {}) {
+    const meta = this.groupMeta?.get(id);
+    if (!meta || !Array.isArray(participants)) return;
+    const ids = participants.map((p) => (typeof p === 'string' ? p : p?.id)).filter(Boolean);
+    const list = Array.isArray(meta.participants) ? meta.participants : [];
+    if (action === 'add') {
+      const have = new Set(list.map((p) => p.id));
+      meta.participants = list.concat(ids.filter((p) => !have.has(p)).map((p) => ({ id: p, admin: null })));
+    } else if (action === 'remove') {
+      const gone = new Set(ids);
+      meta.participants = list.filter((p) => !gone.has(p.id));
+    } else return;
+    this.count('memberChanges', ids.length);
   }
 
   scheduleGroupSync() {
@@ -743,6 +877,7 @@ class Arm {
       }),
     ]).finally(() => clearTimeout(timer));
     this.rememberSent(sent?.key?.id);
+    this.count('sent');
     if (sent?.key?.id && sent.message) {
       this.sentStore = this.sentStore || new Map();
       this.sentStore.set(sent.key.id, { message: sent.message, at: Date.now() });
@@ -802,5 +937,12 @@ class Arm {
     this.online = false;
   }
 }
+
+// resend tuning (tests shorten the timers)
+Arm.RESEND_QUEUE_MAX = 3000;
+Arm.RESEND_BATCH = 20;
+Arm.RESEND_FIRST_MS = 1000;
+Arm.RESEND_GAP_MS = 5000; // between batches → at most ~200 resends a minute per arm
+Arm.RESEND_ITEM_MS = 100;
 
 module.exports = { Arm, __longCache: longCache };
