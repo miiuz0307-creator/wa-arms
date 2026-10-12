@@ -148,7 +148,22 @@ function createWhatsApp({ store, secret, log, onMessage, onOpen, onGroupFound })
   // group messages decrypt reliably – so the bot also works in one dedicated command group.
   let commandGroup = null;
   let commandGroupName = null;
-  const ignore = (jid = '') => (jid.endsWith('@g.us') ? jid !== commandGroup : ignoredJid(jid));
+  const checkedGroups = new Set();
+  let sockRef = null;
+  // A group message from a group we have not looked at yet: check its name once (cheap metadata
+  // lookup). If it is the command group, its next messages are read.
+  const ignore = (jid = '') => {
+    if (!jid.endsWith('@g.us')) return ignoredJid(jid);
+    if (jid === commandGroup) return false;
+    if (!checkedGroups.has(jid) && sockRef) {
+      checkedGroups.add(jid);
+      sockRef
+        .groupMetadata(jid)
+        .then((meta) => considerGroup(jid, meta?.subject))
+        .catch(() => checkedGroups.delete(jid));
+    }
+    return true;
+  };
   let sock = null;
   let stopped = true;
   let reconnectTimer = null;
@@ -179,6 +194,7 @@ function createWhatsApp({ store, secret, log, onMessage, onOpen, onGroupFound })
       generateHighQualityLinkPreview: false,
     });
     sock = s;
+    sockRef = s;
     s.ev.on('creds.update', () => saveCreds().catch((e) => log.error({ err: e.message }, 'saving creds failed')));
     s.ev.on('connection.update', (u) => onUpdate(s, u, state).catch((e) => log.error({ err: e.message }, 'connection handler failed')));
     s.ev.on('groups.upsert', (groups) => {
@@ -261,7 +277,7 @@ function createWhatsApp({ store, secret, log, onMessage, onOpen, onGroupFound })
         if (pn) phone = String(pn).split('@')[0].split(':')[0];
       } catch {}
     }
-    log.info({ from: phone ? `${phone.slice(0, 5)}***${phone.slice(-2)}` : null, lid: lid ? 'yes' : 'no', image: Boolean(msg.imageMessage) }, 'private message received');
+    log.info({ chat: jid.endsWith('@g.us') ? 'group' : 'private', from: phone ? `${phone.slice(0, 5)}***${phone.slice(-2)}` : null, lid: lid ? 'yes' : 'no', image: Boolean(msg.imageMessage) }, 'message received');
     let image = null;
     if (msg.imageMessage) {
       const size = Number(msg.imageMessage.fileLength || 0);
@@ -287,6 +303,7 @@ function createWhatsApp({ store, secret, log, onMessage, onOpen, onGroupFound })
 
   function considerGroup(id, subject) {
     if (!id || !subject || commandGroup === id || !COMMAND_GROUP_NAME.test(subject)) return;
+    checkedGroups.add(id);
     commandGroup = id;
     commandGroupName = subject;
     log.info({ subject }, 'command group found');
