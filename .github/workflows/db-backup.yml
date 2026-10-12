@@ -1,0 +1,48 @@
+# BotiX – daily external encrypted database backup with a restore test (ops/backup/run-backup.sh).
+# Runs on GitHub's servers: separate from Supabase (the database) and from Railway (the engine and its disk).
+# Read only on production. Needs the secrets described in ops/backup/README.md.
+name: db-backup
+on:
+  schedule:
+    - cron: '23 0 * * *'   # every day 00:23 UTC (03:23 Israel summer time)
+  workflow_dispatch: {}      # "Run workflow" button for a manual backup / test
+permissions:
+  contents: read
+concurrency:
+  group: db-backup
+  cancel-in-progress: false
+jobs:
+  backup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      restore:   # empty scratch PostgreSQL 17 (same major as Supabase) for the restore test
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: restore-test-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools (PostgreSQL 17 client, age)
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17 age
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+      - name: Backup, restore test, encrypt, upload
+        env:
+          SOURCE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          RESTORE_DB_URL: postgresql://postgres:restore-test-only@localhost:5432/postgres
+          AGE_RECIPIENT: ${{ vars.BACKUP_AGE_PUBLIC_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+          WORK: ${{ runner.temp }}/backup
+        run: |
+          mkdir -p "$WORK"
+          bash ops/backup/run-backup.sh
