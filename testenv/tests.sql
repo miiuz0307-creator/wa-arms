@@ -399,11 +399,14 @@ select testkit.check((select count(*) from campaign_targets where campaign_id = 
 select public.retention_run(2, 20, false);
 select testkit.check((select count(*) from campaign_targets where campaign_id = '00000000-0000-0000-0000-0000000000e1') = 0, 'storage: a ride finished over 48h ago keeps no per-group rows (small batches)');
 select testkit.check((select sent = 2 and total = 3 from campaigns where id = '00000000-0000-0000-0000-0000000000e1'), 'storage: the ride itself and its counters stay');
-select testkit.check((select sum(sent) = 2 and sum(failed) = 1 and sum(delay_n) = 2 and sum(delay_sum_s) = 120 from delivery_daily where station_id = '0000000a-0000-0000-0000-000000000000' and day = ((now() - interval '3 days') at time zone 'Asia/Jerusalem')::date), 'storage: the daily summary keeps sent / failed / delivery time');
+select testkit.check((select sum(sent) = 2 and sum(failed) = 1 and sum(unassigned) = 1 and sum(delay_n) = 2 and sum(delay_sum_s) = 120 and sum(rides) = 1 and sum(groups) = 3 from delivery_daily_station where station_id = '0000000a-0000-0000-0000-000000000000' and day = ((now() - interval '3 days') at time zone 'Asia/Jerusalem')::date), 'storage: the station summary keeps rides / groups / sent / failed / unassigned / delivery time');
+select testkit.check((select sum(sent) = 2 and sum(failed) = 0 and sum(rides) = 1 from delivery_daily where arm_id = '00000000-0000-0000-0001-00000000000a' and day = ((now() - interval '3 days') at time zone 'Asia/Jerusalem')::date)
+  and not exists (select 1 from delivery_daily where arm_id = '00000000-0000-0000-0000-000000000000'),
+  'storage: the arm summary holds only what that arm did; a group no arm took is only in the station row (no shared empty id)');
 select testkit.check((select count(*) from campaign_targets where campaign_id = '00000000-0000-0000-0000-0000000000e2') = 1, 'storage: a ride from the last 48h is untouched');
 select testkit.check((select count(*) from campaign_targets where campaign_id = '00000000-0000-0000-0000-0000000000e3') = 1, 'storage: a ride still running is never touched, however old');
 select public.retention_run(2, 20, false);
-select testkit.check((select sum(sent) = 2 and sum(failed) = 1 from delivery_daily where station_id = '0000000a-0000-0000-0000-000000000000' and day = ((now() - interval '3 days') at time zone 'Asia/Jerusalem')::date), 'storage: running again counts nothing twice');
+select testkit.check((select sum(sent) = 2 and sum(failed) = 1 and sum(rides) = 1 from delivery_daily_station where station_id = '0000000a-0000-0000-0000-000000000000' and day = ((now() - interval '3 days') at time zone 'Asia/Jerusalem')::date), 'storage: running again counts nothing twice');
 select testkit.check((select count(*) from processed_messages where message_id = 'old-1') = 0 and (select count(*) from processed_messages where message_id = 'new-1') = 1, 'storage: message dedupe kept 24 hours');
 select testkit.check((select count(*) from arm_auth) = :auth_before and (select count(*) from groups) = :groups_before, 'storage: WhatsApp connections and groups are never touched');
 set role authenticated; select testkit.as_station('tok-b');
@@ -431,14 +434,16 @@ select public.retention_run(2, 1, false);
 select public.retention_run(2, 1, false);
 select public.retention_run(2, 1, false);
 select testkit.check((select count(*) from campaign_targets where campaign_id::text like '00000000-0000-0000-0000-0000000000f%') = 0, 'storage: three rides cleaned over several runs');
-select testkit.check((select rides from delivery_daily where day = :'d4' and station_id = '0000000a-0000-0000-0000-000000000000' and arm_id = '00000000-0000-0000-0000-000000000000') = 3
-  and (select sum(sent) from delivery_daily where day = :'d4' and station_id = '0000000a-0000-0000-0000-000000000000') = 10,
-  'storage: 3 rides and 10 groups counted exactly once across batches and runs');
+select testkit.check((select rides = 3 and groups = 10 and sent = 10 from delivery_daily_station where day = :'d4' and station_id = '0000000a-0000-0000-0000-000000000000')
+  and (select sum(sent) from delivery_daily where day = :'d4' and station_id = '0000000a-0000-0000-0000-000000000000') = 10
+  and (select rides from delivery_daily where day = :'d4' and arm_id = '00000000-0000-0000-0001-00000000000a') = 3
+  and (select rides from delivery_daily where day = :'d4' and arm_id = '00000000-0000-0000-0002-00000000000a') = 3,
+  'storage: 3 rides and 10 groups counted exactly once across batches and runs (station and each arm)');
 -- a row of an already summarised ride (e.g. put back from a backup): removed, never counted again
 insert into campaign_targets (campaign_id, wa_group_id, station_id, status, arm_id, sent_at)
 values ('00000000-0000-0000-0000-0000000000f1', 'late@g.us', '0000000a-0000-0000-0000-000000000000', 'sent', '00000000-0000-0000-0001-00000000000a', now() - interval '4 days');
 select public.retention_run();
-select testkit.check((select rides from delivery_daily where day = :'d4' and station_id = '0000000a-0000-0000-0000-000000000000' and arm_id = '00000000-0000-0000-0000-000000000000') = 3
+select testkit.check((select rides = 3 and sent = 10 from delivery_daily_station where day = :'d4' and station_id = '0000000a-0000-0000-0000-000000000000')
   and (select sum(sent) from delivery_daily where day = :'d4' and station_id = '0000000a-0000-0000-0000-000000000000') = 10
   and (select count(*) from campaign_targets where wa_group_id = 'late@g.us') = 0,
   'storage: rows of a ride counted in an earlier run (e.g. restored from a backup) are removed but never counted twice');
@@ -452,21 +457,30 @@ insert into campaign_targets (campaign_id, wa_group_id, station_id, status, arm_
 select c, 'g' || g || '@g.us', '0000000a-0000-0000-0000-000000000000', 'sent', '00000000-0000-0000-0001-00000000000a', now() - interval '5 days'
 from unnest(array['00000000-0000-0000-0000-0000005ee006', '00000000-0000-0000-0000-0000005ee005']::uuid[]) c, generate_series(1, 2) g;
 create function testkit.boom() returns trigger language plpgsql as $$ begin raise exception 'simulated failure'; end $$;
-create trigger boom before insert on delivery_daily for each row when (new.day = (((now() - interval '5 days') at time zone 'Asia/Jerusalem')::date)) execute function testkit.boom();
+create trigger boom before insert on delivery_daily_station for each row when (new.day = (((now() - interval '5 days') at time zone 'Asia/Jerusalem')::date)) execute function testkit.boom();
 select count(*) as runs_before from retention_runs \gset
 do $$ begin perform public.retention_run(2, 10, false); perform testkit.check(false, 'storage: a failure in the middle stops the whole run');
 exception when others then perform testkit.check(true, 'storage: a failure in the middle stops the whole run', sqlerrm); end $$;
 select testkit.check((select count(*) from campaign_targets where campaign_id in ('00000000-0000-0000-0000-0000005ee006', '00000000-0000-0000-0000-0000005ee005')) = 4
   and not exists (select 1 from delivery_daily where day in (:'d5', :'d6'))
+  and not exists (select 1 from delivery_daily_station where day in (:'d5', :'d6'))
   and (select stats_summarised_at is null from campaigns where id = '00000000-0000-0000-0000-0000005ee006')
   and (select count(*) from retention_runs) = :runs_before,
   'storage: after a failure in the middle nothing was removed and nothing was counted (also not the batch before it)');
-drop trigger boom on delivery_daily;
+drop trigger boom on delivery_daily_station;
 select public.retention_run(2, 10, false);
 select testkit.check((select count(*) from campaign_targets where campaign_id in ('00000000-0000-0000-0000-0000005ee006', '00000000-0000-0000-0000-0000005ee005')) = 0
   and (select sum(sent) from delivery_daily where day in (:'d5', :'d6')) = 4
-  and (select sum(rides) from delivery_daily where day in (:'d5', :'d6') and arm_id = '00000000-0000-0000-0000-000000000000') = 2,
+  and (select sum(rides) = 2 and sum(sent) = 4 from delivery_daily_station where day in (:'d5', :'d6')),
   'storage: the next run after a failure counts everything exactly once');
+select testkit.check(not exists (
+  select 1 from delivery_daily_station s
+  where s.sent <> coalesce((select sum(a.sent) from delivery_daily a where (a.day, a.station_id, a.kind) = (s.day, s.station_id, s.kind)), 0)
+     or s.groups <> s.unassigned + coalesce((select sum(a.sent + a.failed + a.skipped) from delivery_daily a where (a.day, a.station_id, a.kind) = (s.day, s.station_id, s.kind)), 0)),
+  'storage: on every day, station totals = sum of its arms + groups no arm took');
+do $$ begin insert into delivery_daily (day, station_id, arm_id, kind) values (current_date, '0000000a-0000-0000-0000-000000000000', '00000000-0000-0000-0000-000000000000', 'quote');
+  perform testkit.check(false, 'storage: the per-arm table refuses the empty arm id');
+exception when others then perform testkit.check(true, 'storage: the per-arm table refuses the empty arm id'); end $$;
 -- never touched: release backups, connections, the running ride
 insert into ops.release_backups (release_id, tbl, rows, created_at) values (1, 'x', '[]', now() - interval '60 days');
 select public.retention_run();
@@ -521,6 +535,17 @@ select public.runner_exec(:rel17, true);
 select testkit.check(not exists (select arm_id, key, value, updated_at from auth_before except select arm_id, key, value, updated_at from arm_auth)
   and not exists (select arm_id, key, value, updated_at from arm_auth where arm_id = '00000000-0000-0000-0001-00000000000a' except select arm_id, key, value, updated_at from auth_before),
   'keys 1.7: undo puts every key back exactly (value and time)');
+-- safe restore: a key with wrong content is fixed, a newer valid key is kept, a missing key is put back
+select public.runner_exec(:rel17, false);
+insert into arm_auth (arm_id, station_id, key, value, updated_at) values
+ ('00000000-0000-0000-0001-00000000000a', '0000000a-0000-0000-0000-000000000000', 'session-old1', 'CORRUPT', '2026-10-09 12:00'),
+ ('00000000-0000-0000-0001-00000000000a', '0000000a-0000-0000-0000-000000000000', 'session-old2', 'NEWER-VALID', now());
+select public.runner_exec(:rel17, true);
+select testkit.check((select value from arm_auth where arm_id = '00000000-0000-0000-0001-00000000000a' and key = 'session-old1') = 'v1'
+  and (select value from arm_auth where arm_id = '00000000-0000-0000-0001-00000000000a' and key = 'session-old2') = 'NEWER-VALID'
+  and (select value from arm_auth where arm_id = '00000000-0000-0000-0001-00000000000a' and key = 'pre-key-9') = 'v3',
+  'keys 1.7: safe restore fixes a key with wrong content, keeps a newer valid key, puts back a missing one');
+update arm_auth set value = 'v2', updated_at = '2026-10-09 13:49' where arm_id = '00000000-0000-0000-0001-00000000000a' and key = 'session-old2';
 -- running it again after the undo removes exactly the same keys again (the copy is still identical)
 select public.runner_exec(:rel17, false);
 select testkit.check((select count(*) from arm_auth where arm_id = '00000000-0000-0000-0001-00000000000a') = 3, 'keys 1.7: running again after an undo removes the same keys, nothing else');
