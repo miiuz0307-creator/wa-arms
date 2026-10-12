@@ -410,4 +410,17 @@ do $$ begin perform public.retention_run(); perform testkit.check(false, 'storag
 exception when others then perform testkit.check(true, 'storage: only the server runs the clean-up'); end $$;
 reset role;
 
+-- engine health
+select testkit.as_engine();
+select public.engine_status_report('{"sync_ok_at":"2026-10-12T12:00:00Z","sync_ms":40,"sync_stuck_count":1,"arms_running":6,"arms_online":6,"arms_stopping":0,"rss_mb":1400}');
+reset role;
+select testkit.as_owner();
+select testkit.check((public.owner_engine_status() ->> 'sync_stuck_count')::int = 1 and (public.owner_engine_status() ->> 'arms_online')::int = 6, 'engine health: the engine reports its sync state, the owner reads it');
+reset role;
+set role authenticated; select testkit.as_station('tok-a');
+do $$ begin perform public.engine_status_report('{}'); perform testkit.check(false, 'engine health: only the engine can report');
+exception when others then perform testkit.check(true, 'engine health: only the engine can report'); end $$;
+select testkit.check(public.owner_engine_status() is null, 'engine health: a station does not see the engine status');
+reset role;
+
 select n, case when ok then 'PASS' else 'FAIL' end as result, name, coalesce(left(detail, 80), '') from testkit.results where name not like '%(update attempted)%' order by n;

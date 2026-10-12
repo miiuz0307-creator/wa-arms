@@ -65,7 +65,9 @@ async function health() {
   } catch (e) {
     web = `error ${(e as Error).message}`.slice(0, 80);
   }
-  return { at: new Date().toISOString(), arms_online: online.length, arms_active: (arms || []).length, engine_age_s: seen ? Math.round((Date.now() - seen) / 1000) : null, web };
+  const { data: es } = await db.from('engine_status').select('sync_ok_at').eq('id', 1).maybeSingle();
+  const sync_age_s = es?.sync_ok_at ? Math.round((Date.now() - Date.parse(es.sync_ok_at)) / 1000) : null;
+  return { at: new Date().toISOString(), arms_online: online.length, arms_active: (arms || []).length, engine_age_s: seen ? Math.round((Date.now() - seen) / 1000) : null, sync_age_s, web };
 }
 
 async function note(r: any, msg: string, patch: Record<string, unknown> = {}) {
@@ -120,6 +122,8 @@ async function step() {
       if (r.deployments?.engine && sinceUp > GRACE_MS) {
         if (h.arms_online < (base.arms_online || 0)) problems.push(`מחוברות ${h.arms_online}/${base.arms_online}`);
         if (h.engine_age_s === null || h.engine_age_s > 120) problems.push('המנוע לא מדווח');
+        // the arms sync must keep finishing (on/off, warm-up, new arms are picked up through it)
+        if (h.sync_age_s !== null && h.sync_age_s > 90) problems.push(`סנכרון הזרועות לא הסתיים ${h.sync_age_s} שניות`);
       }
       if (r.deployments?.web && !(typeof h.web === 'string' && h.web.startsWith(r.commit_sha.slice(0, 7)))) {
         if (sinceUp > 90_000) problems.push(`הממשק: ${h.web}`);
