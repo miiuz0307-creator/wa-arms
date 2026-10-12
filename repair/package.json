@@ -6,14 +6,14 @@
   "main": "src/index.js",
   "type": "commonjs",
   "engines": {
-    "node": "22.x"
+    "node": ">=22.12"
   },
   "scripts": {
     "start": "node src/index.js",
-    "test": "NODE_PATH=test/stubs node --test --test-concurrency=1 test/*.test.js"
+    "test": "NODE_PATH=test/stubs BAILEYS_MODULE=test/stubs/baileys/index.js node --test --test-concurrency=1 test/*.test.js"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "6.7.24",
+    "@whiskeysockets/baileys": "7.0.0-rc14",
     "pg": "8.13.1",
     "pino": "9.4.0",
     "qrcode": "1.5.4"

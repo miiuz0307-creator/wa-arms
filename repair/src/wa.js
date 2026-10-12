@@ -1,12 +1,32 @@
 // WhatsApp connection by QR (Baileys – an unofficial WhatsApp Web client).
 // The session is kept encrypted in our database, so a restart or a new server needs no new scan.
-const baileys = require('@whiskeysockets/baileys');
+//
+// Baileys 7 understands WhatsApp's newer hidden ids (LID). With 6.x, messages
+// from people whose chat moved to LID arrived empty ("Message absent from node" / "No session").
+// Baileys 7 is an ES module, so it is loaded with import() once, before the first connection.
 const pino = require('pino');
 const { encrypt, decrypt } = require('./secure');
 const { senderOf, jidOf } = require('./phones');
 
-const makeWASocket = baileys.default || baileys.makeWASocket;
-const { DisconnectReason, Browsers, BufferJSON, initAuthCreds, proto, makeCacheableSignalKeyStore } = baileys;
+let B = null;
+async function lib() {
+  if (B) return B;
+  // BAILEYS_MODULE: a file path to a stand-in, used by the tests
+  const target = process.env.BAILEYS_MODULE ? require('url').pathToFileURL(require('path').resolve(process.env.BAILEYS_MODULE)).href : '@whiskeysockets/baileys';
+  const m = await import(target);
+  const pick = (k) => m[k] ?? m.default?.[k];
+  B = {
+    makeWASocket: typeof m.default === 'function' ? m.default : pick('makeWASocket'),
+    DisconnectReason: pick('DisconnectReason'),
+    Browsers: pick('Browsers'),
+    BufferJSON: pick('BufferJSON'),
+    initAuthCreds: pick('initAuthCreds'),
+    proto: pick('proto'),
+    makeCacheableSignalKeyStore: pick('makeCacheableSignalKeyStore'),
+    downloadMediaMessage: pick('downloadMediaMessage'),
+  };
+  return B;
+}
 
 // The bot only talks in private chats: never decrypt group, status, broadcast or channel traffic.
 // A busy number receives thousands of group messages; decrypting them was pure load and noise.
@@ -17,21 +37,15 @@ const COMMAND_GROUP_NAME = /botix|בוטיקס|תיקונ/i;
 const quiet = pino({ level: 'silent' });
 const MAX_IMAGE = 8 * 1024 * 1024;
 
-// Baileys after 6.7.16 keeps sender keys as raw JSON bytes
-const WANTS_BYTES = (() => {
-  try {
-    const [a, b, c] = require('@whiskeysockets/baileys/package.json').version.split('.').map(Number);
-    return a > 6 || (a === 6 && (b > 7 || (b === 7 && c > 16)));
-  } catch {
-    return true;
-  }
-})();
+// Baileys 6.7.17+ and 7 keep sender keys as raw JSON bytes
+const WANTS_BYTES = true;
 
 /**
  * Session keys live in memory (always current – WhatsApp's encryption breaks with "Bad MAC" if a
  * key is read before the previous write landed) and are saved to the database in batches.
  */
 async function useDbAuthState(store, secret, log = quiet) {
+  const { BufferJSON, initAuthCreds, proto } = await lib();
   const cache = new Map(); // key -> encrypted string
   for (const r of await store.authAll()) cache.set(r.key, r.value);
 
@@ -131,6 +145,7 @@ async function useDbAuthState(store, secret, log = quiet) {
 
 /** Is there a scanned session to reconnect with? */
 async function hasSession(store, secret) {
+  const { BufferJSON } = await lib();
   const v = (await store.authAll()).find((r) => r.key === 'creds')?.value;
   if (!v) return false;
   try {
@@ -170,6 +185,18 @@ function createWhatsApp({ store, secret, log, onMessage, onOpen, onGroupFound })
   let retries = 0;
   let auth = null;
   let undecryptable = 0;
+  // our own sent messages, so WhatsApp can ask us to re-send one the recipient could not decrypt
+  const sentCache = new Map();
+  const retryMap = new Map();
+  const retryCounter = {
+    get: (k) => retryMap.get(k),
+    set: (k, v) => {
+      retryMap.set(k, v);
+      if (retryMap.size > 2000) retryMap.delete(retryMap.keys().next().value);
+    },
+    del: (k) => retryMap.delete(k),
+    flushAll: () => retryMap.clear(),
+  };
   const status = { state: 'disconnected', qr: null, me: null, error: null, since: new Date().toISOString() };
 
   const set = (patch) => Object.assign(status, patch, { since: new Date().toISOString() });
@@ -179,6 +206,7 @@ function createWhatsApp({ store, secret, log, onMessage, onOpen, onGroupFound })
     if (sock) return status;
     stopped = false;
     set({ state: 'connecting', error: null });
+    const { makeWASocket, Browsers, makeCacheableSignalKeyStore } = await lib();
     auth = auth || (await useDbAuthState(store, secret, log));
     const { state, saveCreds } = auth;
     const keys = makeCacheableSignalKeyStore ? makeCacheableSignalKeyStore(state.keys, quiet) : state.keys;
@@ -187,7 +215,8 @@ function createWhatsApp({ store, secret, log, onMessage, onOpen, onGroupFound })
       logger: quiet,
       shouldIgnoreJid: ignore,
       browser: Browsers.ubuntu('Chrome'),
-      printQRInTerminal: false,
+      getMessage: async (key) => sentCache.get(key?.id),
+      msgRetryCounterCache: retryCounter,
       markOnlineOnConnect: false,
       syncFullHistory: false,
       shouldSyncHistoryMessage: () => false,
@@ -211,6 +240,7 @@ function createWhatsApp({ store, secret, log, onMessage, onOpen, onGroupFound })
   }
 
   async function onUpdate(s, u, state) {
+    const { DisconnectReason } = await lib();
     if (s !== sock) return;
     if (u.qr) set({ state: 'qr', qr: u.qr, error: null });
     if (u.connection === 'open') {
@@ -288,7 +318,7 @@ function createWhatsApp({ store, secret, log, onMessage, onOpen, onGroupFound })
         load: async () => {
           if (size > MAX_IMAGE) return { tooBig: true };
           try {
-            const buf = await baileys.downloadMediaMessage({ ...m, message: msg }, 'buffer', {}, { logger: quiet, reuploadRequest: s.updateMediaMessage });
+            const buf = await (await lib()).downloadMediaMessage({ ...m, message: msg }, 'buffer', {}, { logger: quiet, reuploadRequest: s.updateMediaMessage });
             if (!buf || buf.length > MAX_IMAGE) return { tooBig: true };
             return { buffer: buf, mimetype };
           } catch (e) {
@@ -346,7 +376,11 @@ function createWhatsApp({ store, secret, log, onMessage, onOpen, onGroupFound })
   async function send(to, text) {
     if (!sock || status.state !== 'connected') throw new Error('WhatsApp לא מחובר');
     const jid = to.includes('@') ? to : jidOf(to);
-    await sock.sendMessage(jid, { text });
+    const sent = await sock.sendMessage(jid, { text });
+    if (sent?.key?.id && sent.message) {
+      sentCache.set(sent.key.id, sent.message);
+      if (sentCache.size > 500) sentCache.delete(sentCache.keys().next().value);
+    }
   }
 
   async function disconnect({ logout = false } = {}) {
