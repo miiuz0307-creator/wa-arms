@@ -71,6 +71,35 @@ test('auth: damaged creds on disk are restored from the database backup, and nev
   for (const batch of upserts) for (const r of batch) assert.notEqual(r.value, good.slice(0, 20), 'damaged copy never sent to backup');
 });
 
+test('auth: disk lost completely – the arm comes back from the database identity only (no QR)', async () => {
+  // what the database holds after the clean-up: creds + app-state keys only
+  const saved = [];
+  dbAnswer((op) => {
+    if (op.table === 'arm_auth' && op.action === 'upsert') saved.push(...op.payload);
+    return { data: [], error: null };
+  });
+  const a = await useDbAuthState('arm-3', 'test-secret');
+  a.state.creds.me = { id: '972500000003@s.whatsapp.net' };
+  await a.saveCreds();
+  await a.state.keys.set({ 'app-state-sync-key': { K1: { keyData: 'x' } }, session: { 'u9.0': { s: 1 } }, 'sender-key': { 'g@g.us::u9': { k: 1 } } });
+  await a.flush();
+  const keys = saved.map((r) => r.key);
+  assert.ok(keys.includes('creds') && keys.includes('app-state-sync-key-K1'), 'identity is backed up to the database');
+  assert.ok(!keys.some((k) => k.startsWith('session-') || k.startsWith('sender-key-')), 'per-chat keys are not (disk only)');
+  // the server disk is gone
+  fs.rmSync(path.join(process.env.AUTH_DIR, 'arm-3'), { recursive: true, force: true });
+  const rows = saved.filter((r) => r.key === 'creds' || r.key.startsWith('app-state-'));
+  dbAnswer((op) => {
+    if (op.table === 'arm_auth' && op.action === 'select') return { data: rows.map((r) => ({ key: r.key, value: r.value })), error: null };
+    return { data: [], error: null };
+  });
+  const b = await useDbAuthState('arm-3', 'test-secret');
+  assert.equal(b.state.creds.me.id, '972500000003@s.whatsapp.net', 'same WhatsApp login – reconnects without a QR');
+  const sk = await b.state.keys.get('app-state-sync-key', ['K1']);
+  assert.ok(sk.K1, 'app-state key restored');
+  assert.ok(fs.existsSync(path.join(process.env.AUTH_DIR, 'arm-3', 'creds')), 'and written back to the new disk');
+});
+
 // ---------- arms list (ק1) ----------
 function fakeArm(id) {
   const arm = { id, name: id, stationId: 'st', destroyed: 0, stopped: 0, online: true };
