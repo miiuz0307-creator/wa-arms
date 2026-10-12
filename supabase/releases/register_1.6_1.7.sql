@@ -28,6 +28,7 @@ update public.releases set components = '{db}', migration_sql = $rel$-- Release 
 --    groups no arm took (unassigned), delivery time. Every group of every ride is here exactly once.
 --  * delivery_daily – one row per day / station / REAL arm / kind: what that arm sent, failed, skipped,
 --    delivery time, and the rides it took part in. Groups no arm took are not here (only in the station row).
+--  Delivery time is summed in whole seconds per group, so the totals never depend on how rides fall into batches.
 --
 -- Load: whole rides up to ~5,000 rows per batch, at most 10 batches and 60 seconds per run, once an hour.
 -- A row lock held by someone else is waited for at most 2 seconds – then the run stops and nothing of it is
@@ -149,7 +150,7 @@ begin
              count(*) filter (where status = 'failed'),
              count(*) filter (where status not in ('sent', 'failed')),
              count(*) filter (where arm_id is null),
-             coalesce(sum(greatest(0, extract(epoch from sent_at - created_at))) filter (where status = 'sent'), 0)::bigint,
+             coalesce(sum(greatest(0, floor(extract(epoch from sent_at - created_at)))) filter (where status = 'sent'), 0)::bigint,
              count(*) filter (where status = 'sent' and sent_at is not null)
       from d group by 1, 2, 3
       on conflict (day, station_id, kind) do update set
@@ -165,7 +166,7 @@ begin
              count(*) filter (where status = 'sent'),
              count(*) filter (where status = 'failed'),
              count(*) filter (where status not in ('sent', 'failed')),
-             coalesce(sum(greatest(0, extract(epoch from sent_at - created_at))) filter (where status = 'sent'), 0)::bigint,
+             coalesce(sum(greatest(0, floor(extract(epoch from sent_at - created_at)))) filter (where status = 'sent'), 0)::bigint,
              count(*) filter (where status = 'sent' and sent_at is not null)
       from d where arm_id is not null group by 1, 2, 3, 4
       on conflict (day, station_id, arm_id, kind) do update set
