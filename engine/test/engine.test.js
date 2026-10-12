@@ -115,6 +115,54 @@ test('arms: an arm that hangs while stopping does not freeze the arms loop', asy
   assert.ok(updates.some((u) => u && u.status === 'paused'), 'its status was set to paused');
 });
 
+test('arms: a number still closing is not started twice; it can start again once closed', async () => {
+  engine.arms.clear();
+  process.env.ENGINE_STOP_LIMIT_MS = '150';
+  const slow = fakeArm('slow');
+  slow.stop = () => new Promise(() => {});
+  engine.arms.set('slow', slow);
+  let active = false;
+  dbAnswer((op) => {
+    if (op.rpc === 'engine_station_states') return { data: [{ id: 'st', allowed: true }], error: null };
+    if (op.table === 'arms' && op.action === 'select') return { data: [{ id: 'slow', name: 'slow', is_active: active, status: 'online', station_id: 'st' }], error: null };
+    return { data: [], error: null };
+  });
+  await engine.reconcileArms(); // switched off -> stopping in the background
+  assert.equal(engine.stopping.has('slow'), true);
+  active = true;
+  await engine.reconcileArms(); // switched on again at once
+  assert.equal(engine.arms.has('slow'), false, 'not started while the old connection is still closing');
+  await new Promise((r) => setTimeout(r, 250));
+  assert.equal(engine.stopping.has('slow'), false, 'the stop time limit released it');
+  assert.equal(slow.stopped, true, 'and the old connection was told to close');
+  delete process.env.ENGINE_STOP_LIMIT_MS;
+});
+
+test('arms: a stuck sync pass is replaced by a fresh one; settings are picked up without a restart', async () => {
+  engine.arms.clear();
+  process.env.ENGINE_SYNC_STUCK_MS = '100';
+  const a = fakeArm('w');
+  a.linkedAt = 123;
+  engine.arms.set('w', a);
+  let hang = true;
+  dbAnswer((op) => {
+    if (hang && op.table === 'arms' && op.action === 'select') return new Promise(() => {}); // database call that never returns
+    if (op.rpc === 'engine_station_states') return { data: [{ id: 'st', allowed: true }], error: null };
+    if (op.table === 'arms' && op.action === 'select') return { data: [{ id: 'w', name: 'w', is_active: true, status: 'online', station_id: 'st', linked_at: null }], error: null };
+    return { data: [], error: null };
+  });
+  const stuckBefore = engine.syncState.stuck;
+  engine.syncArms(); // hangs
+  await new Promise((r) => setTimeout(r, 150));
+  hang = false;
+  const t0 = Date.now();
+  await engine.syncArms(); // sees the stuck pass, abandons it, runs a fresh one
+  assert.equal(engine.syncState.stuck, stuckBefore + 1, 'stuck pass detected');
+  assert.equal(a.linkedAt, 0, 'warm-up switched off was picked up by the fresh pass');
+  assert.ok(Date.now() - engine.syncState.okAt < 1000 && Date.now() - t0 < 1000, 'healthy again within a second');
+  delete process.env.ENGINE_SYNC_STUCK_MS;
+});
+
 test('arms: an arm really deleted in the app is removed only after confirmation', async () => {
   engine.arms.clear();
   const a1 = fakeArm('a1');
