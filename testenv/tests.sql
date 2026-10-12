@@ -372,11 +372,11 @@ reset role;
 reset role;
 update arms set status = 'error' where id = '00000000-0000-0000-0001-00000000000a';
 insert into campaigns (id, kind, status, message_text, final_text, station_id, created_at)
-values ('00000000-0000-0000-0000-0000000000d5', 'quote', 'running', 'נסיעה', 'נסיעה', '0000000a-0000-0000-0000-000000000000', now() - interval '1 minute');
-insert into campaign_arms (campaign_id, arm_id, station_id) values ('00000000-0000-0000-0000-0000000000d5', '00000000-0000-0000-0001-00000000000a', '0000000a-0000-0000-0000-000000000000');
-insert into campaign_targets (campaign_id, wa_group_id, station_id) values ('00000000-0000-0000-0000-0000000000d5', '0000000a-0000-0000-0000-000000000000-2@g.us', '0000000a-0000-0000-0000-000000000000');
+values ('00000000-0000-0000-0000-00000000bd05', 'quote', 'running', 'נסיעה', 'נסיעה', '0000000a-0000-0000-0000-000000000000', now() - interval '1 minute');
+insert into campaign_arms (campaign_id, arm_id, station_id) values ('00000000-0000-0000-0000-00000000bd05', '00000000-0000-0000-0001-00000000000a', '0000000a-0000-0000-0000-000000000000');
+insert into campaign_targets (campaign_id, wa_group_id, station_id) values ('00000000-0000-0000-0000-00000000bd05', '0000000a-0000-0000-0000-000000000000-2@g.us', '0000000a-0000-0000-0000-000000000000');
 select public.finalize_campaigns();
-select testkit.check((select status from campaigns where id = '00000000-0000-0000-0000-0000000000d5') = 'completed', 'late rides: a group only a blocked arm can reach does not hold the ride for 15 minutes');
+select testkit.check((select status from campaigns where id = '00000000-0000-0000-0000-00000000bd05') = 'completed', 'late rides: a group only a blocked arm can reach does not hold the ride for 15 minutes');
 update arms set status = 'online' where id = '00000000-0000-0000-0001-00000000000a';
 
 -- storage retention
@@ -411,6 +411,129 @@ select testkit.check((select count(*) from delivery_daily) = 0, 'storage: a stat
 do $$ begin perform public.retention_run(); perform testkit.check(false, 'storage: only the server runs the clean-up');
 exception when others then perform testkit.check(true, 'storage: only the server runs the clean-up'); end $$;
 reset role;
+
+-- storage 1.6: whole rides, each ride counted once, failure keeps nothing
+select (((now() - interval '4 days') at time zone 'Asia/Jerusalem')::date)::text as d4 \gset
+insert into campaigns (id, kind, status, message_text, final_text, station_id, created_at, finished_at, sent, total)
+select ('00000000-0000-0000-0000-0000000000f' || k)::uuid, 'quote', 'completed', 'r', 'r', '0000000a-0000-0000-0000-000000000000',
+       now() - interval '4 days' + k * interval '1 minute', now() - interval '4 days' + k * interval '1 minute', n, n
+from (values (1, 5), (2, 3), (3, 2)) v(k, n);
+insert into campaign_targets (campaign_id, wa_group_id, station_id, status, arm_id, sent_at)
+select ('00000000-0000-0000-0000-0000000000f' || k)::uuid, 'g' || g || '@g.us', '0000000a-0000-0000-0000-000000000000', 'sent',
+       case when g % 2 = 0 then '00000000-0000-0000-0001-00000000000a'::uuid else '00000000-0000-0000-0002-00000000000a'::uuid end,
+       now() - interval '4 days' + k * interval '1 minute' + interval '30 seconds'
+from (values (1, 5), (2, 3), (3, 2)) v(k, n), generate_series(1, n) g;
+-- batch of 2 rows, one batch per run: a 5-row ride must still go whole, never half
+select public.retention_run(2, 1, false);
+select testkit.check((select bool_and(c in (0, n)) from (select k, n, (select count(*) from campaign_targets where campaign_id = ('00000000-0000-0000-0000-0000000000f' || k)::uuid) c from (values (1, 5), (2, 3), (3, 2)) v(k, n)) z),
+  'storage: a ride is never split between clean-up batches (all its rows or none)');
+select public.retention_run(2, 1, false);
+select public.retention_run(2, 1, false);
+select public.retention_run(2, 1, false);
+select testkit.check((select count(*) from campaign_targets where campaign_id::text like '00000000-0000-0000-0000-0000000000f%') = 0, 'storage: three rides cleaned over several runs');
+select testkit.check((select rides from delivery_daily where day = :'d4' and station_id = '0000000a-0000-0000-0000-000000000000' and arm_id = '00000000-0000-0000-0000-000000000000') = 3
+  and (select sum(sent) from delivery_daily where day = :'d4' and station_id = '0000000a-0000-0000-0000-000000000000') = 10,
+  'storage: 3 rides and 10 groups counted exactly once across batches and runs');
+-- a row of an already summarised ride (e.g. put back from a backup): removed, never counted again
+insert into campaign_targets (campaign_id, wa_group_id, station_id, status, arm_id, sent_at)
+values ('00000000-0000-0000-0000-0000000000f1', 'late@g.us', '0000000a-0000-0000-0000-000000000000', 'sent', '00000000-0000-0000-0001-00000000000a', now() - interval '4 days');
+select public.retention_run();
+select testkit.check((select rides from delivery_daily where day = :'d4' and station_id = '0000000a-0000-0000-0000-000000000000' and arm_id = '00000000-0000-0000-0000-000000000000') = 3
+  and (select sum(sent) from delivery_daily where day = :'d4' and station_id = '0000000a-0000-0000-0000-000000000000') = 10
+  and (select count(*) from campaign_targets where wa_group_id = 'late@g.us') = 0,
+  'storage: rows of a ride counted in an earlier run (e.g. restored from a backup) are removed but never counted twice');
+-- failure in the middle of a run: nothing of that run is kept (no rows removed, no statistics written)
+select (((now() - interval '5 days') at time zone 'Asia/Jerusalem')::date)::text as d5 \gset
+select (((now() - interval '6 days') at time zone 'Asia/Jerusalem')::date)::text as d6 \gset
+insert into campaigns (id, kind, status, message_text, final_text, station_id, created_at, finished_at, sent, total) values
+ ('00000000-0000-0000-0000-0000005ee006', 'quote', 'completed', 'r', 'r', '0000000a-0000-0000-0000-000000000000', now() - interval '6 days', now() - interval '6 days', 2, 2),
+ ('00000000-0000-0000-0000-0000005ee005', 'quote', 'completed', 'r', 'r', '0000000a-0000-0000-0000-000000000000', now() - interval '5 days', now() - interval '5 days', 2, 2);
+insert into campaign_targets (campaign_id, wa_group_id, station_id, status, arm_id, sent_at)
+select c, 'g' || g || '@g.us', '0000000a-0000-0000-0000-000000000000', 'sent', '00000000-0000-0000-0001-00000000000a', now() - interval '5 days'
+from unnest(array['00000000-0000-0000-0000-0000005ee006', '00000000-0000-0000-0000-0000005ee005']::uuid[]) c, generate_series(1, 2) g;
+create function testkit.boom() returns trigger language plpgsql as $$ begin raise exception 'simulated failure'; end $$;
+create trigger boom before insert on delivery_daily for each row when (new.day = (((now() - interval '5 days') at time zone 'Asia/Jerusalem')::date)) execute function testkit.boom();
+select count(*) as runs_before from retention_runs \gset
+do $$ begin perform public.retention_run(2, 10, false); perform testkit.check(false, 'storage: a failure in the middle stops the whole run');
+exception when others then perform testkit.check(true, 'storage: a failure in the middle stops the whole run', sqlerrm); end $$;
+select testkit.check((select count(*) from campaign_targets where campaign_id in ('00000000-0000-0000-0000-0000005ee006', '00000000-0000-0000-0000-0000005ee005')) = 4
+  and not exists (select 1 from delivery_daily where day in (:'d5', :'d6'))
+  and (select stats_summarised_at is null from campaigns where id = '00000000-0000-0000-0000-0000005ee006')
+  and (select count(*) from retention_runs) = :runs_before,
+  'storage: after a failure in the middle nothing was removed and nothing was counted (also not the batch before it)');
+drop trigger boom on delivery_daily;
+select public.retention_run(2, 10, false);
+select testkit.check((select count(*) from campaign_targets where campaign_id in ('00000000-0000-0000-0000-0000005ee006', '00000000-0000-0000-0000-0000005ee005')) = 0
+  and (select sum(sent) from delivery_daily where day in (:'d5', :'d6')) = 4
+  and (select sum(rides) from delivery_daily where day in (:'d5', :'d6') and arm_id = '00000000-0000-0000-0000-000000000000') = 2,
+  'storage: the next run after a failure counts everything exactly once');
+-- never touched: release backups, connections, the running ride
+insert into ops.release_backups (release_id, tbl, rows, created_at) values (1, 'x', '[]', now() - interval '60 days');
+select public.retention_run();
+select testkit.check((select count(*) from ops.release_backups where created_at < now() - interval '59 days') = 1, 'storage: release backups are never removed by the clean-up');
+select testkit.check((select count(*) from campaign_targets where campaign_id = '00000000-0000-0000-0000-0000000000e3') = 1, 'storage: the running ride is still untouched after all runs');
+-- login / reset records older than 7 days go, recent ones stay
+insert into login_otps (phone, code_hash, expires_at, created_at) values ('0500000001', 'x', now(), now() - interval '8 days'), ('0500000002', 'x', now(), now() - interval '1 hour');
+insert into station_login_attempts (ip, ok, created_at) values ('1.1.1.1', false, now() - interval '8 days'), ('1.1.1.2', false, now() - interval '5 minutes');
+select public.retention_run();
+select testkit.check((select count(*) from login_otps where phone = '0500000001') = 0 and (select count(*) from login_otps where phone = '0500000002') = 1
+  and (select count(*) from station_login_attempts where ip = '1.1.1.1') = 0 and (select count(*) from station_login_attempts where ip = '1.1.1.2') = 1,
+  'storage: login codes and attempts: older than 7 days removed, recent kept (rate limits look back 15–60 minutes)');
+select testkit.check(has_function_privilege('authenticated', 'public.retention_run(int,int,boolean)', 'execute') = false
+  and has_function_privilege('anon', 'public.retention_run(int,int,boolean)', 'execute') = false, 'storage: only the server may run the clean-up (no app user, no anonymous)');
+
+-- 1.7 old WhatsApp keys: run exactly as the update center does (runner_exec), then undo
+reset role;
+\set m17 `cat ../supabase/releases/1.7_arm_auth_cleanup.sql`
+\set r17 `cat ../supabase/releases/1.7_rollback.sql`
+insert into releases (version, title, components, commit_sha, migration_sql, rollback_sql) values ('t1.7', 'test', '{db}', 'x', :'m17', :'r17') returning id as rel17 \gset
+create temp table arms_status_before as select id, status from arms;
+update arms set status = case when id = '00000000-0000-0000-0001-00000000000a' then 'online' else 'offline' end;
+delete from arm_auth where arm_id = '00000000-0000-0000-0001-00000000000a';
+insert into arm_auth (arm_id, station_id, key, value, updated_at) values
+ ('00000000-0000-0000-0001-00000000000a', '0000000a-0000-0000-0000-000000000000', 'creds', '{"me":1}', now()),
+ ('00000000-0000-0000-0001-00000000000a', '0000000a-0000-0000-0000-000000000000', 'app-state-sync-key-A', 'k', '2026-10-01'),
+ ('00000000-0000-0000-0001-00000000000a', '0000000a-0000-0000-0000-000000000000', 'session-old1', 'v1', '2026-10-09 13:00'),
+ ('00000000-0000-0000-0001-00000000000a', '0000000a-0000-0000-0000-000000000000', 'session-old2', 'v2', '2026-10-09 13:49'),
+ ('00000000-0000-0000-0001-00000000000a', '0000000a-0000-0000-0000-000000000000', 'pre-key-9', 'v3', '2026-10-08'),
+ ('00000000-0000-0000-0001-00000000000a', '0000000a-0000-0000-0000-000000000000', 'session-new', 'v4', now());
+create temp table auth_before as select * from arm_auth;
+-- failure: a connected arm without its creds row -> everything undone, the copy is not even kept
+insert into arm_auth (arm_id, station_id, key, value, updated_at) select '00000000-0000-0000-0002-00000000000a', '0000000a-0000-0000-0000-000000000000', 'session-x', 'v', '2026-10-09'
+  where exists (select 1 from arms where id = '00000000-0000-0000-0002-00000000000a');
+update arms set status = 'online' where id = '00000000-0000-0000-0002-00000000000a';
+do $$ begin perform public.runner_exec(currval(pg_get_serial_sequence('releases', 'id')), false);
+  perform testkit.check(false, 'keys 1.7: a failed check undoes everything');
+exception when others then perform testkit.check(true, 'keys 1.7: a failed check undoes everything', sqlerrm); end $$;
+select testkit.check((select count(*) from arm_auth) = (select count(*) from auth_before) + (select count(*) from arm_auth where key = 'session-x')
+  and to_regclass('ops.arm_auth_stale_20261012') is null, 'keys 1.7: after the failed check no key was removed and no copy was left behind');
+update arms set status = 'offline' where id = '00000000-0000-0000-0002-00000000000a';
+delete from arm_auth where key = 'session-x';
+-- success
+select public.runner_exec(:rel17, false);
+select testkit.check((select count(*) from arm_auth where arm_id = '00000000-0000-0000-0001-00000000000a' and key in ('session-old1', 'session-old2', 'pre-key-9')) = 0,
+  'keys 1.7: old per-chat keys removed');
+select testkit.check((select count(*) from arm_auth where arm_id = '00000000-0000-0000-0001-00000000000a' and key in ('creds', 'app-state-sync-key-A', 'session-new')) = 3,
+  'keys 1.7: creds, app-state keys and keys written after 10 Oct are kept (app-state even when old)');
+select testkit.check((select count(*) from ops.arm_auth_stale_20261012 where arm_id = '00000000-0000-0000-0001-00000000000a') = 3, 'keys 1.7: the copy holds exactly the removed keys');
+-- undo: every removed key back, byte for byte
+select public.runner_exec(:rel17, true);
+select testkit.check(not exists (select arm_id, key, value, updated_at from auth_before except select arm_id, key, value, updated_at from arm_auth)
+  and not exists (select arm_id, key, value, updated_at from arm_auth where arm_id = '00000000-0000-0000-0001-00000000000a' except select arm_id, key, value, updated_at from auth_before),
+  'keys 1.7: undo puts every key back exactly (value and time)');
+-- running it again after the undo removes exactly the same keys again (the copy is still identical)
+select public.runner_exec(:rel17, false);
+select testkit.check((select count(*) from arm_auth where arm_id = '00000000-0000-0000-0001-00000000000a') = 3, 'keys 1.7: running again after an undo removes the same keys, nothing else');
+select public.runner_exec(:rel17, true);
+-- a key written again since the copy: a run is refused as a whole (nothing removed)
+update arm_auth set value = 'changed', updated_at = now() where arm_id = '00000000-0000-0000-0001-00000000000a' and key = 'session-old2';
+select count(*) as auth_n from arm_auth \gset
+do $$ begin perform public.runner_exec(currval(pg_get_serial_sequence('releases', 'id')), false);
+  perform testkit.check(false, 'keys 1.7: a run whose copy no longer matches the table is refused');
+exception when others then perform testkit.check(true, 'keys 1.7: a run whose copy no longer matches the table is refused', sqlerrm); end $$;
+select testkit.check((select count(*) from arm_auth) = :auth_n and (select value from arm_auth where arm_id = '00000000-0000-0000-0001-00000000000a' and key = 'session-old2') = 'changed',
+  'keys 1.7: the refused run removed nothing; the newer key is kept');
+update arms a set status = b.status from arms_status_before b where a.id = b.id;
 
 -- engine health
 select testkit.as_engine();
