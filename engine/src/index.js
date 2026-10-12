@@ -14,6 +14,16 @@ const settingsByStation = new Map();
 const settingsFor = (arm) => settingsByStation.get(arm.stationId) || { min_delay_sec: 8, max_delay_sec: 20 };
 let shuttingDown = false;
 
+// Stopping one arm must never hold up the others: an arm whose socket or key flush hangs (11 Oct: a
+// number blocked by WhatsApp) froze this whole loop for hours – new arms didn't start, settings like
+// warm-up weren't picked up. Give each stop a time limit and move on.
+const stopLimitMs = () => Number(process.env.ENGINE_STOP_LIMIT_MS) || 10_000;
+const withLimit = (p, what) =>
+  Promise.race([
+    Promise.resolve(p).catch((e) => log.warn({ what, err: e?.message }, 'stop failed')),
+    new Promise((r) => setTimeout(() => (log.warn({ what }, 'stop took too long – continuing'), r()), stopLimitMs()).unref?.()),
+  ]);
+
 // Keep running arms in line with the arms table
 async function reconcileArms() {
   const [{ data, error }, st] = await Promise.all([
@@ -43,7 +53,7 @@ async function reconcileArms() {
       arm.start();
     } else if (!shouldRun && arm) {
       arms.delete(row.id);
-      await arm.stop();
+      await withLimit(arm.stop(), `stop ${row.name}`);
       await db.from('arm_qr').delete().eq('arm_id', row.id);
       await db.from('arms').update({
         status: 'paused',
@@ -78,7 +88,7 @@ async function reconcileArms() {
     }
     missingSince.delete(id);
     arms.delete(id);
-    await arm.destroy();
+    await withLimit(arm.destroy(), `destroy ${arm.name}`);
     log.info({ arm: arm.name }, 'arm removed (deleted in the app)');
   }
 }
@@ -365,18 +375,56 @@ function every(ms, fn, name) {
   const run = async () => {
     if (shuttingDown) return;
     let failed = false;
+    const slow = setTimeout(() => log.warn({ loop: name }, 'loop still running after 3 minutes'), 180_000);
+    slow.unref?.();
     try {
       await fn();
     } catch (e) {
       failed = true;
       log.error({ loop: name, err: String(e.message).slice(0, 120) }, 'loop error');
     }
+    clearTimeout(slow);
     if (failed) dbFailStreak = Math.min(dbFailStreak + 1, 20);
     else if (dbFailStreak) dbFailStreak = Math.max(0, dbFailStreak - 1);
     const wait = dbFailStreak > 2 ? Math.min(60_000, ms * 2 ** Math.min(dbFailStreak - 2, 6)) : ms;
     setTimeout(run, wait);
   };
   run();
+}
+
+// Disk picture once an hour: how much the WhatsApp keys of each arm and the backups take on the server
+// disk, and folders of arms that no longer exist (left for the owner to decide – nothing is deleted here).
+// `du` runs as a separate process, so the engine is not slowed down while it counts.
+async function diskReport() {
+  const { execFile } = require('child_process');
+  const fsp = require('fs/promises');
+  const pathM = require('path');
+  const AUTH = process.env.AUTH_DIR || '/data/auth';
+  const BACK = process.env.BACKUP_DIR || '/data/backups';
+  const du = (dirs) =>
+    new Promise((res) =>
+      execFile('du', ['-sk', '--', ...dirs], { timeout: 120_000, maxBuffer: 1 << 20 }, (err, out) =>
+        res(String(out || '').trim().split('\n').filter(Boolean).map((l) => {
+          const [kb, ...p] = l.split('\t');
+          return { kb: Number(kb), dir: p.join('\t') };
+        })),
+      ),
+    );
+  const ids = await fsp.readdir(AUTH).catch(() => []);
+  const rows = ids.length ? await du(ids.map((i) => pathM.join(AUTH, i))) : [];
+  const [backups] = await du([BACK]);
+  const { data: known } = await db.from('arms').select('id,name,is_active');
+  const byId = new Map((known || []).map((a) => [a.id, a]));
+  const mb = (kb) => Math.round((kb / 1024) * 10) / 10;
+  const per = rows
+    .map((r) => {
+      const id = pathM.basename(r.dir);
+      const a = byId.get(id);
+      return { arm: a ? a.name : `(לא קיימת) ${id.slice(0, 8)}`, active: !!a?.is_active, mb: mb(r.kb) };
+    })
+    .sort((x, y) => y.mb - x.mb);
+  const authMb = per.reduce((t, r) => t + r.mb, 0);
+  log.info({ authMb: Math.round(authMb), backupsMb: mb(backups?.kb || 0), arms: per }, 'disk');
 }
 
 const INSTANCE = require('crypto').randomUUID();
@@ -428,6 +476,8 @@ async function main() {
     if (error) throw error;
   }, 'finalize');
   every(30_000, heartbeat, 'heartbeat');
+  // disk picture every hour (first one 2 minutes after start)
+  setTimeout(() => every(60 * 60_000, diskReport, 'disk'), 120_000);
   // memory picture every 5 minutes (to size servers by measurement, not guesses)
   every(5 * 60_000, async () => {
     const m = process.memoryUsage();

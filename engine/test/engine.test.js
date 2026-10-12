@@ -94,6 +94,27 @@ test('arms: an empty or failed arms list never logs out any number', async () =>
   assert.equal(engine.arms.size, 2);
 });
 
+test('arms: an arm that hangs while stopping does not freeze the arms loop', async () => {
+  engine.arms.clear();
+  process.env.ENGINE_STOP_LIMIT_MS = '200';
+  const stuck = fakeArm('stuck');
+  stuck.stop = () => new Promise(() => {}); // never finishes (blocked number, hung socket)
+  engine.arms.set('stuck', stuck);
+  const updates = [];
+  dbAnswer((op) => {
+    if (op.rpc === 'engine_station_states') return { data: [{ id: 'st', allowed: true }], error: null };
+    if (op.table === 'arms' && op.action === 'update') updates.push(op.payload);
+    if (op.table === 'arms') return { data: [{ id: 'stuck', name: 'stuck', is_active: false, status: 'error', station_id: 'st' }], error: null };
+    return { data: [], error: null };
+  });
+  const t0 = Date.now();
+  await engine.reconcileArms();
+  delete process.env.ENGINE_STOP_LIMIT_MS;
+  assert.ok(Date.now() - t0 < 2000, 'loop went on after the time limit');
+  assert.equal(engine.arms.has('stuck'), false, 'the switched-off arm left the running list');
+  assert.ok(updates.some((u) => u && u.status === 'paused'), 'its status was set to paused');
+});
+
 test('arms: an arm really deleted in the app is removed only after confirmation', async () => {
   engine.arms.clear();
   const a1 = fakeArm('a1');
@@ -229,7 +250,11 @@ test('arm: repeated 440 (opened elsewhere) stops after 3 times in 10 minutes', a
 // ---------- backup (ח5) ----------
 test('backup: whole database written to disk, restore SQL rebuilds the same rows', async () => {
   const backup = require('../src/backup');
-  const rows = { stations: [{ id: 's1', name: 'תחנה' }], campaign_targets: Array.from({ length: 4500 }, (_, i) => ({ id: i + 1 })) };
+  const rows = {
+    stations: [{ id: 's1', name: 'תחנה' }],
+    groups: Array.from({ length: 4500 }, (_, i) => ({ id: i + 1 })),
+    campaign_targets: Array.from({ length: 10 }, (_, i) => ({ id: i + 1 })),
+  };
   dbAnswer((op) => {
     if (op.rpc === 'engine_backup_rows') {
       const all = rows[op.args.p_table] || [];
@@ -238,10 +263,11 @@ test('backup: whole database written to disk, restore SQL rebuilds the same rows
     return { data: [], error: null };
   });
   const { file, counts } = await backup.runBackup();
-  assert.equal(counts.campaign_targets, 4500, 'paging reads every row');
+  assert.equal(counts.groups, 4500, 'paging reads every row');
+  assert.equal(counts.campaign_targets, undefined, 'per-group delivery rows are not backed up (kept 48h only)');
   const out = require('child_process').execFileSync(process.execPath, [path.join(__dirname, '../scripts/restore-sql.js'), file, '--schema', 'restore_check'], { encoding: 'utf8' });
   assert.match(out, /insert into "restore_check"\."stations" overriding system value/);
-  assert.equal((out.match(/"campaign_targets" overriding/g) || []).length, 5, '1000 rows per statement');
+  assert.equal((out.match(/"groups" overriding/g) || []).length, 5, '1000 rows per statement');
   assert.match(out, /on conflict do nothing/, 'restore never overwrites existing rows');
 });
 
