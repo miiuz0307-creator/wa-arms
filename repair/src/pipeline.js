@@ -68,7 +68,10 @@ function createPipeline(deps) {
   }
 
   /** Requester always; approvers too when `toApprovers`. Each number once. */
+  const group = () => (typeof wa.commandGroup === 'function' ? wa.commandGroup() : null);
+
   async function notify(t, text, { toApprovers = false } = {}) {
+    if (group()) return sendTo(group(), text, t.id); // everyone involved is in the command group
     const to = new Set([t.requester_phone]);
     if (toApprovers) for (const a of await approvers()) to.add(a.phone);
     for (const p of to) await sendTo(p, text, t.id);
@@ -324,6 +327,11 @@ function createPipeline(deps) {
     await audit(t.id, 'system', 'approval_requested', `נשלחה בקשת אישור (תקפה עד ${expires.toLocaleTimeString('he-IL', { timeZone: 'Asia/Jerusalem' })})`);
     const text = M.approvalRequest(t, code, cfg.approvalMinutes);
     // the code goes to approvers only
+    if (group()) {
+      // only an approver's "אשר" is accepted, so the code being visible in the group is not a bypass
+      await sendTo(group(), text, t.id);
+      return;
+    }
     for (const a of list) await sendTo(a.phone, text, t.id);
     if (!list.some((a) => a.phone === t.requester_phone)) {
       await sendTo(t.requester_phone, `✅ פנייה *#${t.id}*: התיקון מוכן ועבר בדיקות. נשלח למאשר לאישור.`, t.id);

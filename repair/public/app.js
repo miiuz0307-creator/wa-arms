@@ -104,6 +104,7 @@
             <div class="conn-info">
               <p><span class="badge ${tone}">${label}</span>
               ${s.wa.me ? ` &nbsp;מספר הבוט: <b class="ltr">${esc(s.wa.me)}</b>` : ''}</p>
+              ${s.wa.state === 'connected' ? (s.wa.group ? `<p>קבוצת פיקוד: <b>${esc(s.wa.group)}</b> ✅</p>` : `<div class="warnbox">כדי שהבוט יקבל הודעות בצורה אמינה: צרו קבוצת WhatsApp בשם <b>BotiX תיקונים</b>, צרפו אליה את מספר הבוט, וכתבו שם.</div>`) : ''}
               ${s.wa.error ? `<div class="warnbox">${esc(s.wa.error)}</div>` : ''}
               ${s.wa.state === 'qr' ? `<ol class="steps"><li>פתחו את WhatsApp בטלפון של מספר הבוט</li><li>הגדרות ← מכשירים מקושרים ← קישור מכשיר</li><li>סרקו את הקוד</li></ol>` : ''}
               <div class="actions">

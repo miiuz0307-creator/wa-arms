@@ -46,7 +46,13 @@ async function main() {
   }
 
   let intake = null;
+  const savedGroup = await store.getSetting('command_group');
   const wa = createWhatsApp({
+    onGroupFound: async (id, subject) => {
+      await store.setSetting('command_group', { id, subject });
+      await pipeline.audit(null, 'system', 'command_group', `קבוצת הפיקוד נקבעה: ${subject}`);
+      await wa.send(id, `✅ הבוט מחובר לקבוצה "${subject}".\nמעכשיו כתבו כאן תקלות ופקודות.\n\n` + require('./messages').help(true)).catch(() => {});
+    },
     store,
     secret: cfg.sessionSecret,
     log,
@@ -60,6 +66,7 @@ async function main() {
       }
     },
   });
+  if (savedGroup?.id) wa.setCommandGroup(savedGroup.id, savedGroup.subject);
   const railway = createRailway(cfg.railway);
   const github = createGitHub(cfg.github);
   const ws = createWorkspace(cfg);

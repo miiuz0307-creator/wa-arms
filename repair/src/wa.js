@@ -11,6 +11,9 @@ const { DisconnectReason, Browsers, BufferJSON, initAuthCreds, proto, makeCachea
 // The bot only talks in private chats: never decrypt group, status, broadcast or channel traffic.
 // A busy number receives thousands of group messages; decrypting them was pure load and noise.
 const ignoredJid = (jid = '') => jid.endsWith('@g.us') || jid.endsWith('@broadcast') || jid.endsWith('@newsletter');
+
+// A group whose name contains one of these becomes the bot's command group
+const COMMAND_GROUP_NAME = /botix|בוטיקס|תיקונ/i;
 const quiet = pino({ level: 'silent' });
 const MAX_IMAGE = 8 * 1024 * 1024;
 
@@ -140,7 +143,12 @@ async function hasSession(store, secret) {
 const textOf = (m = {}) =>
   m.conversation || m.extendedTextMessage?.text || m.imageMessage?.caption || m.documentMessage?.caption || '';
 
-function createWhatsApp({ store, secret, log, onMessage, onOpen }) {
+function createWhatsApp({ store, secret, log, onMessage, onOpen, onGroupFound }) {
+  // Private chats with this version of WhatsApp Web often arrive empty ("Message absent from node"),
+  // group messages decrypt reliably – so the bot also works in one dedicated command group.
+  let commandGroup = null;
+  let commandGroupName = null;
+  const ignore = (jid = '') => (jid.endsWith('@g.us') ? jid !== commandGroup : ignoredJid(jid));
   let sock = null;
   let stopped = true;
   let reconnectTimer = null;
@@ -162,7 +170,7 @@ function createWhatsApp({ store, secret, log, onMessage, onOpen }) {
     const s = makeWASocket({
       auth: { creds: state.creds, keys },
       logger: quiet,
-      shouldIgnoreJid: ignoredJid,
+      shouldIgnoreJid: ignore,
       browser: Browsers.ubuntu('Chrome'),
       printQRInTerminal: false,
       markOnlineOnConnect: false,
@@ -173,6 +181,12 @@ function createWhatsApp({ store, secret, log, onMessage, onOpen }) {
     sock = s;
     s.ev.on('creds.update', () => saveCreds().catch((e) => log.error({ err: e.message }, 'saving creds failed')));
     s.ev.on('connection.update', (u) => onUpdate(s, u, state).catch((e) => log.error({ err: e.message }, 'connection handler failed')));
+    s.ev.on('groups.upsert', (groups) => {
+      for (const g of groups || []) considerGroup(g.id, g.subject);
+    });
+    s.ev.on('groups.update', (groups) => {
+      for (const g of groups || []) if (g.subject) considerGroup(g.id, g.subject);
+    });
     s.ev.on('messages.upsert', ({ messages, type }) => {
       if (type !== 'notify') return;
       for (const m of messages) handleIncoming(s, m).catch((e) => log.error({ err: e.message }, 'incoming message failed'));
@@ -190,6 +204,7 @@ function createWhatsApp({ store, secret, log, onMessage, onOpen }) {
       set({ state: 'connected', qr: null, me, error: null });
       log.info({ me }, 'WhatsApp connected');
       if (onOpen) Promise.resolve(onOpen()).catch((e) => log.warn({ err: e.message }, 'after-connect task failed'));
+      findCommandGroup(s).catch((e) => log.warn({ err: e.message }, 'looking for the command group failed'));
     }
     if (u.connection !== 'close') return;
     sock = null;
@@ -228,7 +243,7 @@ function createWhatsApp({ store, secret, log, onMessage, onOpen }) {
     if (m.key?.fromMe) return;
     if (!m.message) {
       // a private message that could not be decrypted (broken encryption session with that sender)
-      if (!ignoredJid(jid) && m.messageStubType === 2) {
+      if (!ignore(jid) && m.messageStubType === 2) {
         undecryptable++;
         log.warn({ undecryptable, params: m.messageStubParameters }, 'private message could not be decrypted');
         if (undecryptable >= 3) set({ error: 'הודעות פרטיות מגיעות אבל לא ניתנות לפענוח. לחצו "ניתוק ומחיקת החיבור" וסרקו QR מחדש.' });
@@ -236,7 +251,7 @@ function createWhatsApp({ store, secret, log, onMessage, onOpen }) {
       return;
     }
     // private chats only: ignore groups, status updates, channels and broadcasts
-    if (ignoredJid(jid)) return;
+    if (ignore(jid)) return;
     const msg = m.message.ephemeralMessage?.message || m.message.viewOnceMessage?.message || m.message;
     let { phone, lid } = senderOf(m.key);
     // WhatsApp increasingly hides the number behind a private id (LID): ask Baileys for the number
@@ -268,6 +283,35 @@ function createWhatsApp({ store, secret, log, onMessage, onOpen }) {
       };
     }
     await onMessage({ jid, phone, lid, name: m.pushName || '', text: textOf(msg).trim(), image });
+  }
+
+  function considerGroup(id, subject) {
+    if (!id || !subject || commandGroup === id || !COMMAND_GROUP_NAME.test(subject)) return;
+    commandGroup = id;
+    commandGroupName = subject;
+    log.info({ subject }, 'command group found');
+    if (onGroupFound) Promise.resolve(onGroupFound(id, subject)).catch(() => {});
+  }
+
+  async function findCommandGroup(s) {
+    if (commandGroup) {
+      try {
+        const meta = await s.groupMetadata(commandGroup);
+        commandGroupName = meta?.subject || commandGroupName;
+        return;
+      } catch {
+        // the bot was removed from the saved group – look for another one
+        commandGroup = null;
+      }
+    }
+    const all = (await s.groupFetchAllParticipating()) || {};
+    const found = Object.values(all).find((g) => COMMAND_GROUP_NAME.test(g.subject || ''));
+    if (found) considerGroup(found.id, found.subject);
+  }
+
+  function setCommandGroup(id, name = null) {
+    commandGroup = id || null;
+    commandGroupName = name;
   }
 
   /** WhatsApp's private id (LID) of a phone number, when WhatsApp tells us. */
@@ -306,7 +350,15 @@ function createWhatsApp({ store, secret, log, onMessage, onOpen }) {
     set({ state: 'disconnected', qr: null, ...(logout ? { me: null } : {}), error: null });
   }
 
-  return { connect, disconnect, send, lidOf, status: () => ({ ...status }) };
+  return {
+    connect,
+    disconnect,
+    send,
+    lidOf,
+    setCommandGroup,
+    commandGroup: () => commandGroup,
+    status: () => ({ ...status, group: commandGroup ? commandGroupName || 'קבוצת פיקוד' : null }),
+  };
 }
 
-module.exports = { createWhatsApp, useDbAuthState, hasSession, textOf, ignoredJid };
+module.exports = { createWhatsApp, useDbAuthState, hasSession, textOf, ignoredJid, COMMAND_GROUP_NAME };

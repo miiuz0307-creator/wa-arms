@@ -37,3 +37,9 @@ test('groups, status and channels are ignored', () => {
   for (const j of ['123@g.us', 'status@broadcast', '1@newsletter']) assert.ok(ignoredJid(j));
   for (const j of ['972501234567@s.whatsapp.net', '123@lid']) assert.ok(!ignoredJid(j));
 });
+
+test('command group name pattern', () => {
+  const { COMMAND_GROUP_NAME } = require('../src/wa');
+  for (const n of ['BotiX תיקונים', 'botix', 'תיקונים בוט']) assert.ok(COMMAND_GROUP_NAME.test(n), n);
+  for (const n of ['נהגים 8080', 'משפחה']) assert.ok(!COMMAND_GROUP_NAME.test(n), n);
+});

@@ -142,6 +142,8 @@ function createIntake({ cfg, store, wa, pipeline, log }) {
         return;
       }
       default:
+        // in the command group people also chat ("תודה", "אוקיי") – only real descriptions open a ticket
+        if (jid.endsWith('@g.us') && c.text.length < 8) return;
         if (c.text.length < 4) return reply(jid, M.tooShort);
         return createTicket(jid, actor, displayName, c.text, []);
     }

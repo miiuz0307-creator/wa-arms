@@ -328,3 +328,22 @@ test('main moved since the fix was tested → not merged, a fresh ticket is open
   assert.equal(fresh.status, 'queued');
   assert.equal(fresh.description, 'ההפצה לא עובדת');
 });
+
+test('command group: everything goes to the group, chatter is ignored, approver still required', async () => {
+  const s = await setup();
+  const G = '120363000000000000@g.us';
+  s.wa.commandGroup = () => G;
+  const inGroup = (phone, text) => s.intake.handle({ jid: G, phone, lid: null, name: '', text, image: null });
+  await inGroup(ASKER, 'תודה');
+  assert.equal((await s.store.listTickets()).length, 0, 'short chatter in the group opens nothing');
+  await inGroup(ASKER, 'ההפצה לא עובדת מהבוקר');
+  await s.runNext();
+  const toGroup = s.wa.textsTo(G);
+  const code = codeFrom(toGroup);
+  assert.match(code, /^\d{6}$/);
+  assert.equal(s.wa.textsTo(OWNER).length, 0, 'nothing sent privately');
+  await inGroup(ASKER, `אשר ${code}`);
+  assert.equal((await s.store.getTicket(1)).status, 'awaiting_approval', 'a requester cannot approve');
+  await inGroup(OWNER, `אשר ${code}`);
+  await h.waitFor(async () => (await s.store.getTicket(1)).status === 'deployed');
+});
