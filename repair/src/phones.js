@@ -25,8 +25,8 @@ function senderOf(key = {}) {
   let lid = null;
   for (const id of ids) {
     const s = String(id).replace(/:\d+(?=@)/, '');
-    if (!phone && s.endsWith('@s.whatsapp.net')) phone = s.split('@')[0];
-    if (!lid && s.endsWith('@lid')) lid = s.split('@')[0];
+    if (!phone && (s.endsWith('@s.whatsapp.net') || s.endsWith('@hosted'))) phone = s.split('@')[0];
+    if (!lid && (s.endsWith('@lid') || s.endsWith('@hosted.lid'))) lid = s.split('@')[0];
   }
   return { phone, lid };
 }

@@ -299,7 +299,12 @@ function createWhatsApp({ store, secret, log, onMessage, onOpen, onGroupFound })
     // private chats only: ignore groups, status updates, channels and broadcasts
     if (ignore(jid)) return;
     const msg = m.message.ephemeralMessage?.message || m.message.viewOnceMessage?.message || m.message;
-    let { phone, lid } = senderOf(m.key);
+    let { phone, lid } = senderOf({ ...m.key, participant: m.key?.participant || m.participant });
+    if (!phone && !lid) {
+      // unknown sender shape: log which id fields exist (domains only, no numbers) to diagnose
+      const shape = Object.fromEntries(Object.entries({ ...m.key, mParticipant: m.participant }).filter(([, v]) => typeof v === 'string').map(([k, v]) => [k, v.includes('@') ? '@' + v.split('@')[1] : v.length]));
+      log.warn({ shape }, 'sender could not be identified');
+    }
     // WhatsApp increasingly hides the number behind a private id (LID): ask Baileys for the number
     if (!phone && lid) {
       try {
