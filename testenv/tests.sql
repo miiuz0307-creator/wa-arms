@@ -402,6 +402,8 @@ select testkit.check((select sent = 2 and total = 3 from campaigns where id = '0
 select testkit.check((select sum(sent) = 2 and sum(failed) = 1 and sum(delay_n) = 2 and sum(delay_sum_s) = 120 from delivery_daily where station_id = '0000000a-0000-0000-0000-000000000000' and day = ((now() - interval '3 days') at time zone 'Asia/Jerusalem')::date), 'storage: the daily summary keeps sent / failed / delivery time');
 select testkit.check((select count(*) from campaign_targets where campaign_id = '00000000-0000-0000-0000-0000000000e2') = 1, 'storage: a ride from the last 48h is untouched');
 select testkit.check((select count(*) from campaign_targets where campaign_id = '00000000-0000-0000-0000-0000000000e3') = 1, 'storage: a ride still running is never touched, however old');
+select public.retention_run(2, 20, false);
+select testkit.check((select sum(sent) = 2 and sum(failed) = 1 from delivery_daily where station_id = '0000000a-0000-0000-0000-000000000000' and day = ((now() - interval '3 days') at time zone 'Asia/Jerusalem')::date), 'storage: running again counts nothing twice');
 select testkit.check((select count(*) from processed_messages where message_id = 'old-1') = 0 and (select count(*) from processed_messages where message_id = 'new-1') = 1, 'storage: message dedupe kept 24 hours');
 select testkit.check((select count(*) from arm_auth) = :auth_before and (select count(*) from groups) = :groups_before, 'storage: WhatsApp connections and groups are never touched');
 set role authenticated; select testkit.as_station('tok-b');

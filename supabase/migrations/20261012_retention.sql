@@ -7,7 +7,8 @@
 --  * dedupe of incoming messages (processed_messages): 24 hours.
 --  * rides (campaigns, campaign_arms, quote_sessions): 90 days.  activity log: 180 days.
 --  * login codes / attempts, reset codes: 7 days.  cron run history: 7 days.  release snapshots: 30 days.
--- Runs every hour in small batches (5,000 rows, at most 20 batches) so the database never gets a burst.
+-- Runs every hour in small batches (5,000 rows, at most 10 batches = 50,000 rows an hour) so the database never
+-- gets a burst; waits at most 2s for a lock and 120s in total, else it stops and tries again next hour.
 
 create table if not exists public.delivery_daily (
   day date not null,
@@ -39,7 +40,7 @@ create table if not exists public.retention_runs (
 alter table public.retention_runs enable row level security;
 revoke all on public.retention_runs from anon, authenticated;
 
-create or replace function public.retention_run(p_batch int default 5000, p_max_batches int default 20, p_dry_run boolean default false)
+create or replace function public.retention_run(p_batch int default 5000, p_max_batches int default 10, p_dry_run boolean default false)
  returns jsonb language plpgsql volatile security definer set search_path to 'public'
 as $function$
 declare
@@ -47,6 +48,11 @@ declare
   c_pm int := 0; c_camp int := 0; c_qs int := 0; c_ca int := 0; c_log int := 0; c_misc int := 0;
   t0 timestamptz := clock_timestamp();
 begin
+  -- never wait on rows someone else is using, never run long: give up quietly and try next hour
+  perform set_config('lock_timeout', '2s', true);
+  perform set_config('statement_timeout', '120s', true);
+  -- The whole run is one transaction: summary and removal are written together or not at all, so a
+  -- failure half-way leaves nothing summarised twice and nothing removed unsummarised.
   if p_dry_run then
     return jsonb_build_object(
       'targets', (select count(*) from public.campaign_targets t join public.campaigns c on c.id = t.campaign_id
