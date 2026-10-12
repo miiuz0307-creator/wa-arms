@@ -194,7 +194,13 @@ export default function CampaignPage() {
               ))}
             </tbody>
           </table>
-          {shown.length === 0 && <div className="p-8 text-center text-sm text-slate-500">אין שורות</div>}
+          {shown.length === 0 && (
+            <div className="p-8 text-center text-sm text-slate-500">
+              {targets.length === 0 && !active && c?.total > 0
+                ? `הפירוט לפי קבוצות נשמר 48 שעות אחרי סיום ההפצה. הסיכום נשמר: נשלח ${c.sent ?? 0} מתוך ${c.total}, נכשל ${c.failed ?? 0}.`
+                : 'אין שורות'}
+            </div>
+          )}
         </div>
       </Card>
     </>

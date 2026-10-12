@@ -379,4 +379,35 @@ select public.finalize_campaigns();
 select testkit.check((select status from campaigns where id = '00000000-0000-0000-0000-0000000000d5') = 'completed', 'late rides: a group only a blocked arm can reach does not hold the ride for 15 minutes');
 update arms set status = 'online' where id = '00000000-0000-0000-0001-00000000000a';
 
+-- storage retention
+reset role;
+insert into campaigns (id, kind, status, message_text, final_text, station_id, created_at, finished_at, sent, total)
+values ('00000000-0000-0000-0000-0000000000e1', 'quote', 'completed', 'ישנה', 'ישנה', '0000000a-0000-0000-0000-000000000000', now() - interval '3 days', now() - interval '3 days', 2, 3),
+       ('00000000-0000-0000-0000-0000000000e2', 'quote', 'completed', 'אתמול', 'אתמול', '0000000a-0000-0000-0000-000000000000', now() - interval '20 hours', now() - interval '20 hours', 1, 1),
+       ('00000000-0000-0000-0000-0000000000e3', 'manual', 'running', 'רצה', 'רצה', '0000000a-0000-0000-0000-000000000000', now() - interval '3 days', null, 0, 1);
+insert into campaign_targets (campaign_id, wa_group_id, station_id, status, arm_id, sent_at)
+values ('00000000-0000-0000-0000-0000000000e1', 'g1@g.us', '0000000a-0000-0000-0000-000000000000', 'sent', '00000000-0000-0000-0001-00000000000a', now() - interval '3 days' + interval '40 seconds'),
+       ('00000000-0000-0000-0000-0000000000e1', 'g2@g.us', '0000000a-0000-0000-0000-000000000000', 'sent', '00000000-0000-0000-0001-00000000000a', now() - interval '3 days' + interval '80 seconds'),
+       ('00000000-0000-0000-0000-0000000000e1', 'g3@g.us', '0000000a-0000-0000-0000-000000000000', 'failed', null, null),
+       ('00000000-0000-0000-0000-0000000000e2', 'g1@g.us', '0000000a-0000-0000-0000-000000000000', 'sent', '00000000-0000-0000-0001-00000000000a', now() - interval '20 hours'),
+       ('00000000-0000-0000-0000-0000000000e3', 'g1@g.us', '0000000a-0000-0000-0000-000000000000', 'pending', null, null);
+insert into processed_messages (source_group_id, message_id, processed_at, station_id) values ('s@g.us', 'old-1', now() - interval '2 days', '0000000a-0000-0000-0000-000000000000'), ('s@g.us', 'new-1', now() - interval '1 hour', '0000000a-0000-0000-0000-000000000000');
+select count(*) as auth_before from arm_auth \gset
+select count(*) as groups_before from groups \gset
+select testkit.check((public.retention_run(5000, 20, true) ->> 'targets')::int >= 3, 'storage: dry run counts what would be summarised, deletes nothing');
+select testkit.check((select count(*) from campaign_targets where campaign_id = '00000000-0000-0000-0000-0000000000e1') = 3, 'storage: dry run changed nothing');
+select public.retention_run(2, 20, false);
+select testkit.check((select count(*) from campaign_targets where campaign_id = '00000000-0000-0000-0000-0000000000e1') = 0, 'storage: a ride finished over 48h ago keeps no per-group rows (small batches)');
+select testkit.check((select sent = 2 and total = 3 from campaigns where id = '00000000-0000-0000-0000-0000000000e1'), 'storage: the ride itself and its counters stay');
+select testkit.check((select sum(sent) = 2 and sum(failed) = 1 and sum(delay_n) = 2 and sum(delay_sum_s) = 120 from delivery_daily where station_id = '0000000a-0000-0000-0000-000000000000' and day = ((now() - interval '3 days') at time zone 'Asia/Jerusalem')::date), 'storage: the daily summary keeps sent / failed / delivery time');
+select testkit.check((select count(*) from campaign_targets where campaign_id = '00000000-0000-0000-0000-0000000000e2') = 1, 'storage: a ride from the last 48h is untouched');
+select testkit.check((select count(*) from campaign_targets where campaign_id = '00000000-0000-0000-0000-0000000000e3') = 1, 'storage: a ride still running is never touched, however old');
+select testkit.check((select count(*) from processed_messages where message_id = 'old-1') = 0 and (select count(*) from processed_messages where message_id = 'new-1') = 1, 'storage: message dedupe kept 24 hours');
+select testkit.check((select count(*) from arm_auth) = :auth_before and (select count(*) from groups) = :groups_before, 'storage: WhatsApp connections and groups are never touched');
+set role authenticated; select testkit.as_station('tok-b');
+select testkit.check((select count(*) from delivery_daily) = 0, 'storage: a station sees only its own daily statistics');
+do $$ begin perform public.retention_run(); perform testkit.check(false, 'storage: only the server runs the clean-up');
+exception when others then perform testkit.check(true, 'storage: only the server runs the clean-up'); end $$;
+reset role;
+
 select n, case when ok then 'PASS' else 'FAIL' end as result, name, coalesce(left(detail, 80), '') from testkit.results where name not like '%(update attempted)%' order by n;
