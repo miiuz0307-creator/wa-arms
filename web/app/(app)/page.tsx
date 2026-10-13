@@ -1,23 +1,33 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Smartphone, UsersRound, Send, Radio, AlertTriangle, Activity, ChevronLeft } from 'lucide-react';
+import { Smartphone, UsersRound, Send, Route, Activity, ChevronLeft, CheckCircle2, BellRing, Radio } from 'lucide-react';
 import { sb } from '@/lib/supabase';
 import { useRealtime } from '@/lib/hooks';
 import { useAuth } from '@/lib/auth';
-import { ACTION_LABEL, KIND_LABEL, ARM_STATUS, CAMPAIGN_STATUS, firstLine, fmtTime, timeAgo } from '@/lib/format';
-import { Badge, Card, PageHeader, Progress, Spinner, Stat, Button } from '@/components/ui';
+import { ACTION_LABEL, KIND_LABEL, ARM_STATUS, CAMPAIGN_STATUS, firstLine, fmtTime, timeAgo, type Tone } from '@/lib/format';
+import { armHealth, groupReason, indexProblems, type ProblemIndex } from '@/lib/armHealth';
+import { Badge, Button, Card, Empty, Lamp, Progress, Section, Skeleton, Stat, cx } from '@/components/ui';
+import { BrandMark, StationSign, useBrand } from '@/components/Brand';
 import { allGroups, allRows } from '@/lib/allRows';
+
+type Alert = { key: string; tone: Tone; text: React.ReactNode; href?: string; cta?: string };
+
+const daysLeft = (subEnd: string | null | undefined) =>
+  subEnd ? Math.ceil((new Date(subEnd + 'T23:59:59').getTime() - Date.now()) / 86400000) : null;
 
 export default function Dashboard() {
   const { can, profile, isSuper, station } = useAuth();
+  const ownerView = isSuper && !station?.acting;
+  const stationView = !!station && !ownerView;
+  const brand = useBrand(stationView);
   const [d, setD] = useState<any>(null);
+  // groups, their flags and list membership, and what really happened when sending (48h)
+  const [problems, setProblems] = useState<{ index: ProblemIndex; rows: any[]; groups: any[]; flags: Map<string, any>; listed: Set<string> } | null>(null);
 
   const load = useCallback(async () => {
-    const today = new Date().toISOString().slice(0, 10);
-    const [arms, groups, active, pendingPhone, recentFailed, log] = await Promise.all([
-      sb().from('arms').select('*').order('created_at'),
-      allGroups('arm_id,wa_group_id'),
+    const [arms, active, pendingPhone, recentFailed, log] = await Promise.all([
+      sb().from('arms').select('*').order('created_at'), // rows: bounded – the arms of one station
       sb().from('campaigns').select('*').in('status', ['queued', 'running', 'paused']).order('created_at', { ascending: false }).limit(8),
       sb().from('campaigns').select('id', { count: 'exact', head: true }).eq('status', 'pending_phone'),
       sb()
@@ -33,216 +43,397 @@ export default function Dashboard() {
     const todayRides = await allRows(() =>
       sb().from('campaigns').select('kind,sent,failed,total,status').gte('created_at', midnight.toISOString()).order('created_at'),
     ).catch(() => ({ data: [] as any[] }));
-    // owner (own account, not inside a station): stations whose subscription ends this week or already ended
+
+    // owner (own account, not inside a station): system monitor
     let stationAlerts: any[] = [];
     let health: any[] = [];
     let armRequests: any[] = [];
     let engineSeen: string | null = null;
     let delivery: any[] = [];
-    if (isSuper && !station?.acting) {
-      // system monitor: disconnected numbers and failed sends in every station, engine heartbeat
-      const [{ data: h }, { data: rq }, { data: dl }] = await Promise.all([
+    if (ownerView) {
+      const [{ data: h }, { data: rq }, { data: dl }, { data: st }] = await Promise.all([
         sb().rpc('owner_health'),
         sb().rpc('owner_arm_requests'),
         sb().rpc('owner_delivery'),
+        sb().rpc('stations_overview'),
       ]);
       // delivery monitor: members who could not decrypt our messages ("waiting for this message"), per arm
       delivery = (dl as any[]) || [];
       armRequests = ((rq as any[]) || []).filter((r) => r.status === 'pending');
       engineSeen = (h || [])[0]?.engine_seen || null;
       health = (h || []).filter((r: any) => r.station_id && r.station_name && (r.arm_id || r.failed_hour > 0));
-      const { data: st } = await sb().rpc('stations_overview');
       stationAlerts = (st || [])
-        .map((s: any) => ({ ...s, left: s.sub_end ? Math.ceil((new Date(s.sub_end + 'T23:59:59').getTime() - Date.now()) / 86400000) : null }))
+        .map((s: any) => ({ ...s, left: daysLeft(s.sub_end) }))
         .filter((s: any) => s.status === 'active' && s.left !== null && s.left <= 7);
     }
-    // groups with no permission in the last day that are still in a distribution list
-    const np = await sb()
-      .from('campaign_targets')
-      .select('wa_group_id, campaign_id, sent_at, claimed_at')
-      .in('status', ['skipped', 'failed'])
-      .ilike('error', '%הרשאה%')
-      .gte('claimed_at', new Date(Date.now() - 86400000).toISOString())
-      .order('claimed_at', { ascending: false })
-      .limit(500);
-    const npIds = [...new Set((np.data || []).map((r: any) => r.wa_group_id))];
-    let noPerm = { count: 0, campaign: null as string | null };
-    if (npIds.length) {
-      const { data: listed } = await allRows(() => sb().from('list_groups').select('wa_group_id').in('wa_group_id', npIds).order('wa_group_id').order('list_id'));
-      const still = new Set((listed || []).map((r: any) => r.wa_group_id));
-      noPerm = { count: still.size, campaign: (np.data || []).find((r: any) => still.has(r.wa_group_id))?.campaign_id || null };
-    }
 
-    const perArm: Record<string, number> = {};
-    const distinct = new Set<string>();
-    const reachable = new Set<string>();
-    const armRows = arms.data || [];
-    const liveArm = new Set(armRows.filter((a: any) => a.is_active && a.status === 'online').map((a: any) => a.id));
-    for (const g of groups.data || []) {
-      perArm[g.arm_id] = (perArm[g.arm_id] || 0) + 1;
-      distinct.add(g.wa_group_id);
-      if (liveArm.has(g.arm_id)) reachable.add(g.wa_group_id);
-    }
     const tr = todayRides.data || [];
-    const today2 = {
-      rides: tr.length,
-      sent: tr.reduce((n: number, c: any) => n + (c.sent || 0), 0),
-      failed: tr.reduce((n: number, c: any) => n + (c.failed || 0), 0),
-      total: tr.reduce((n: number, c: any) => n + (c.total || 0), 0),
-    };
     setD({
-      arms: armRows,
-      perArm,
-      groupCount: distinct.size,
-      groupsReachable: reachable.size,
-      today2,
-      sentToday: armRows.reduce((s: number, a: any) => s + (a.sent_day === today ? a.sent_today : 0), 0),
-      sentTotal: armRows.reduce((s: number, a: any) => s + Number(a.sent_total || 0), 0),
+      arms: arms.data || [],
+      today: {
+        rides: tr.length,
+        sent: tr.reduce((n: number, c: any) => n + (c.sent || 0), 0),
+        failed: tr.reduce((n: number, c: any) => n + (c.failed || 0), 0),
+      },
       active: active.data || [],
       pendingPhone: pendingPhone.count || 0,
       recentFailed: recentFailed.count || 0,
       log: log.data || [],
-      noPerm,
       stationAlerts,
       health,
       armRequests,
       delivery,
-      engineDown: isSuper && !station?.acting && engineSeen && Date.now() - new Date(engineSeen).getTime() > 3 * 60_000 ? engineSeen : null,
+      engineDown: ownerView && engineSeen && Date.now() - new Date(engineSeen).getTime() > 3 * 60_000 ? engineSeen : null,
     });
-  }, [can, isSuper, station?.acting]);
+  }, [can, ownerView]);
+
+  // the group picture is heavier to read (a station can have 1,500 groups), so once a minute, not every 5 seconds
+  const loadProblems = useCallback(async () => {
+    const [pr, groups, flags, listed] = await Promise.all([
+      sb().rpc('group_problems', { p_hours: 48 }),
+      allGroups('arm_id,wa_group_id'),
+      allRows(() => sb().from('group_flags').select('wa_group_id,include_anyway,disabled').order('wa_group_id')).catch(() => ({ data: [] as any[] })),
+      allRows(() => sb().from('list_groups').select('wa_group_id,list_id').order('list_id').order('wa_group_id')),
+    ]);
+    const rows = pr.error ? [] : (pr.data as any[]) || [];
+    setProblems({
+      index: indexProblems(rows),
+      rows,
+      groups: groups.data || [],
+      flags: new Map((flags.data || []).map((f: any) => [f.wa_group_id, f])),
+      listed: new Set((listed.data || []).map((r: any) => r.wa_group_id as string)),
+    });
+  }, []);
 
   useEffect(() => {
     load();
-  }, [load]);
+    loadProblems();
+    const iv = setInterval(loadProblems, 60_000);
+    return () => clearInterval(iv);
+  }, [load, loadProblems]);
   useRealtime(['arms', 'campaigns', 'activity_log'], load);
 
-  if (!d) return <Spinner />;
-
-  const online = d.arms.filter((a: any) => a.status === 'online').length;
-  const problems = d.arms.filter((a: any) => ['offline', 'error'].includes(a.status) || (a.status === 'pending' && a.last_error));
   const hour = new Date().getHours();
   const hello = hour < 12 ? 'בוקר טוב' : hour < 18 ? 'צהריים טובים' : 'ערב טוב';
+  const firstName = profile?.full_name ? profile.full_name.split(' ')[0] : '';
+
+  // ---- header: the station's roof sign, or BotiX for the system owner ----
+  const subLeft = daysLeft(brand?.sub_end ?? station?.sub_end);
+  const subEnded = !!station && !station.is_home && (station.status !== 'active' || (subLeft !== null && subLeft < 0));
+  const sendBtn = can('operator') && (
+    <Link href="/send">
+      <Button>
+        <Send className="h-4 w-4" />
+        שליחת הודעה
+      </Button>
+    </Link>
+  );
+  const header = ownerView ? (
+    <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+      <div className="flex items-center gap-3">
+        <BrandMark size={48} />
+        <div>
+          <h1 className="text-[26px] font-bold leading-tight tracking-tight text-slate-900">
+            שלום{firstName ? `, ${firstName}` : ''}
+          </h1>
+          <p className="text-[15px] text-slate-500">{hello} – תמונת המצב של כל המערכת</p>
+        </div>
+      </div>
+      {sendBtn}
+    </div>
+  ) : (
+    <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+      <StationSign
+        name={brand?.name || station?.name || 'התחנה'}
+        logo={brand?.logo_data}
+        status={
+          <span className={cx('flex items-center gap-2 font-medium', subEnded ? 'text-rose-700' : 'text-slate-800')}>
+            <Lamp tone={subEnded ? 'red' : 'green'} pulse={!subEnded} />
+            {subEnded ? 'המנוי הסתיים – הבוט לא מטפל בהודעות' : 'התחנה פעילה'}
+          </span>
+        }
+        sub={
+          station && !station.is_home && !subEnded ? (
+            subLeft === null ? (
+              <Badge tone="green">מנוי פעיל</Badge>
+            ) : (
+              <Link href="/subscription">
+                <Badge tone={subLeft <= 7 ? 'amber' : 'slate'}>
+                  {subLeft === 0 ? 'המנוי מסתיים היום' : `נותרו ${subLeft} ימים למנוי`}
+                </Badge>
+              </Link>
+            )
+          ) : null
+        }
+      />
+      {sendBtn}
+    </div>
+  );
+
+  if (!d || !problems)
+    return (
+      <>
+        {header}
+        <div className="space-y-4" role="status" aria-label="טוען">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            {[0, 1, 2, 3].map((i) => (
+              <Skeleton key={i} className="h-28 rounded-2xl" />
+            ))}
+          </div>
+          <Skeleton className="h-40 rounded-2xl" />
+          <Skeleton className="h-64 rounded-2xl" />
+        </div>
+      </>
+    );
+
+  // ---- derived, from real data only ----
+  const armById: Record<string, any> = Object.fromEntries(d.arms.map((a: any) => [a.id, a]));
+  const twoHours = Date.now() - 2 * 3600_000;
+  const failedByArm: Record<string, number> = {};
+  for (const p of problems.rows)
+    if (p.arm_id && p.reason === 'send_error' && new Date(p.last_at).getTime() > twoHours) failedByArm[p.arm_id] = (failedByArm[p.arm_id] || 0) + (p.n || 1);
+  const health = d.arms.map((a: any) => armHealth(a, { failedRecent: failedByArm[a.id] }));
+  const online = d.arms.filter((a: any) => a.is_active && a.status === 'online').length;
+
+  const byGroup = new Map<string, { id: string; armIds: string[] }>();
+  const perArm: Record<string, number> = {};
+  const listed = problems.listed;
+  for (const g of problems.groups) {
+    perArm[g.arm_id] = (perArm[g.arm_id] || 0) + 1;
+    const r = byGroup.get(g.wa_group_id) || { id: g.wa_group_id, armIds: [] };
+    r.armIds.push(g.arm_id);
+    byGroup.set(g.wa_group_id, r);
+  }
+  for (const id of listed) if (!byGroup.has(id)) byGroup.set(id, { id, armIds: [] });
+  let gOk = 0;
+  let gBad = 0;
+  let listedNoPerm = 0;
+  let listedBad = 0;
+  const index = problems.index;
+  for (const g of byGroup.values()) {
+    const f = problems.flags.get(g.id);
+    const reason = groupReason(g, armById, index, !!f?.disabled, null);
+    if (!reason) gOk++;
+    else if (reason !== 'disabled') {
+      gBad++;
+      if (listed.has(g.id) && !f?.include_anyway) {
+        if (reason === 'no_permission') listedNoPerm++;
+        else listedBad++;
+      }
+    }
+  }
+  const gTotal = gOk + gBad;
+  const done = d.today.sent + d.today.failed;
+  const rate = done > 0 ? Math.round((d.today.sent / done) * 100) : null;
+
+  // ---- "needs attention" ----
+  const alerts: Alert[] = [];
+  if (d.engineDown)
+    alerts.push({ key: 'engine', tone: 'red', text: <>המנוע לא דיווח מאז {fmtTime(d.engineDown)} – ייתכן שהשרת נפל. בדוק ב-Railway.</> });
+  d.arms.forEach((a: any, i: number) => {
+    const h = health[i];
+    if (h.level === 'ok' || a.status === 'connecting') return;
+    alerts.push({
+      key: `arm${a.id}`,
+      tone: h.tone,
+      text: (
+        <>
+          <b className="font-semibold">{a.name}</b> – {h.title}. {h.action || h.explain}
+        </>
+      ),
+      href: can('admin') ? '/arms' : undefined,
+      cta: 'לטיפול',
+    });
+  });
+  if (subLeft !== null && subLeft >= 0 && subLeft <= 7 && station && !station.is_home && !ownerView)
+    alerts.push({
+      key: 'sub',
+      tone: 'amber',
+      text: subLeft === 0 ? 'המנוי מסתיים היום. בלי חידוש הבוט יפסיק לטפל בהודעות.' : `המנוי מסתיים בעוד ${subLeft} ימים. בלי חידוש הבוט יפסיק לטפל בהודעות.`,
+      href: can('admin') ? '/subscription' : undefined,
+      cta: 'לחידוש',
+    });
+  if (d.pendingPhone > 0)
+    alerts.push({ key: 'phone', tone: 'amber', text: `${d.pendingPhone} בקשות עזרה ממתינות למספר טלפון`, href: '/dispatchers', cta: 'להשלמה' });
+  if (listedNoPerm > 0)
+    alerts.push({
+      key: 'noperm',
+      tone: 'amber',
+      text: `ב-${listedNoPerm} קבוצות שברשימות ההפצה אין לזרוע הרשאה לשלוח (רק מנהלים)`,
+      href: '/groups?show=bad',
+      cta: 'לבדיקה והסרה',
+    });
+  if (listedBad > 0)
+    alerts.push({ key: 'gbad', tone: 'amber', text: `${listedBad} קבוצות ברשימות ההפצה לא זמינות ולא יקבלו נסיעות`, href: '/groups?show=bad', cta: 'לבדיקה' });
+  if (d.recentFailed > 0) alerts.push({ key: 'failed', tone: 'red', text: `${d.recentFailed} שליחות נכשלו ב-24 השעות האחרונות`, href: '/history', cta: 'לפרטים' });
+  for (const r of d.armRequests)
+    alerts.push({
+      key: `rq${r.id}`,
+      tone: 'sky',
+      text: (
+        <>
+          תחנה <b className="font-semibold">{r.station_name}</b> מבקשת עוד {r.count} {r.count === 1 ? 'זרוע' : 'זרועות'}
+        </>
+      ),
+      href: '/billing',
+      cta: 'לאישור',
+    });
+  d.health
+    .filter((r: any) => r.station_id !== station?.id)
+    .forEach((r: any, i: number) =>
+      alerts.push({
+        key: `h${i}`,
+        tone: 'red',
+        text: (
+          <>
+            תחנה <b className="font-semibold">{r.station_name}</b>
+            {r.arm_id ? ` – ${r.arm_name}: ${ARM_STATUS[r.arm_status]?.label || r.arm_status}` : ''}
+            {r.failed_hour > 0 ? ` – ${r.failed_hour} שליחות נכשלו בשעה האחרונה` : ''}
+          </>
+        ),
+        href: '/stations',
+        cta: 'לתחנות',
+      }),
+    );
+  for (const s of d.stationAlerts)
+    alerts.push({
+      key: `s${s.id}`,
+      tone: s.left < 0 ? 'red' : 'amber',
+      text: (
+        <>
+          מנוי התחנה <b className="font-semibold">{s.name}</b> {s.left < 0 ? 'הסתיים – הגישה חסומה' : s.left === 0 ? 'מסתיים היום' : `מסתיים בעוד ${s.left} ימים`}
+        </>
+      ),
+      href: '/billing',
+      cta: 'למנויים',
+    });
 
   return (
     <>
-      <PageHeader
-        title={`${hello}${profile?.full_name ? ', ' + profile.full_name.split(' ')[0] : ''}`}
-        subtitle="תמונת מצב בזמן אמת"
-        actions={
-          can('operator') && (
-            <Link href="/send">
-              <Button>
-                <Send className="h-4 w-4" />
-                שליחת הודעה
-              </Button>
-            </Link>
-          )
-        }
-      />
+      {header}
 
+      {/* KPIs */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4">
-        <Stat label="זרועות מחוברות" value={`${online}/${d.arms.length}`} icon={<Smartphone className="h-5 w-5" />} tone="green" />
+        <Stat
+          label="זרועות מחוברות"
+          value={`${online}/${d.arms.length}`}
+          sub={d.arms.length === 0 ? 'עדיין לא חוברו זרועות' : online === d.arms.length ? 'כולן מחוברות' : `${d.arms.length - online} לא מחוברות`}
+          icon={<Smartphone className="h-5 w-5" />}
+          tone={d.arms.length && online === d.arms.length ? 'green' : online === 0 ? 'red' : 'amber'}
+          href={can('admin') ? '/arms' : undefined}
+        />
         <Stat
           label="קבוצות זמינות"
-          value={`${d.groupsReachable}/${d.groupCount}`}
-          sub={d.groupCount - d.groupsReachable > 0 ? `${d.groupCount - d.groupsReachable} בלי זרוע מחוברת` : 'כולן עם זרוע מחוברת'}
+          value={`${gOk.toLocaleString('he-IL')}/${gTotal.toLocaleString('he-IL')}`}
+          sub={gBad > 0 ? `${gBad.toLocaleString('he-IL')} לא זמינות` : gTotal ? 'כולן זמינות' : 'אין קבוצות עדיין'}
           icon={<UsersRound className="h-5 w-5" />}
-          tone="sky"
+          tone={gBad > 0 ? 'amber' : 'sky'}
+          href={can('operator') ? (gBad > 0 ? '/groups?show=bad' : '/groups') : undefined}
         />
-        <Stat label="נשלחו היום" value={d.sentToday} sub={`סה״כ ${d.sentTotal.toLocaleString('he-IL')}`} icon={<Send className="h-5 w-5" />} tone="violet" />
-        <Stat label="הפצות פעילות" value={d.active.length} icon={<Radio className="h-5 w-5" />} tone="pink" />
+        <Stat
+          label="נסיעות היום"
+          value={d.today.rides.toLocaleString('he-IL')}
+          sub={d.active.length ? `${d.active.length} בהפצה עכשיו` : 'אין הפצה פעילה כרגע'}
+          icon={<Route className="h-5 w-5" />}
+          tone="violet"
+          href="/history"
+        />
+        <Stat
+          label="נשלחו היום"
+          value={d.today.sent.toLocaleString('he-IL')}
+          sub={
+            done > 0 ? (
+              <span className={d.today.failed ? 'text-rose-700' : undefined}>
+                {d.today.failed.toLocaleString('he-IL')} לא נשלחו · {rate}% הצלחה
+              </span>
+            ) : (
+              'עדיין לא נשלחו הודעות היום'
+            )
+          }
+          icon={<Send className="h-5 w-5" />}
+          tone={d.today.failed > 0 && rate !== null && rate < 90 ? 'red' : 'green'}
+        />
       </div>
 
-      <TodayStrip t={d.today2} station={station} isSuper={isSuper} />
+      {/* needs attention */}
+        <div className="mt-4">
+          {alerts.length === 0 ? (
+            <Card className="flex items-center gap-3 px-5 py-4">
+              <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600" />
+              <div>
+                <div className="font-medium text-slate-900">הכול תקין</div>
+                <div className="text-sm text-slate-500">אין כרגע שום דבר שדורש טיפול.</div>
+              </div>
+            </Card>
+          ) : (
+            <Section
+              title={`דורש תשומת לב (${alerts.length})`}
+              icon={<BellRing className="h-4 w-4" />}
+            >
+              <ul className="divide-y divide-slate-100">
+                {alerts.map((a) => (
+                  <li key={a.key}>
+                    {a.href ? (
+                      <Link href={a.href} className="flex items-center gap-3 px-5 py-3.5 transition hover:bg-slate-50">
+                        <Lamp tone={a.tone} />
+                        <span className="min-w-0 flex-1 text-sm leading-relaxed text-slate-800">{a.text}</span>
+                        <span className="flex shrink-0 items-center text-sm font-medium text-indigo-600">
+                          {a.cta}
+                          <ChevronLeft className="h-4 w-4" />
+                        </span>
+                      </Link>
+                    ) : (
+                      <div className="flex items-center gap-3 px-5 py-3.5">
+                        <Lamp tone={a.tone} />
+                        <span className="min-w-0 flex-1 text-sm leading-relaxed text-slate-800">{a.text}</span>
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </Section>
+          )}
+        </div>
 
-      {d.delivery.length > 0 && <DeliveryMonitor rows={d.delivery} />}
-
-      {(problems.length > 0 || d.pendingPhone > 0 || d.recentFailed > 0 || d.noPerm.count > 0 || d.stationAlerts.length > 0 || d.health.length > 0 || d.engineDown || d.armRequests.length > 0) && (
-        <Card className="mt-4 border-amber-200 bg-amber-50/60 p-4">
-          <div className="mb-2 flex items-center gap-2 font-semibold text-amber-900">
-            <AlertTriangle className="h-4 w-4" />
-            דורש תשומת לב
-          </div>
-          <ul className="space-y-1.5 text-sm text-amber-900">
-            {problems.map((a: any) => (
-              <li key={a.id}>
-                <Link href="/arms" className="hover:underline">
-                  <b>{a.name}</b> – {ARM_STATUS[a.status]?.label}
-                  {a.last_error ? `: ${a.last_error}` : ''}
-                </Link>
-              </li>
-            ))}
-            {d.pendingPhone > 0 && (
-              <li>
-                <Link href="/dispatchers" className="hover:underline">
-                  {d.pendingPhone} בקשות עזרה ממתינות למספר טלפון
-                </Link>
-              </li>
-            )}
-            {d.armRequests.map((r: any) => (
-              <li key={`r${r.id}`}>
-                <Link href="/billing" className="font-medium hover:underline">
-                  תחנה <b>{r.station_name}</b> מבקשת עוד {r.count} {r.count === 1 ? 'זרוע' : 'זרועות'} – לאישור
-                </Link>
-              </li>
-            ))}
-            {d.engineDown && (
-              <li className="font-semibold text-rose-700">המנוע לא דיווח מאז {fmtTime(d.engineDown)} – ייתכן שהשרת נפל. בדוק ב-Railway.</li>
-            )}
-            {d.health
-              .filter((r: any) => r.station_id !== station?.id)
-              .map((r: any, i: number) => (
-                <li key={`h${i}`}>
-                  <Link href="/stations" className="hover:underline">
-                    תחנה <b>{r.station_name}</b>
-                    {r.arm_id ? ` – ${r.arm_name}: ${ARM_STATUS[r.arm_status]?.label || r.arm_status}${r.arm_error ? ` (${r.arm_error})` : ''}` : ''}
-                    {r.failed_hour > 0 ? ` – ${r.failed_hour} שליחות נכשלו בשעה האחרונה` : ''}
-                  </Link>
-                </li>
-              ))}
-            {d.stationAlerts.map((s: any) => (
-              <li key={s.id}>
-                <Link href="/stations" className="hover:underline">
-                  מנוי התחנה <b>{s.name}</b> {s.left < 0 ? 'הסתיים – הגישה חסומה' : s.left === 0 ? 'מסתיים היום' : `מסתיים בעוד ${s.left} ימים`}
-                </Link>
-              </li>
-            ))}
-            {d.recentFailed > 0 && <li>{d.recentFailed} שליחות נכשלו ב-24 השעות האחרונות</li>}
-            {d.noPerm.count > 0 && d.noPerm.campaign && (
-              <li>
-                <Link href={`/history/${d.noPerm.campaign}`} className="font-medium hover:underline">
-                  ב-{d.noPerm.count} קבוצות שברשימות ההפצה אין לזרוע הרשאה לשלוח – לבדיקה והסרה
-                </Link>
-              </li>
-            )}
-          </ul>
-        </Card>
-      )}
+      {ownerView && d.delivery.length > 0 && <DeliveryMonitor rows={d.delivery} />}
 
       <div className="mt-4 grid gap-4 lg:grid-cols-5">
-        <Card className="lg:col-span-3">
-          <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-            <h2 className="font-semibold">הפצות פעילות</h2>
+        <Section
+          className="lg:col-span-3"
+          title="הפצות פעילות"
+          icon={<Radio className="h-4 w-4" />}
+          action={
             <Link href="/history" className="flex items-center text-sm font-medium text-indigo-600">
-              לכל ההיסטוריה <ChevronLeft className="h-4 w-4" />
+              להיסטוריה <ChevronLeft className="h-4 w-4" />
             </Link>
-          </div>
+          }
+        >
           {d.active.length === 0 ? (
-            <div className="px-5 py-10 text-center text-sm text-slate-500">אין הפצות פעילות כרגע</div>
+            <div className="px-5 py-10 text-center text-sm text-slate-500">
+              אין הפצות פעילות כרגע.
+              {can('operator') && (
+                <>
+                  {' '}
+                  <Link href="/send" className="font-medium text-indigo-600 hover:underline">
+                    שליחת הודעה
+                  </Link>
+                </>
+              )}
+            </div>
           ) : (
             <ul className="divide-y divide-slate-100">
               {d.active.map((c: any) => (
                 <li key={c.id}>
-                  <Link href={`/history/${c.id}`} className="block px-5 py-3.5 hover:bg-slate-50">
+                  <Link href={`/history/${c.id}`} className="block px-5 py-3.5 transition hover:bg-slate-50">
                     <div className="mb-2 flex items-center justify-between gap-3">
-                      <div className="min-w-0 truncate text-sm font-medium">{firstLine(c.message_text)}</div>
+                      <div className="min-w-0 truncate text-sm font-medium text-slate-900">{firstLine(c.message_text)}</div>
                       <Badge tone={CAMPAIGN_STATUS[c.status]?.tone} dot>
                         {CAMPAIGN_STATUS[c.status]?.label}
                       </Badge>
                     </div>
                     <Progress sent={c.sent} failed={c.failed} total={c.total} />
                     <div className="mt-1.5 flex justify-between text-xs text-slate-500">
-                      <span>
+                      <span className="tabular-nums">
                         {c.sent + c.failed}/{c.total} · {KIND_LABEL[c.kind] || c.kind}
                       </span>
                       <span>{fmtTime(c.created_at)}</span>
@@ -252,109 +443,93 @@ export default function Dashboard() {
               ))}
             </ul>
           )}
-        </Card>
+        </Section>
 
-        <Card className="lg:col-span-2">
-          <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-            <h2 className="font-semibold">זרועות</h2>
-            {can('admin') && (
+        <Section
+          className="lg:col-span-2"
+          title="זרועות"
+          icon={<Smartphone className="h-4 w-4" />}
+          action={
+            can('admin') && (
               <Link href="/arms" className="flex items-center text-sm font-medium text-indigo-600">
                 ניהול <ChevronLeft className="h-4 w-4" />
               </Link>
-            )}
-          </div>
+            )
+          }
+        >
           {d.arms.length === 0 ? (
-            <div className="px-5 py-10 text-center text-sm text-slate-500">עדיין לא חוברו זרועות</div>
+            <Empty
+              icon={<Smartphone className="h-6 w-6" />}
+              title="עדיין לא חוברו זרועות"
+              text="זרוע היא מספר WhatsApp ששולח את הנסיעות לקבוצות."
+              action={
+                can('admin') && (
+                  <Link href="/arms">
+                    <Button size="sm">חיבור זרוע ראשונה</Button>
+                  </Link>
+                )
+              }
+            />
           ) : (
             <ul className="divide-y divide-slate-100">
-              {d.arms.map((a: any) => (
-                <li key={a.id} className="flex items-center justify-between gap-3 px-5 py-3">
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-medium">{a.name}</div>
-                    <div className="text-xs text-slate-500" dir="ltr">
-                      {a.phone || '—'}
+              {d.arms.map((a: any, i: number) => {
+                const h = health[i];
+                return (
+                  <li key={a.id} className="flex items-start gap-3 px-5 py-3.5">
+                    <span className="mt-1.5">
+                      <Lamp tone={h.tone} />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="truncate text-sm font-medium text-slate-900">{a.name}</span>
+                        <span className="shrink-0 text-xs tabular-nums text-slate-500">{(perArm[a.id] || 0).toLocaleString('he-IL')} קבוצות</span>
+                      </div>
+                      <div className={cx('text-xs', h.level === 'ok' ? 'text-slate-500' : h.level === 'bad' ? 'text-rose-700' : 'text-amber-800')}>
+                        {h.title}
+                        {a.phone && (
+                          <span className="text-slate-400" dir="ltr">
+                            {' · '}
+                            {a.phone}
+                          </span>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-3">
-                    <span className="text-xs text-slate-500">{d.perArm[a.id] || 0} קבוצות</span>
-                    <Badge tone={ARM_STATUS[a.status]?.tone} dot>
-                      {ARM_STATUS[a.status]?.label}
-                    </Badge>
-                  </div>
-                </li>
-              ))}
+                  </li>
+                );
+              })}
             </ul>
           )}
-        </Card>
+        </Section>
       </div>
 
       {can('admin') && (
-        <Card className="mt-4">
-          <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-            <h2 className="flex items-center gap-2 font-semibold">
-              <Activity className="h-4 w-4 text-indigo-500" />
-              פעילות אחרונה
-            </h2>
+        <Section
+          className="mt-4"
+          title="פעילות אחרונה"
+          icon={<Activity className="h-4 w-4" />}
+          action={
             <Link href="/settings#log" className="flex items-center text-sm font-medium text-indigo-600">
               ליומן המלא <ChevronLeft className="h-4 w-4" />
             </Link>
-          </div>
+          }
+        >
           {d.log.length === 0 ? (
-            <div className="px-5 py-8 text-center text-sm text-slate-500">אין פעילות עדיין</div>
+            <div className="px-5 py-8 text-center text-sm text-slate-500">עדיין אין פעילות. פעולות במערכת יופיעו כאן.</div>
           ) : (
             <ul className="divide-y divide-slate-100">
               {d.log.map((l: any) => (
                 <li key={l.id} className="flex items-center justify-between gap-3 px-5 py-3 text-sm">
-                  <span className="min-w-0 truncate">
-                    <b className="font-medium">{l.actor_name || 'מערכת'}</b> · {ACTION_LABEL[l.action] || l.action}
+                  <span className="min-w-0 truncate text-slate-700">
+                    <b className="font-medium text-slate-900">{l.actor_name || 'מערכת'}</b> · {ACTION_LABEL[l.action] || l.action}
                   </span>
                   <span className="shrink-0 text-xs text-slate-500">{timeAgo(l.created_at)}</span>
                 </li>
               ))}
             </ul>
           )}
-        </Card>
+        </Section>
       )}
     </>
-  );
-}
-
-// Today at a glance: rides, how the sends ended, and the station's subscription
-function TodayStrip({ t, station, isSuper }: { t: { rides: number; sent: number; failed: number; total: number }; station: any; isSuper: boolean }) {
-  const done = t.sent + t.failed;
-  const rate = done > 0 ? Math.round((t.sent / done) * 100) : null;
-  let sub: { text: string; tone: 'green' | 'amber' | 'red' | 'slate' } | null = null;
-  if (station && !station.is_home && !(isSuper && !station.acting)) {
-    if (!station.sub_end) sub = { text: 'מנוי פעיל', tone: 'green' };
-    else {
-      const left = Math.ceil((new Date(station.sub_end + 'T23:59:59').getTime() - Date.now()) / 86400000);
-      const end = new Date(station.sub_end).toLocaleDateString('he-IL');
-      if (left < 0) sub = { text: `המנוי הסתיים ב-${end}`, tone: 'red' };
-      else if (left <= 7) sub = { text: left === 0 ? 'המנוי מסתיים היום' : `המנוי מסתיים בעוד ${left} ימים (${end})`, tone: 'amber' };
-      else sub = { text: `מנוי פעיל עד ${end}`, tone: 'green' };
-    }
-  }
-  return (
-    <Card className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-2 p-4 text-sm">
-      <span className="font-semibold">היום</span>
-      <span>
-        <b>{t.rides}</b> נסיעות
-      </span>
-      <span className="text-emerald-700">
-        <b>{t.sent.toLocaleString('he-IL')}</b> נשלחו לקבוצות
-      </span>
-      <span className={t.failed > 0 ? 'text-rose-700' : 'text-slate-500'}>
-        <b>{t.failed.toLocaleString('he-IL')}</b> לא נשלחו
-      </span>
-      {rate !== null && <span className="text-slate-500">{rate}% הצלחה</span>}
-      {sub && (
-        <span className="ms-auto">
-          <Badge tone={sub.tone} dot>
-            {sub.text}
-          </Badge>
-        </span>
-      )}
-    </Card>
   );
 }
 
@@ -364,43 +539,57 @@ function DeliveryMonitor({ rows }: { rows: any[] }) {
   const pct = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 1000) / 10 : 0);
   const lostTotal = rows.reduce((n, r) => n + (r.lost_hour || 0), 0);
   return (
-    <Card className="mt-4 p-4">
-      <div className="mb-3 flex items-center gap-2 font-semibold">
-        <Activity className="h-4 w-4" />
-        מסירת הודעות – שעה אחרונה
-        {lostTotal > 0 ? (
-          <Badge tone="red">{lostTotal} לא תוקנו</Badge>
-        ) : (
-          <Badge tone="green">תקין</Badge>
-        )}
-      </div>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[560px] text-sm">
+    <Section
+      className="mt-4"
+      title="מסירת הודעות – שעה אחרונה"
+      icon={<Activity className="h-4 w-4" />}
+      action={lostTotal > 0 ? <Badge tone="red" dot>{lostTotal} לא תוקנו</Badge> : <Badge tone="green" dot>תקין</Badge>}
+    >
+      {/* mobile: stacked */}
+      <ul className="divide-y divide-slate-100 md:hidden">
+        {rows.map((r) => (
+          <li key={r.arm_id} className="px-5 py-3 text-sm">
+            <div className="flex items-center justify-between gap-2">
+              <span className="truncate font-medium text-slate-900">{r.arm_name}</span>
+              <span className="truncate text-xs text-slate-500">{r.station_name}</span>
+            </div>
+            <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs tabular-nums text-slate-600">
+              <span>{r.sent_hour} נשלחו</span>
+              <span className={r.failed_hour > 0 ? 'text-amber-800' : ''}>{r.failed_hour} לא פוענחו</span>
+              <span>{r.resent_hour} נשלחו שוב</span>
+              <span className={r.lost_hour > 0 ? 'font-semibold text-rose-700' : ''}>{r.lost_hour} נשארו בהמתנה</span>
+            </div>
+          </li>
+        ))}
+      </ul>
+      {/* desktop: table */}
+      <div className="hidden overflow-x-auto px-5 py-2 md:block">
+        <table className="w-full text-sm">
           <thead className="text-xs text-slate-500">
             <tr className="text-right">
-              <th className="py-1 font-medium">זרוע</th>
-              <th className="py-1 font-medium">נשלחו</th>
-              <th className="py-1 font-medium">לא פוענחו אצל מקבלים</th>
-              <th className="py-1 font-medium">נשלחו שוב</th>
-              <th className="py-1 font-medium">נשארו "בהמתנה"</th>
-              <th className="py-1 font-medium">נכנסות שלא פוענחו</th>
-              <th className="py-1 font-medium">24 שעות</th>
+              <th className="py-2 font-medium">זרוע</th>
+              <th className="py-2 font-medium">נשלחו</th>
+              <th className="py-2 font-medium">לא פוענחו אצל מקבלים</th>
+              <th className="py-2 font-medium">נשלחו שוב</th>
+              <th className="py-2 font-medium">נשארו בהמתנה</th>
+              <th className="py-2 font-medium">נכנסות שלא פוענחו</th>
+              <th className="py-2 font-medium">24 שעות</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className="tabular-nums">
             {rows.map((r) => (
               <tr key={r.arm_id} className="border-t border-slate-100">
-                <td className="py-1.5">
-                  <b>{r.arm_name}</b>
+                <td className="py-2">
+                  <b className="font-medium text-slate-900">{r.arm_name}</b>
                   <div className="text-xs text-slate-500">{r.station_name}</div>
                 </td>
                 <td>{r.sent_hour}</td>
-                <td className={r.failed_hour > 0 ? 'text-amber-700' : ''}>
+                <td className={r.failed_hour > 0 ? 'text-amber-800' : ''}>
                   {r.failed_hour} {r.devices_hour ? <span className="text-xs text-slate-500">({r.devices_hour} מכשירים)</span> : null}
                 </td>
                 <td>{r.resent_hour}</td>
-                <td className={r.lost_hour > 0 ? 'font-semibold text-red-700' : ''}>{r.lost_hour}</td>
-                <td className={r.undecrypted_hour > 0 ? 'text-amber-700' : ''}>{r.undecrypted_hour}</td>
+                <td className={r.lost_hour > 0 ? 'font-semibold text-rose-700' : ''}>{r.lost_hour}</td>
+                <td className={r.undecrypted_hour > 0 ? 'text-amber-800' : ''}>{r.undecrypted_hour}</td>
                 <td className="text-xs text-slate-500">
                   {r.failed_day} תקלות · {r.resent_day} תוקנו · {pct(r.lost_day, r.failed_day)}% נשארו
                 </td>
@@ -409,6 +598,6 @@ function DeliveryMonitor({ rows }: { rows: any[] }) {
           </tbody>
         </table>
       </div>
-    </Card>
+    </Section>
   );
 }

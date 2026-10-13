@@ -1,13 +1,14 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Plus, QrCode, Power, PlugZap, RefreshCw, Trash2, Pencil, Smartphone, Loader2 } from 'lucide-react';
+import { Plus, QrCode, Power, PlugZap, RefreshCw, Trash2, Pencil, Smartphone, Loader2, Flame, ChevronDown, Gauge } from 'lucide-react';
 import { sb, logAct } from '@/lib/supabase';
 import { useRealtime } from '@/lib/hooks';
 import { useAuth, myUid } from '@/lib/auth';
-import { ARM_STATUS, timeAgo } from '@/lib/format';
+import { timeAgo } from '@/lib/format';
+import { armHealth, limitReached, type ArmHealth } from '@/lib/armHealth';
 import { RequireRole } from '@/components/Shell';
-import { Badge, Button, Card, Empty, Field, Input, Modal, PageHeader, Select, Spinner, Textarea, Toggle, toast } from '@/components/ui';
+import { Badge, Button, Card, Empty, Field, Input, Lamp, Modal, PageHeader, Select, Skeleton, Textarea, Toggle, ask, cx, toast } from '@/components/ui';
 import { useInbox } from '@/components/StationInbox';
 import { allGroups } from '@/lib/allRows';
 
@@ -27,6 +28,13 @@ export default function ArmsPage() {
   );
 }
 
+const HEALTH_BOX: Record<ArmHealth['level'], string> = {
+  ok: 'bg-emerald-50/70 ring-emerald-600/15',
+  warn: 'bg-amber-50/80 ring-amber-600/20',
+  bad: 'bg-rose-50/80 ring-rose-600/20',
+  action: 'bg-sky-50/80 ring-sky-600/20',
+};
+
 function Arms() {
   const { profile, station } = useAuth();
   // stations have a number of arms in their plan; past it they ask the system owner for more
@@ -36,13 +44,14 @@ function Arms() {
   const [arms, setArms] = useState<any[] | null>(null);
   const [qr, setQr] = useState<Record<string, string>>({});
   const [groups, setGroups] = useState<Record<string, number>>({});
+  const [failed, setFailed] = useState<Record<string, number>>({});
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<any>(null);
 
   const load = useCallback(async () => {
     const [a, q, g] = await Promise.all([
-      sb().from('arms').select('*').order('created_at'),
-      sb().from('arm_qr').select('*'),
+      sb().from('arms').select('*').order('created_at'), // rows: bounded – the arms of one station
+      sb().from('arm_qr').select('*'), // rows: bounded – one QR per arm
       allGroups('arm_id'),
     ]);
     setArms(a.data || []);
@@ -52,9 +61,21 @@ function Arms() {
     setGroups(c);
   }, []);
 
+  // recent send errors per arm (last 2 hours, only those not fixed by a later send) – once a minute is enough
+  const loadFailed = useCallback(async () => {
+    const { data, error } = await sb().rpc('group_problems', { p_hours: 2 });
+    if (error) return;
+    const f: Record<string, number> = {};
+    for (const p of (data as any[]) || []) if (p.arm_id && p.reason === 'send_error') f[p.arm_id] = (f[p.arm_id] || 0) + (p.n || 1);
+    setFailed(f);
+  }, []);
+
   useEffect(() => {
     load();
-  }, [load]);
+    loadFailed();
+    const iv = setInterval(loadFailed, 60_000);
+    return () => clearInterval(iv);
+  }, [load, loadFailed]);
   useRealtime(['arms', 'arm_qr', 'groups'], load);
 
   async function command(arm: any, command: string, label: string) {
@@ -64,6 +85,8 @@ function Arms() {
   }
 
   async function setActive(arm: any, is_active: boolean) {
+    if (!is_active && !(await ask({ title: `לנתק את "${arm.name}"?`, text: 'הזרוע תפסיק לשלוח הודעות עד שתחבר אותה שוב. החיבור לטלפון נשמר.', ok: 'ניתוק' })))
+      return;
     const { error } = await sb()
       .from('arms')
       .update(is_active ? { is_active, status: 'connecting' } : { is_active })
@@ -74,167 +97,108 @@ function Arms() {
   }
 
   async function remove(arm: any) {
-    if (!confirm(`למחוק את "${arm.name}"? החיבור ל-WhatsApp יתנתק וההיסטוריה של הזרוע תישאר.`)) return;
+    if (
+      !(await ask({
+        title: `למחוק את "${arm.name}"?`,
+        text: 'החיבור ל-WhatsApp יתנתק וההיסטוריה של הזרוע תישאר.',
+        ok: 'מחיקת הזרוע',
+        danger: true,
+      }))
+    )
+      return;
     const { error } = await sb().from('arms').delete().eq('id', arm.id);
     if (error) return toast(error.message, 'error');
     await logAct('arm_deleted', 'arm', arm.id, { name: arm.name });
     toast('הזרוע נמחקה');
   }
 
-  if (!arms) return <Spinner />;
+  const header = (
+    <PageHeader
+      title="זרועות"
+      subtitle="כל זרוע היא מספר WhatsApp שמחובר לשרת 24/7 ושולח את הנסיעות לקבוצות"
+      actions={
+        arms &&
+        (atLimit ? (
+          inbox?.arm_request ? (
+            <Badge tone="amber">ביקשת עוד {inbox.arm_request.count} – ממתין לאישור מנהל המערכת</Badge>
+          ) : (
+            <Button onClick={() => setAsking(true)}>
+              <Plus className="h-4 w-4" />
+              בקשת זרוע נוספת
+            </Button>
+          )
+        ) : (
+          <Button onClick={() => setAdding(true)}>
+            <Plus className="h-4 w-4" />
+            הוספת זרוע
+          </Button>
+        ))
+      }
+    />
+  );
+
+  if (!arms)
+    return (
+      <>
+        {header}
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3" role="status" aria-label="טוען">
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="h-72 rounded-2xl" />
+          ))}
+        </div>
+      </>
+    );
+
+  const healths = arms.map((a) => armHealth(a, { failedRecent: failed[a.id], hasQr: !!qr[a.id] }));
+  const okCount = healths.filter((h) => h.level === 'ok').length;
 
   return (
     <>
-      <PageHeader
-        title="חיבור זרועות"
-        subtitle="כל זרוע היא מספר WhatsApp עצמאי שמחובר לשרת 24/7"
-        actions={
-          atLimit ? (
-            inbox?.arm_request ? (
-              <Badge tone="amber">ביקשת עוד {inbox.arm_request.count} – ממתין לאישור מנהל המערכת</Badge>
-            ) : (
-              <Button onClick={() => setAsking(true)}>
-                <Plus className="h-4 w-4" />
-                בקשת זרוע נוספת
-              </Button>
-            )
-          ) : (
-            <Button onClick={() => setAdding(true)}>
-              <Plus className="h-4 w-4" />
-              הוסף זרוע
-            </Button>
-          )
-        }
-      />
+      {header}
+
+      {arms.length > 0 && (
+        <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-600">
+          <span className="flex items-center gap-2">
+            <Lamp tone={okCount === arms.length ? 'green' : okCount === 0 ? 'red' : 'amber'} />
+            <b className="tabular-nums text-slate-900">
+              {okCount}/{arms.length}
+            </b>
+            זרועות פועלות כרגיל
+          </span>
+          {okCount < arms.length && <span className="text-slate-500">לכל זרוע עם בעיה מופיע מה לעשות</span>}
+        </div>
+      )}
 
       {arms.length === 0 ? (
         <Card>
           <Empty
             icon={<Smartphone className="h-7 w-7" />}
             title="עדיין אין זרועות"
-            text="הוסף זרוע, סרוק את קוד ה-QR מהטלפון (WhatsApp ← מכשירים מקושרים ← קישור מכשיר), והיא תתחבר."
+            text="הוסף זרוע, סרוק את קוד ה-QR מהטלפון (WhatsApp ← מכשירים מקושרים ← קישור מכשיר), והיא תתחבר ותתחיל לשלוח."
             action={
               <Button onClick={() => setAdding(true)}>
                 <Plus className="h-4 w-4" />
-                הוסף זרוע ראשונה
+                הוספת זרוע ראשונה
               </Button>
             }
           />
         </Card>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {arms.map((a, i) => {
-            const st = ARM_STATUS[a.status] || ARM_STATUS.pending;
-            const today = new Date().toISOString().slice(0, 10);
-            return (
-              <Card key={a.id} className="flex flex-col overflow-hidden">
-                <div className="flex items-start justify-between gap-3 p-5">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <div className="brand-gradient grid h-11 w-11 shrink-0 place-items-center rounded-xl font-bold text-white">{i + 1}</div>
-                    <div className="min-w-0">
-                      <div className="truncate font-semibold">{a.name}</div>
-                      <div className="text-sm text-slate-500" dir="ltr" style={{ textAlign: 'right' }}>
-                        {a.phone || 'לא מחובר'}
-                      </div>
-                    </div>
-                  </div>
-                  <Badge tone={st.tone} dot>
-                    {st.label}
-                  </Badge>
-                </div>
-
-                {a.status === 'qr' && qr[a.id] && (
-                  <div className="mx-5 mb-4 flex flex-col items-center rounded-2xl bg-slate-50 p-4">
-                    <div className="rounded-xl bg-white p-3 shadow-sm">
-                      <QRCodeSVG value={qr[a.id]} size={200} />
-                    </div>
-                    <p className="mt-3 text-center text-xs leading-relaxed text-slate-600">
-                      בטלפון: WhatsApp ← הגדרות ← מכשירים מקושרים ← קישור מכשיר, וסרוק את הקוד.
-                      <br />
-                      הקוד מתחלף אוטומטית.
-                    </p>
-                  </div>
-                )}
-                {(a.status === 'connecting' || (a.status === 'qr' && !qr[a.id])) && (
-                  <div className="mx-5 mb-4 flex items-center justify-center gap-2 rounded-2xl bg-slate-50 p-6 text-sm text-slate-500">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    מתחבר לשרת…
-                  </div>
-                )}
-                {warmupUntil(a) && (
-                  <div className="mx-5 mb-4 rounded-xl bg-sky-50 px-3 py-2 text-xs text-sky-900">
-                    🔥 בחימום עד {hhmm(warmupUntil(a)!)} – שולחת לאט (6 הודעות בדקה) כדי להגן על המספר
-                  </div>
-                )}
-                {a.last_error && a.status !== 'online' && (
-                  <div className="mx-5 mb-4 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-900">{a.last_error}</div>
-                )}
-
-                <dl className="mx-5 mb-4 grid grid-cols-3 gap-2 text-center">
-                  <div className="rounded-xl bg-slate-50 py-2">
-                    <dt className="text-[11px] text-slate-500">קבוצות</dt>
-                    <dd className="font-semibold tabular-nums">{groups[a.id] || 0}</dd>
-                  </div>
-                  <div className={`rounded-xl py-2 ${a.sent_day === today && a.sent_today >= a.daily_limit ? 'bg-rose-50' : 'bg-slate-50'}`}>
-                    <dt className="text-[11px] text-slate-500">היום</dt>
-                    <dd className="font-semibold tabular-nums">
-                      {a.sent_day === today ? a.sent_today : 0}
-                      <span className="text-xs font-normal text-slate-400">/{a.daily_limit >= 100000 ? '∞' : a.daily_limit}</span>
-                    </dd>
-                    {a.sent_day === today && a.sent_today >= a.daily_limit && (
-                      <div className="text-[11px] font-semibold text-rose-700">הגיעה למגבלה – לא שולחת</div>
-                    )}
-                  </div>
-                  <div className="rounded-xl bg-slate-50 py-2">
-                    <dt className="text-[11px] text-slate-500">סה״כ נשלחו</dt>
-                    <dd className="font-semibold tabular-nums">{Number(a.sent_total).toLocaleString('he-IL')}</dd>
-                  </div>
-                </dl>
-                <div className="mx-5 mb-4 text-xs text-slate-500">
-                  חיבור אחרון: {timeAgo(a.last_connected_at)} · נראתה לאחרונה: {timeAgo(a.last_seen_at)}
-                </div>
-
-                <div className="mt-auto flex flex-wrap gap-1.5 border-t border-slate-100 bg-slate-50/50 p-3">
-                  {a.is_active ? (
-                    <>
-                      <Button size="sm" variant="secondary" onClick={() => command(a, 'reset', 'מייצר QR חדש…')}>
-                        <QrCode className="h-4 w-4" />
-                        QR חדש
-                      </Button>
-                      {a.status === 'online' && (
-                        <Button size="sm" variant="secondary" onClick={() => command(a, 'refresh_groups', 'מרענן קבוצות…')}>
-                          <RefreshCw className="h-4 w-4" />
-                          רענן קבוצות
-                        </Button>
-                      )}
-                      {['offline', 'error'].includes(a.status) && (
-                        <Button size="sm" variant="secondary" onClick={() => command(a, 'connect', 'מתחבר מחדש…')}>
-                          <PlugZap className="h-4 w-4" />
-                          חבר מחדש
-                        </Button>
-                      )}
-                      <Button size="sm" variant="ghost" onClick={() => setActive(a, false)}>
-                        <Power className="h-4 w-4" />
-                        נתק
-                      </Button>
-                    </>
-                  ) : (
-                    <Button size="sm" variant="success" onClick={() => setActive(a, true)}>
-                      <PlugZap className="h-4 w-4" />
-                      חבר
-                    </Button>
-                  )}
-                  <div className="flex-1" />
-                  <Button size="sm" variant="ghost" onClick={() => setEditing(a)} title="עריכה">
-                    <Pencil className="h-4 w-4" />
-                  </Button>
-                  <Button size="sm" variant="ghost" className="text-rose-600" onClick={() => remove(a)} title="מחיקה">
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              </Card>
-            );
-          })}
+          {arms.map((a, i) => (
+            <ArmCard
+              key={a.id}
+              a={a}
+              n={i + 1}
+              h={healths[i]}
+              qr={qr[a.id]}
+              groups={groups[a.id] || 0}
+              onCommand={(c, l) => command(a, c, l)}
+              onActive={(v) => setActive(a, v)}
+              onEdit={() => setEditing(a)}
+              onRemove={() => remove(a)}
+            />
+          ))}
         </div>
       )}
 
@@ -250,6 +214,207 @@ function Arms() {
       />
       <EditArm arm={editing} onClose={() => setEditing(null)} />
     </>
+  );
+}
+
+function ArmCard({
+  a,
+  n,
+  h,
+  qr,
+  groups,
+  onCommand,
+  onActive,
+  onEdit,
+  onRemove,
+}: {
+  a: any;
+  n: number;
+  h: ArmHealth;
+  qr?: string;
+  groups: number;
+  onCommand: (command: string, label: string) => void;
+  onActive: (v: boolean) => void;
+  onEdit: () => void;
+  onRemove: () => void;
+}) {
+  const [tech, setTech] = useState(false);
+  const today = new Date().toISOString().slice(0, 10);
+  const sentToday = a.sent_day === today ? a.sent_today : 0;
+  const capped = limitReached(a);
+  const warm = warmupUntil(a);
+  const needsScan = h.level === 'action' && a.status !== 'connecting';
+  const rescan = /QR/.test(h.action || '');
+
+  // the one thing to do now
+  let primary: React.ReactNode = null;
+  if (!a.is_active) {
+    primary = (
+      <Button variant="success" onClick={() => onActive(true)}>
+        <PlugZap className="h-4 w-4" />
+        חיבור
+      </Button>
+    );
+  } else if (needsScan && !qr) {
+    primary = (
+      <Button onClick={() => onCommand('reset', 'מייצר QR חדש…')}>
+        <QrCode className="h-4 w-4" />
+        QR חדש
+      </Button>
+    );
+  } else if (h.level === 'bad') {
+    primary = rescan ? (
+      <Button onClick={() => onCommand('reset', 'מייצר QR חדש…')}>
+        <QrCode className="h-4 w-4" />
+        QR חדש
+      </Button>
+    ) : (
+      <Button onClick={() => onCommand('connect', 'מתחבר מחדש…')}>
+        <PlugZap className="h-4 w-4" />
+        חיבור מחדש
+      </Button>
+    );
+  } else if (capped) {
+    primary = (
+      <Button variant="secondary" onClick={onEdit}>
+        <Gauge className="h-4 w-4" />
+        שינוי המגבלה היומית
+      </Button>
+    );
+  }
+
+  return (
+    <Card className="flex flex-col overflow-hidden">
+      <div className="flex items-start justify-between gap-3 px-5 pb-3 pt-5">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-slate-100 font-semibold tabular-nums text-slate-600">{n}</div>
+          <div className="min-w-0">
+            <div className="truncate font-semibold text-slate-900">{a.name}</div>
+            <div className="text-sm tabular-nums text-slate-500" dir="ltr" style={{ textAlign: 'right' }}>
+              {a.phone || 'עדיין לא מקושר לטלפון'}
+            </div>
+          </div>
+        </div>
+        <Lamp tone={h.tone} pulse={h.level === 'bad' || a.status === 'connecting'} />
+      </div>
+
+      {/* status in plain words */}
+      <div className={cx('mx-5 mb-4 rounded-xl px-4 py-3 ring-1 ring-inset', HEALTH_BOX[h.level])}>
+        <div className="flex items-center gap-2 text-[15px] font-semibold text-slate-900">
+          {a.status === 'connecting' && <Loader2 className="h-4 w-4 animate-spin text-sky-600" />}
+          {h.title}
+        </div>
+        <p className="mt-1 text-sm leading-relaxed text-slate-700">{h.explain}</p>
+        {h.action && <p className="mt-1.5 text-sm leading-relaxed text-slate-900">
+          <span className="font-medium">מה לעשות: </span>
+          {h.action}
+        </p>}
+        {primary && <div className="mt-3">{primary}</div>}
+        {h.raw && (
+          <div className="mt-2">
+            <button
+              type="button"
+              onClick={() => setTech(!tech)}
+              aria-expanded={tech}
+              className="flex items-center gap-1 text-xs font-medium text-slate-500 hover:text-slate-800"
+            >
+              פרטים טכניים
+              <ChevronDown className={cx('h-3.5 w-3.5 transition', tech && 'rotate-180')} />
+            </button>
+            {tech && (
+              <pre dir="ltr" className="mt-1.5 whitespace-pre-wrap break-all rounded-lg bg-white/70 p-2 text-left text-[11px] leading-relaxed text-slate-600">
+                {h.raw}
+              </pre>
+            )}
+          </div>
+        )}
+      </div>
+
+      {a.status === 'qr' && qr && (
+        <div className="mx-5 mb-4 flex flex-col items-center rounded-2xl bg-slate-50 p-4">
+          <div className="rounded-xl bg-white p-3 shadow-sm">
+            <QRCodeSVG value={qr} size={200} />
+          </div>
+          <p className="mt-3 text-center text-xs leading-relaxed text-slate-600">
+            בטלפון: WhatsApp ← הגדרות ← מכשירים מקושרים ← קישור מכשיר, וסרוק את הקוד.
+            <br />
+            הקוד מתחלף אוטומטית.
+          </p>
+        </div>
+      )}
+      {a.status === 'qr' && !qr && (
+        <div className="mx-5 mb-4 flex items-center justify-center gap-2 rounded-2xl bg-slate-50 p-6 text-sm text-slate-500">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          מכין קוד QR…
+        </div>
+      )}
+      {warm && (
+        <div className="mx-5 mb-4 flex items-start gap-2 rounded-xl bg-sky-50 px-3 py-2 text-xs leading-relaxed text-sky-900">
+          <Flame className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          בחימום עד {hhmm(warm)} – שולחת לאט (6 הודעות בדקה) כדי להגן על המספר
+        </div>
+      )}
+
+      <dl className="mx-5 mb-3 grid grid-cols-3 gap-2 text-center">
+        <div className="rounded-xl bg-slate-50 py-2">
+          <dt className="text-[11px] text-slate-500">קבוצות</dt>
+          <dd className="font-semibold tabular-nums">{groups.toLocaleString('he-IL')}</dd>
+        </div>
+        <div className={cx('rounded-xl py-2', capped ? 'bg-rose-50' : 'bg-slate-50')}>
+          <dt className="text-[11px] text-slate-500">נשלחו היום</dt>
+          <dd className="font-semibold tabular-nums">
+            {sentToday}
+            <span className="text-xs font-normal text-slate-400">/{a.daily_limit >= 100000 ? '∞' : a.daily_limit}</span>
+          </dd>
+        </div>
+        <div className="rounded-xl bg-slate-50 py-2">
+          <dt className="text-[11px] text-slate-500">סה״כ נשלחו</dt>
+          <dd className="font-semibold tabular-nums">{Number(a.sent_total || 0).toLocaleString('he-IL')}</dd>
+        </div>
+      </dl>
+      <div className="mx-5 mb-4 text-xs text-slate-500">
+        חיבור אחרון: {timeAgo(a.last_connected_at)} · נראתה לאחרונה: {timeAgo(a.last_seen_at)}
+      </div>
+
+      <div className="mt-auto flex flex-wrap items-center gap-1.5 border-t border-slate-100 bg-slate-50/50 p-3">
+        {a.is_active ? (
+          <>
+            <Button size="sm" variant="secondary" onClick={() => onCommand('reset', 'מייצר QR חדש…')}>
+              <QrCode className="h-4 w-4" />
+              QR חדש
+            </Button>
+            {a.status === 'online' && (
+              <Button size="sm" variant="secondary" onClick={() => onCommand('refresh_groups', 'מרענן קבוצות…')}>
+                <RefreshCw className="h-4 w-4" />
+                רענון קבוצות
+              </Button>
+            )}
+            {['offline', 'error', 'paused'].includes(a.status) && (
+              <Button size="sm" variant="secondary" onClick={() => onCommand('connect', 'מתחבר מחדש…')}>
+                <PlugZap className="h-4 w-4" />
+                חיבור מחדש
+              </Button>
+            )}
+            <Button size="sm" variant="ghost" onClick={() => onActive(false)}>
+              <Power className="h-4 w-4" />
+              ניתוק
+            </Button>
+          </>
+        ) : (
+          <Button size="sm" variant="success" onClick={() => onActive(true)}>
+            <PlugZap className="h-4 w-4" />
+            חיבור
+          </Button>
+        )}
+        <div className="flex-1" />
+        <Button size="sm" variant="ghost" onClick={onEdit} title="עריכה" aria-label={`עריכת ${a.name}`}>
+          <Pencil className="h-4 w-4" />
+        </Button>
+        <Button size="sm" variant="ghost" className="text-rose-600" onClick={onRemove} title="מחיקה" aria-label={`מחיקת ${a.name}`}>
+          <Trash2 className="h-4 w-4" />
+        </Button>
+      </div>
+    </Card>
   );
 }
 
