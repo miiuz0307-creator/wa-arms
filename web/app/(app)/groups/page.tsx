@@ -135,18 +135,28 @@ function GroupsAndLists() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, listF, listArms]);
 
+  // groups worth adding to the open list: not in it yet, and one of the list's sending arms is in the group
+  // (no sending arms chosen = every active arm of the station). A group none of them is in could never get a ride.
+  const addable = (r: Row) => {
+    if (!listF || r.lists.includes(listF)) return false;
+    const active = new Set((arms || []).filter((a) => a.is_active).map((a) => a.id));
+    const chosen = armsOfList(listF);
+    const pool = (chosen.length ? chosen : [...active]).filter((id) => active.has(id)); // switched-off arms send nothing
+    return r.armIds.some((id) => pool.includes(id));
+  };
+
   const filtered = useMemo(() => {
     const t = q.trim().toLowerCase();
     return viewRows.filter(
       (r) =>
         (!t || r.name.toLowerCase().includes(t)) &&
         (!armF || r.armIds.includes(armF)) &&
-        (!listF || (listMode === 'in' ? r.lists.includes(listF) : !r.lists.includes(listF))) &&
+        (!listF || (listMode === 'in' ? r.lists.includes(listF) : addable(r))) &&
         (listF || assignF === 'all' || (assignF === 'none' ? r.lists.length === 0 : r.lists.length > 0)) &&
         (statusF === 'all' || (statusF === 'ok' ? r.available : !r.available)) &&
         (showUnavailable || r.available || (listF && listMode === 'in' && r.lists.includes(listF))),
     );
-  }, [viewRows, q, armF, listF, listMode, assignF, statusF, showUnavailable]);
+  }, [viewRows, q, armF, listF, listMode, assignF, statusF, showUnavailable, listArms, arms]);
 
   useEffect(() => setSel(new Set()), [armF, listF, listMode]);
 
@@ -260,7 +270,7 @@ function GroupsAndLists() {
         {curList && (
           <div className="mb-3 grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1" role="tablist">
             {(['in', 'add'] as const).map((m) => {
-              const n = m === 'in' ? rows.filter((r) => r.lists.includes(listF)).length : rows.filter((r) => !r.lists.includes(listF)).length;
+              const n = m === 'in' ? rows.filter((r) => r.lists.includes(listF)).length : rows.filter(addable).length;
               return (
                 <button
                   key={m}
@@ -273,7 +283,7 @@ function GroupsAndLists() {
                     listMode === m ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800',
                   )}
                 >
-                  {m === 'in' ? 'הקבוצות ברשימה' : 'הוספת קבוצות לרשימה'} <span className="text-slate-400">{n}</span>
+                  {m === 'in' ? 'הקבוצות ברשימה' : 'קבוצות זמינות לצירוף'} <span className="text-slate-400">{n}</span>
                 </button>
               );
             })}
@@ -358,7 +368,7 @@ function GroupsAndLists() {
 
         {/* groups */}
         {filtered.length === 0 ? (
-          <Empty icon={<UsersRound className="h-7 w-7" />} title="לא נמצאו קבוצות" text={rows.length === 0 ? 'חבר זרוע והקבוצות שלה יופיעו כאן.' : listF && listMode === 'in' && !q ? 'הרשימה עדיין ריקה. עבור ל"הוספת קבוצות לרשימה" ובחר קבוצות.' : listF && listMode === 'add' && !q ? 'כל הקבוצות כבר ברשימה.' : 'נסה לשנות את החיפוש או הסינון.'} />
+          <Empty icon={<UsersRound className="h-7 w-7" />} title="לא נמצאו קבוצות" text={rows.length === 0 ? 'חבר זרוע והקבוצות שלה יופיעו כאן.' : listF && listMode === 'in' && !q ? 'הרשימה עדיין ריקה. עבור ל"קבוצות זמינות לצירוף" ובחר קבוצות.' : listF && listMode === 'add' && !q ? 'אין קבוצות נוספות שהזרועות של הרשימה נמצאות בהן. כדי להרחיב: צרף את הזרוע לקבוצות נוספות בוואטסאפ, או הוסף לרשימה עוד זרועות שולחות.' : 'נסה לשנות את החיפוש או הסינון.'} />
         ) : (
           <ul className="scroll-thin max-h-[65dvh] divide-y divide-slate-50 overflow-y-auto">
             {filtered.map((r) => {
