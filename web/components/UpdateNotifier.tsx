@@ -52,12 +52,22 @@ export function UpdateNotifier() {
 
   if (!ready) return null;
   return (
-    <button
-      onClick={() => window.location.reload()}
-      className="fixed inset-x-3 top-3 z-50 mx-auto flex max-w-md items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white shadow-xl"
+    <div
+      role="status"
+      className="fixed inset-x-3 top-3 z-50 mx-auto flex max-w-md animate-rise items-center gap-3 rounded-2xl bg-[#151920] py-2.5 pe-2.5 ps-4 text-sm text-white shadow-[var(--shadow-pop)] ring-1 ring-white/10"
     >
-      <RefreshCw className="h-4 w-4" />
-      גרסה חדשה של האפליקציה מוכנה – לחץ לעדכון
-    </button>
+      <RefreshCw className="h-4 w-4 shrink-0 text-white/60" />
+      <span className="min-w-0 flex-1 leading-snug">
+        <span className="font-medium">יש גרסה חדשה של האפליקציה.</span>
+        <span className="block text-xs text-white/60">היא תיטען לבד כשתצא מהאפליקציה, בלי לאבד נתונים.</span>
+      </span>
+      <button
+        type="button"
+        onClick={() => window.location.reload()}
+        className="h-9 shrink-0 rounded-xl bg-[#f6f7f8] px-3.5 text-[13px] font-semibold text-[#151920] hover:bg-[#e3e6ea]"
+      >
+        עדכון עכשיו
+      </button>
+    </div>
   );
 }

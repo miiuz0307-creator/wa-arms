@@ -2,7 +2,8 @@
 // Forgot password: a 6-digit code is e-mailed from the system's mailbox; the user types it here with a new password.
 import { useState } from 'react';
 import { sb } from '@/lib/supabase';
-import { markUnlocked } from '@/components/AppLock';
+import { ArrowRight } from 'lucide-react';
+import { FormNote, markUnlocked } from '@/components/AppLock';
 import { Button, Field, Input } from '@/components/ui';
 
 export function ForgotPassword({ initialEmail, onBack }: { initialEmail: string; onBack: () => void }) {
@@ -47,22 +48,33 @@ export function ForgotPassword({ initialEmail, onBack }: { initialEmail: string;
   return (
     <form onSubmit={submit} className="space-y-5">
       <div>
-        <h2 className="text-2xl font-bold">שכחתי סיסמה</h2>
-        <p className="mt-1 text-sm text-slate-500">{sent ? 'הזן את הקוד שקיבלת במייל ובחר סיסמה חדשה.' : 'נשלח אליך קוד אימות למייל.'}</p>
+        <button
+          type="button"
+          onClick={onBack}
+          className="-ms-1 mb-3 inline-flex h-8 items-center gap-1 rounded-lg px-1 text-sm font-medium text-slate-500 hover:text-slate-900"
+        >
+          <ArrowRight className="h-4 w-4" />
+          חזרה לכניסה
+        </button>
+        <h2 className="text-[22px] font-bold tracking-tight text-slate-900">איפוס סיסמה</h2>
+        <p className="mt-1 text-sm leading-relaxed text-slate-500">
+          {sent ? 'הקלד את הקוד שקיבלת במייל ובחר סיסמה חדשה.' : 'נשלח קוד אימות בן 6 ספרות למייל שלך.'}
+        </p>
       </div>
       <Field label="אימייל">
         <Input type="email" dir="ltr" value={email} onChange={(e) => setEmail(e.target.value)} required disabled={sent} autoComplete="email" />
       </Field>
       {sent && (
         <>
-          <Field label="קוד מהמייל">
+          <Field label="הקוד מהמייל">
             <Input
               dir="ltr"
               inputMode="numeric"
               autoComplete="one-time-code"
               value={code}
               onChange={(e) => setCode(e.target.value)}
-              className="text-center font-mono text-lg tracking-widest"
+              placeholder="000000"
+              className="text-center font-mono text-lg tabular-nums tracking-[0.4em]"
               required
               autoFocus
             />
@@ -70,33 +82,28 @@ export function ForgotPassword({ initialEmail, onBack }: { initialEmail: string;
           <Field label="סיסמה חדשה" hint="לפחות 8 תווים">
             <Input type="password" dir="ltr" value={pw} onChange={(e) => setPw(e.target.value)} autoComplete="new-password" required />
           </Field>
-          <Field label="סיסמה חדשה שוב">
+          <Field label="הסיסמה החדשה שוב">
             <Input type="password" dir="ltr" value={pw2} onChange={(e) => setPw2(e.target.value)} autoComplete="new-password" required />
           </Field>
         </>
       )}
-      {msg && <div className={msg.ok ? 'rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800' : 'rounded-xl bg-rose-50 p-3 text-sm text-rose-700'}>{msg.text}</div>}
+      {msg && <FormNote ok={msg.ok}>{msg.text}</FormNote>}
       <Button type="submit" size="lg" className="w-full" loading={busy}>
-        {sent ? 'שמירת סיסמה וכניסה' : 'שליחת קוד'}
+        {sent ? 'שמירת הסיסמה וכניסה' : 'שליחת קוד למייל'}
       </Button>
-      <div className="flex justify-between text-sm font-medium">
-        <button type="button" onClick={onBack} className="text-slate-500 hover:text-indigo-600">
-          חזרה לכניסה
+      {sent && (
+        <button
+          type="button"
+          onClick={() => {
+            setSent(false);
+            setCode('');
+            setMsg(null);
+          }}
+          className="h-10 w-full rounded-lg text-center text-sm font-medium text-indigo-600 hover:bg-indigo-50"
+        >
+          לא הגיע? שליחת קוד חדש
         </button>
-        {sent && (
-          <button
-            type="button"
-            onClick={() => {
-              setSent(false);
-              setCode('');
-              setMsg(null);
-            }}
-            className="text-indigo-600"
-          >
-            שליחת קוד חדש
-          </button>
-        )}
-      </div>
+      )}
     </form>
   );
 }
