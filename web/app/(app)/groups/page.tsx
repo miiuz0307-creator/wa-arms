@@ -182,7 +182,15 @@ function GroupsAndLists() {
 
   return (
     <>
-      <PageHeader title="ניהול קבוצות והפצה" subtitle="כל הקבוצות של הזרועות, ושיוך לרשימות הפצה – ממקום אחד" />
+      <PageHeader
+        title="ניהול קבוצות והפצה"
+        subtitle="כל הקבוצות של הזרועות, ושיוך לרשימות הפצה – ממקום אחד"
+        actions={
+          <Button onClick={() => setListEdit({})}>
+            <Plus className="h-4 w-4" /> רשימה חדשה
+          </Button>
+        }
+      />
 
       {/* lists */}
       <div className="scroll-thin -mx-4 mb-4 flex gap-2 overflow-x-auto px-4 pb-1 md:mx-0 md:flex-wrap md:px-0">
@@ -208,12 +216,6 @@ function GroupsAndLists() {
             {countsFor(l.id).bad > 0 && <span className="h-2 w-2 rounded-full bg-rose-500" title={`${countsFor(l.id).bad} קבוצות לא יקבלו נסיעות`} />}
           </button>
         ))}
-        <button
-          onClick={() => setListEdit({})}
-          className="flex shrink-0 items-center gap-1.5 rounded-xl border border-dashed border-slate-300 px-4 py-2 text-sm font-medium text-slate-500 hover:bg-slate-50"
-        >
-          <Plus className="h-4 w-4" /> רשימה חדשה
-        </button>
       </div>
 
       {curList && curCounts && (
