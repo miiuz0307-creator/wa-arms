@@ -5,6 +5,7 @@ import { sb, logAct } from '@/lib/supabase';
 import { RequireRole } from '@/components/Shell';
 import { Badge, Button, Card, Field, Input, Select, Spinner, Textarea, Toggle, PageHeader, toast, cx } from '@/components/ui';
 import { useRealtime } from '@/lib/hooks';
+import { allGroups } from '@/lib/allRows';
 
 export function HelpSettings() {
   return (
@@ -27,7 +28,7 @@ function Help() {
       sb().from('templates').select('*').order('created_at'),
       sb().from('distribution_lists').select('id,name').order('name'),
       sb().from('arms').select('id,name').order('created_at'),
-      sb().from('groups').select('wa_group_id,name,arm_id').limit(5000),
+      allGroups('wa_group_id,name,arm_id'),
       sb().from('wa_operators').select('*').order('created_at', { ascending: false }),
     ]);
     setD({

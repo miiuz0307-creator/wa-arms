@@ -9,6 +9,7 @@ import { ARM_STATUS, timeAgo } from '@/lib/format';
 import { RequireRole } from '@/components/Shell';
 import { Badge, Button, Card, Empty, Field, Input, Modal, PageHeader, Select, Spinner, Textarea, toast } from '@/components/ui';
 import { useInbox } from '@/components/StationInbox';
+import { allGroups } from '@/lib/allRows';
 
 export default function ArmsPage() {
   return (
@@ -34,7 +35,7 @@ function Arms() {
     const [a, q, g] = await Promise.all([
       sb().from('arms').select('*').order('created_at'),
       sb().from('arm_qr').select('*'),
-      sb().from('groups').select('arm_id'),
+      allGroups('arm_id'),
     ]);
     setArms(a.data || []);
     setQr(Object.fromEntries((q.data || []).map((r: any) => [r.arm_id, r.qr])));

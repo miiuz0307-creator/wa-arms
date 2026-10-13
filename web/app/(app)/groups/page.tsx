@@ -8,6 +8,7 @@ import { ARM_STATUS, timeAgo } from '@/lib/format';
 import { RequireRole } from '@/components/Shell';
 import { GroupPicker } from '@/components/GroupPicker';
 import { Badge, Button, Card, Empty, Field, Input, Modal, PageHeader, Select, Spinner, cx, toast } from '@/components/ui';
+import { allGroups } from '@/lib/allRows';
 
 export default function GroupsPage() {
   return (
@@ -28,7 +29,7 @@ function Groups() {
   const load = useCallback(async () => {
     const [a, g] = await Promise.all([
       sb().from('arms').select('id,name,status').order('created_at'),
-      sb().from('groups').select('*').order('name').limit(5000),
+      allGroups('*').then((r) => ({ data: r.data.sort((x: any, y: any) => String(x.name || '').localeCompare(String(y.name || ''), 'he')) })),
     ]);
     setArms(a.data || []);
     setRows(g.data || []);
