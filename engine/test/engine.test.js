@@ -463,3 +463,67 @@ test('device cache: a big cache stays fast (no full scan on every write)', () =>
     assert.ok(Date.now() - t0 < 3000, 'took ' + (Date.now() - t0) + 'ms');
   }
 });
+
+// ---------- more than 1,000 rows (the database API cuts one request at 1,000) ----------
+function cappedTable(rows) {
+  // answers like the real API: honours .range(), never more than 1,000 rows per request
+  return (op) => {
+    const r = op.mods.find((m) => m[0] === 'range');
+    const from = r ? r[1] : 0;
+    const to = r ? Math.min(r[2], from + 999) : 999;
+    return { data: rows.slice(from, to + 1), error: null };
+  };
+}
+
+test('row cap: fetchAll reads every row in pages, also exactly 1,000 and 2,500', async () => {
+  const { fetchAll } = require('../src/util');
+  for (const n of [0, 999, 1000, 1001, 2500]) {
+    const rows = Array.from({ length: n }, (_, i) => ({ i }));
+    dbAnswer(cappedTable(rows));
+    const { data, error } = await fetchAll(() => require('../src/config').db.from('x').select('*').order('i'));
+    assert.equal(error, null);
+    assert.equal(data.length, n, `${n} rows`);
+  }
+});
+
+test('row cap: a ride to lists with 2,500 groups gets all 2,500 (not the first 1,000), each once', async () => {
+  const quote = require('../src/quote');
+  const rows = Array.from({ length: 2500 }, (_, i) => ({ wa_group_id: `g${i % 2400}@g.us`, group_name: `g${i}` })); // 100 in two lists
+  dbAnswer(cappedTable(rows));
+  const groups = await quote.selectedGroups(['l1', 'l2'], 'g5@g.us');
+  assert.equal(groups.length, 2399, 'every group once, the source group excluded');
+});
+
+test('row cap guard: no read of a big table without paging (engine and website)', () => {
+  // Tables that can pass 1,000 rows for one station or one ride. A read must page (fetchAll / allGroups /
+  // .range) or be bounded (.limit(n<=1000), .single(), head count, one id).
+  const BIG = ['groups', 'list_groups', 'campaign_targets', 'campaigns', 'activity_log', 'processed_messages', 'arm_auth', 'quote_sessions', 'campaign_arms'];
+  const root = path.join(__dirname, '..', '..');
+  const files = [];
+  const walk = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      if (e.name === 'node_modules' || e.name === '.next' || e.name === 'test') continue;
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (/\.(js|ts|tsx)$/.test(e.name)) files.push(p);
+    }
+  };
+  for (const d of ['engine/src', 'web/app', 'web/components', 'web/lib']) if (fs.existsSync(path.join(root, d))) walk(path.join(root, d));
+  const bad = [];
+  for (const f of files) {
+    const lines = fs.readFileSync(f, 'utf8').split('\n');
+    lines.forEach((line, i) => {
+      const m = line.match(/\.from\('([a-z_]+)'\)/);
+      if (!m || !BIG.includes(m[1])) return;
+      // the statement: from the line before (fetchAll(() => … ) wrappers) to the first ';' after .from(
+      const before = lines[i - 1] || '';
+      const rest = lines.slice(i, i + 14).join(' ');
+      const s = before.split(';').pop() + ' ' + rest.split(';')[0];
+      if (!/\.select\(/.test(s)) return; // writes are fine
+      // bounded by design: mark the line with  // rows: bounded – <why>
+      const ok = /fetchAll|allGroups|\.range\(|\.single\(|\.maybeSingle\(|head:\s*true|\.eq\('id'|\.limit\((\d{1,3}|1000)\)|rows: bounded/.test(s);
+      if (!ok && !/rows: bounded/.test(lines.slice(i, i + 4).join(' '))) bad.push(`${path.relative(root, f)}:${i + 1} ${m[1]}`);
+    });
+  }
+  assert.deepEqual(bad, [], 'reads that can be cut at 1,000 rows:\n' + bad.join('\n'));
+});

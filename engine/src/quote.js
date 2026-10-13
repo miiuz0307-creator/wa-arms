@@ -3,7 +3,7 @@
 // → the bot opens a private chat with the operator: preview without the customer's phone,
 //   numbered list of distribution lists, edit, "הפץ", live status.
 const { db, log } = require('./config');
-const { extractText, jidUser } = require('./util');
+const { extractText, jidUser, fetchAll } = require('./util');
 
 const { sanitize, verifyNoCustomerPhone, normalize, formatPhone, findPhones } = require('./phones');
 
@@ -119,7 +119,9 @@ async function loadLists(stationId) {
 
 async function selectedGroups(listIds, excludeGroup) {
   if (!listIds.length) return [];
-  const { data } = await db.from('list_groups').select('wa_group_id,group_name').in('list_id', listIds);
+  const { data } = await fetchAll(() =>
+    db.from('list_groups').select('wa_group_id,group_name').in('list_id', listIds).order('list_id').order('wa_group_id'),
+  );
   const map = new Map();
   for (const g of data || []) if (g.wa_group_id !== excludeGroup && !map.has(g.wa_group_id)) map.set(g.wa_group_id, g);
   return [...map.values()];
@@ -234,7 +236,7 @@ async function handleCancel(arm, m, ctx) {
   const { data: stopped } = await db
     .from('campaigns')
     .update({ status: 'cancelled', finished_at: new Date().toISOString() })
-    .in('id', campaignIds)
+    .in('id', campaignIds) // rows: bounded – rides of one quoted message (at most 10)
     .in('status', ['queued', 'running', 'pending_phone'])
     .select('id,sent,total');
   const cancelKey = keyOf(m, op);
@@ -441,7 +443,7 @@ async function handleGroup(arm, m) {
       .limit(5);
     const ids = (prev || []).map((p) => p.campaign_id);
     if (ids.length) {
-      const { data: camps } = await db.from('campaigns').select('id,status,finished_at').in('id', ids);
+      const { data: camps } = await db.from('campaigns').select('id,status,finished_at').in('id', ids); // rows: bounded – earlier rides of the same message
       const busy = (camps || []).find(
         (c) => ['queued', 'running'].includes(c.status) || (c.status === 'completed' && Date.now() - new Date(c.finished_at).getTime() < dupWindowMin * 60 * 1000),
       );
@@ -526,7 +528,7 @@ async function update(session, patch) {
 
 async function statusText(session) {
   if (!session.campaign_id) return null;
-  const { data: rows } = await db.from('campaign_targets').select('status').eq('campaign_id', session.campaign_id);
+  const { data: rows } = await fetchAll(() => db.from('campaign_targets').select('status').eq('campaign_id', session.campaign_id).order('id'));
   const c = { pending: 0, sending: 0, sent: 0, failed: 0, skipped: 0 };
   for (const r of rows || []) c[r.status] = (c[r.status] || 0) + 1;
   const total = (rows || []).length;
@@ -833,4 +835,4 @@ async function handle(arm, m) {
   return false;
 }
 
-module.exports = { handle, notifyFinished, setTriggerSource, setArmsSource, setSettingsSource, setSourceGroupCheck, renderMenu };
+module.exports = { handle, notifyFinished, setTriggerSource, setArmsSource, setSettingsSource, setSourceGroupCheck, renderMenu, selectedGroups };

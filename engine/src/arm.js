@@ -2,7 +2,7 @@
 const baileys = require('@whiskeysockets/baileys');
 const { db, log, waLogger, SESSION_SECRET } = require('./config');
 const { useDbAuthState } = require('./authState');
-const { jidUser, formatPhone } = require('./util');
+const { jidUser, formatPhone, fetchAll } = require('./util');
 
 const makeWASocket = baileys.default || baileys.makeWASocket;
 
@@ -663,7 +663,9 @@ class Arm {
     const stillMissing = groups.filter((g) => !g.subject).map((g) => g.id);
     const known = new Map();
     if (stillMissing.length) {
-      const { data } = await db.from('groups').select('wa_group_id,name,participants').eq('arm_id', this.id).in('wa_group_id', stillMissing);
+      const { data } = await fetchAll(() =>
+        db.from('groups').select('wa_group_id,name,participants').eq('arm_id', this.id).in('wa_group_id', stillMissing).order('wa_group_id'),
+      );
       for (const r of data || []) if (r.name && r.name !== r.wa_group_id) known.set(r.wa_group_id, r);
     }
     const rows = groups.map((g) => ({
@@ -676,7 +678,7 @@ class Arm {
     if (stillMissing.length) log.info({ arm: this.name, withoutDetails: stillMissing.length, keptName: known.size }, 'groups without details from WhatsApp');
     // Only write what changed (a full rewrite every couple of minutes was needless database load)
     if (!this.savedGroups) {
-      const { data, error } = await db.from('groups').select('wa_group_id,name,participants').eq('arm_id', this.id);
+      const { data, error } = await fetchAll(() => db.from('groups').select('wa_group_id,name,participants').eq('arm_id', this.id).order('wa_group_id'));
       if (error) throw error;
       this.savedGroups = new Map((data || []).map((r) => [r.wa_group_id, `${r.name}|${r.participants}`]));
     }

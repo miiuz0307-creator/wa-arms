@@ -1,7 +1,7 @@
 // "Help" auto-distribution: listen to source groups, detect trigger words,
 // identify the requester's phone, and create a distribution campaign.
 const { db, log } = require('./config');
-const { extractText, containsKeyword, formatPhone, jidUser, buildHelpText } = require('./util');
+const { extractText, containsKeyword, formatPhone, jidUser, buildHelpText, fetchAll } = require('./util');
 const quote = require('./quote');
 
 // Everything is per station: an arm only sees its own station's settings, sources and triggers.
@@ -181,7 +181,7 @@ async function onMessage(arm, m) {
   };
 
   const [lg, la] = await Promise.all([
-    db.from('list_groups').select('wa_group_id,group_name').eq('list_id', trigger.list_id),
+    fetchAll(() => db.from('list_groups').select('wa_group_id,group_name').eq('list_id', trigger.list_id).order('wa_group_id')),
     db.from('list_arms').select('arm_id').eq('list_id', trigger.list_id),
   ]);
   const targets = (lg.data || []).filter((g) => g.wa_group_id !== groupJid);
