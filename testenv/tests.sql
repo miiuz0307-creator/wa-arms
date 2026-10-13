@@ -573,4 +573,302 @@ exception when others then perform testkit.check(true, 'engine health: only the 
 select testkit.check(public.owner_engine_status() is null, 'engine health: a station does not see the engine status');
 reset role;
 
+-- ==================== BotiX v2 ====================
+reset role;
+select ((now() at time zone 'Asia/Jerusalem')::date)::text as il_today \gset
+-- profiles with low roles (they work in the home station)
+insert into auth.users (id) values ('00000000-0000-0000-0000-0000000000e1'), ('00000000-0000-0000-0000-0000000000e2') on conflict do nothing;
+insert into profiles (id, email, role, is_active, station_id) values
+ ('00000000-0000-0000-0000-0000000000e1', 'viewer@test', 'viewer', true, '00000000-0000-0000-0000-000000000000'),
+ ('00000000-0000-0000-0000-0000000000e2', 'operator@test', 'operator', true, '00000000-0000-0000-0000-000000000000') on conflict do nothing;
+create or replace function testkit.as_profile(p uuid) returns void language plpgsql as $$
+begin
+  perform set_config('request.headers', '{}', false);
+  perform set_config('request.jwt.claim.sub', p::text, false);
+end $$;
+grant execute on function testkit.as_profile(uuid) to anon, authenticated;
+update stations set phone = '050-7654321' where id = '0000000a-0000-0000-0000-000000000000';
+
+-- ---------- branding ----------
+set role anon; select testkit.as_station('tok-a');
+select public.station_set_logo('0000000a-0000-0000-0000-000000000000', 'data:image/png;base64,iVBORw0KGgo=');
+select testkit.check((select logo_data like 'data:image/png%' and plan = 'basic' and name = 'תחנה א' from public.station_brand()), 'v2 logo: the station manager sets his logo; brand shows it with the plan');
+do $$ begin perform public.station_set_logo('0000000b-0000-0000-0000-000000000000', 'data:image/png;base64,AAAA'); perform testkit.check(false, 'v2 logo: a station cannot change another station''s logo');
+exception when others then perform testkit.check(true, 'v2 logo: a station cannot change another station''s logo', sqlerrm); end $$;
+do $$ begin perform public.station_set_logo('0000000a-0000-0000-0000-000000000000', 'hello'); perform testkit.check(false, 'v2 logo: a non-image is refused');
+exception when others then perform testkit.check(true, 'v2 logo: a non-image is refused', sqlerrm); end $$;
+do $$ begin perform public.station_set_logo('0000000a-0000-0000-0000-000000000000', 'data:image/png;base64,' || repeat('A', 400000)); perform testkit.check(false, 'v2 logo: an image over 400000 characters is refused');
+exception when others then perform testkit.check(true, 'v2 logo: an image over 400000 characters is refused', sqlerrm); end $$;
+do $$ begin perform public.owner_station_logos(); perform testkit.check(false, 'v2 logo: only the owner lists all logos');
+exception when others then perform testkit.check(true, 'v2 logo: only the owner lists all logos'); end $$;
+reset role;
+set role authenticated; select testkit.as_profile('00000000-0000-0000-0000-0000000000e2');
+do $$ begin perform public.station_set_logo('00000000-0000-0000-0000-000000000000', 'data:image/png;base64,AAAA'); perform testkit.check(false, 'v2 logo: an operator cannot change the logo');
+exception when others then perform testkit.check(true, 'v2 logo: an operator cannot change the logo', sqlerrm); end $$;
+select testkit.as_owner();
+select public.station_set_logo('0000000b-0000-0000-0000-000000000000', 'data:image/jpeg;base64,/9j/4AAQ');
+select testkit.check((select count(*) from public.owner_station_logos()) = 2, 'v2 logo: the owner sets any station''s logo and sees all logos');
+select public.station_set_logo('0000000b-0000-0000-0000-000000000000', null);
+select testkit.check((select count(*) from public.owner_station_logos()) = 1, 'v2 logo: null clears the logo');
+reset role;
+select testkit.check((select logo_data from stations where id = '0000000b-0000-0000-0000-000000000000') is null
+  and (select logo_data from stations where id = '0000000a-0000-0000-0000-000000000000') is not null, 'v2 logo: stored on the right station');
+do $$ begin update stations set logo_data = 'not an image' where id = '0000000c-0000-0000-0000-000000000000'; perform testkit.check(false, 'v2 logo: the table itself refuses a non-image');
+exception when others then perform testkit.check(true, 'v2 logo: the table itself refuses a non-image'); end $$;
+
+-- ---------- group flags ----------
+set role anon; select testkit.as_station('tok-a');
+select testkit.check(public.group_flag_set(array['fa1@g.us', 'fa2@g.us', 'fa2@g.us'], null, true, 'לא לשלוח') = 2, 'v2 groups: a station marks groups (duplicates once)');
+select public.group_flag_set(array['fa1@g.us'], true);
+select testkit.check((select include_anyway and disabled and note = 'לא לשלוח' from group_flags where wa_group_id = 'fa1@g.us'), 'v2 groups: a second change keeps the values not given');
+select testkit.as_station('tok-b');
+select testkit.check((select count(*) from group_flags) = 0, 'v2 groups: station B does not see A''s group flags');
+update group_flags set disabled = false where wa_group_id = 'fa1@g.us';
+insert into group_flags (wa_group_id, disabled) values ('fb1@g.us', true);
+select testkit.check((select count(*) from group_flags) = 1 and (select station_id from group_flags) = '0000000b-0000-0000-0000-000000000000', 'v2 groups: a direct insert lands in the caller''s own station');
+do $$ begin insert into group_flags (station_id, wa_group_id) values ('0000000a-0000-0000-0000-000000000000', 'evil@g.us'); perform testkit.check(false, 'v2 groups: B cannot write a flag into A');
+exception when others then perform testkit.check(true, 'v2 groups: B cannot write a flag into A'); end $$;
+do $$ begin perform public.engine_group_flags('0000000a-0000-0000-0000-000000000000'); perform testkit.check(false, 'v2 groups: only the engine reads flags of any station');
+exception when others then perform testkit.check(true, 'v2 groups: only the engine reads flags of any station'); end $$;
+reset role;
+select testkit.check((select disabled from group_flags where wa_group_id = 'fa1@g.us'), 'v2 groups: B''s update did not touch A''s flag');
+set role authenticated; select testkit.as_profile('00000000-0000-0000-0000-0000000000e1');
+do $$ begin perform public.group_flag_set(array['x@g.us'], null, true); perform testkit.check(false, 'v2 groups: a viewer cannot change flags');
+exception when others then perform testkit.check(true, 'v2 groups: a viewer cannot change flags', sqlerrm); end $$;
+reset role;
+set role anon; select testkit.as_engine();
+select testkit.check((select count(*) from public.engine_group_flags('0000000a-0000-0000-0000-000000000000')) = 2
+  and (select count(*) from public.engine_group_flags('0000000b-0000-0000-0000-000000000000')) = 1, 'v2 groups: the engine reads each station''s flags');
+reset role;
+
+-- ---------- group problems ----------
+insert into campaigns (id, kind, status, message_text, final_text, station_id, created_at) values
+ ('00000000-0000-0000-0000-0000000a0b01', 'help', 'completed', 'p', 'p', '0000000b-0000-0000-0000-000000000000', now() - interval '60 minutes'),
+ ('00000000-0000-0000-0000-0000000a0b02', 'help', 'completed', 'p', 'p', '0000000b-0000-0000-0000-000000000000', now() - interval '30 minutes'),
+ ('00000000-0000-0000-0000-0000000a0b03', 'help', 'completed', 'p', 'p', '0000000b-0000-0000-0000-000000000000', now() - interval '80 hours');
+insert into campaign_targets (campaign_id, wa_group_id, arm_id, status, error, claimed_at, sent_at) values
+ ('00000000-0000-0000-0000-0000000a0b01', 'pg1@g.us', '00000000-0000-0000-0001-00000000000b', 'skipped', 'אין הרשאה לשלוח בקבוצה (רק מנהלים)', now() - interval '59 minutes', null),
+ ('00000000-0000-0000-0000-0000000a0b01', 'pg2@g.us', null, 'failed', 'אין זרוע פנויה: הזרועות שנבחרו לא בקבוצה', null, null),
+ ('00000000-0000-0000-0000-0000000a0b01', 'pg3@g.us', '00000000-0000-0000-0001-00000000000b', 'failed', 'הזרוע לא מחוברת', now() - interval '59 minutes', null),
+ ('00000000-0000-0000-0000-0000000a0b01', 'pg4@g.us', '00000000-0000-0000-0001-00000000000b', 'failed', 'Timed Out', now() - interval '59 minutes', null),
+ ('00000000-0000-0000-0000-0000000a0b01', 'pg5@g.us', null, 'skipped', 'ההפצה בוטלה', null, null),
+ ('00000000-0000-0000-0000-0000000a0b01', 'pg6@g.us', null, 'skipped', 'הנסיעה לא נשלחה לקבוצה הזו: עברו 15 דקות מפרסומה – לא נשלחת באיחור', null, null),
+ ('00000000-0000-0000-0000-0000000a0b01', 'pg7@g.us', '00000000-0000-0000-0001-00000000000b', 'failed', 'Timed Out', now() - interval '59 minutes', null),
+ ('00000000-0000-0000-0000-0000000a0b01', 'pg8@g.us', '00000000-0000-0000-0001-00000000000b', 'failed', 'Timed Out', now() - interval '59 minutes', null),
+ ('00000000-0000-0000-0000-0000000a0b02', 'pg7@g.us', '00000000-0000-0000-0001-00000000000b', 'sent', null, now() - interval '29 minutes', now() - interval '29 minutes'),
+ ('00000000-0000-0000-0000-0000000a0b02', 'pg8@g.us', '00000000-0000-0000-0002-00000000000b', 'sent', null, now() - interval '29 minutes', now() - interval '29 minutes'),
+ ('00000000-0000-0000-0000-0000000a0b02', 'pg1@g.us', '00000000-0000-0000-0001-00000000000b', 'skipped', 'אין הרשאה לשלוח בקבוצה (forbidden)', now() - interval '29 minutes', null),
+ ('00000000-0000-0000-0000-0000000a0b03', 'pg9@g.us', '00000000-0000-0000-0001-00000000000b', 'failed', 'Timed Out', now() - interval '80 hours', null);
+set role anon; select testkit.as_station('tok-b');
+select testkit.check((select reason = 'no_permission' and n = 2 from public.group_problems() where wa_group_id = 'pg1@g.us'), 'v2 problems: no permission (counted twice)');
+select testkit.check((select reason = 'no_arm' and arm_id is null from public.group_problems() where wa_group_id = 'pg2@g.us'), 'v2 problems: no free arm');
+select testkit.check((select reason from public.group_problems() where wa_group_id = 'pg3@g.us') = 'arm_offline', 'v2 problems: arm not connected');
+select testkit.check((select reason from public.group_problems() where wa_group_id = 'pg4@g.us') = 'send_error', 'v2 problems: other send failure');
+select testkit.check((select count(*) from public.group_problems() where wa_group_id in ('pg5@g.us', 'pg6@g.us')) = 0, 'v2 problems: cancelled rides and late-ride skips are not problems');
+select testkit.check((select count(*) from public.group_problems() where wa_group_id = 'pg7@g.us') = 0, 'v2 problems: a later send by the same arm clears the problem');
+select testkit.check((select count(*) from public.group_problems() where wa_group_id = 'pg8@g.us') = 1, 'v2 problems: a send by another arm does not clear this arm''s problem');
+select testkit.check((select count(*) from public.group_problems() where wa_group_id = 'pg9@g.us') = 0
+  and (select count(*) from public.group_problems(100) where wa_group_id = 'pg9@g.us') = 1, 'v2 problems: only the asked time window (default 48h)');
+select testkit.as_station('tok-a');
+select testkit.check((select count(*) from public.group_problems() where wa_group_id like 'pg%') = 0, 'v2 problems: station A does not see B''s problems');
+reset role;
+
+-- ---------- station active ----------
+reset role;
+insert into stations (id, name, status, sub_end) values
+ ('0000000d-0000-0000-0000-000000000000', 'תחנה ד', 'active', null),
+ ('0000000e-0000-0000-0000-000000000000', 'תחנה ישנה', 'active', (now() at time zone 'Asia/Jerusalem')::date - 40),
+ ('0000000f-0000-0000-0000-000000000000', 'תחנה מושעית', 'suspended', (now() at time zone 'Asia/Jerusalem')::date + 30);
+update stations set phone = '052-0000014' where id = '0000000e-0000-0000-0000-000000000000';
+set role anon; select testkit.as_station('tok-a');
+select testkit.check(public.station_active('00000000-0000-0000-0000-000000000000') and public.station_active('0000000a-0000-0000-0000-000000000000')
+  and public.station_active('0000000d-0000-0000-0000-000000000000'), 'v2 active: home, paid, and no end date are active');
+select testkit.check(not public.station_active('0000000e-0000-0000-0000-000000000000') and not public.station_active('0000000f-0000-0000-0000-000000000000')
+  and not public.station_active('99999999-9999-9999-9999-999999999999'), 'v2 active: ended, suspended and unknown are not active');
+do $$ begin perform public.engine_station_active('0000000a-0000-0000-0000-000000000000'); perform testkit.check(false, 'v2 active: the engine wrapper is engine-only');
+exception when others then perform testkit.check(true, 'v2 active: the engine wrapper is engine-only'); end $$;
+select testkit.as_engine();
+select testkit.check(public.engine_station_active('0000000a-0000-0000-0000-000000000000') and not public.engine_station_active('0000000e-0000-0000-0000-000000000000'), 'v2 active: the engine asks if a station is active');
+reset role;
+
+-- ---------- payments ----------
+set role anon; select testkit.as_station('tok-a');
+do $$ begin perform public.owner_pay_settings_save('https://x', null, null, null, null); perform testkit.check(false, 'v2 pay: a station cannot change payment settings');
+exception when others then perform testkit.check(true, 'v2 pay: a station cannot change payment settings'); end $$;
+reset role;
+set role authenticated; select testkit.as_owner();
+select public.owner_pay_settings_save('https://bit.example/pay', '', '053-2306885', null, 'https://app.test/');
+select testkit.check((public.owner_pay_settings_get() ->> 'app_url') = 'https://app.test' and (public.owner_pay_settings_get() ->> 'paybox_link') is null
+  and (public.owner_settings_get() ->> 'bit_link') = 'https://bit.example/pay', 'v2 pay: the owner saves the payment links (old settings call shows them too)');
+do $$ begin perform public.owner_pay_settings_save('javascript:alert(1)', null, '0532306885', null, null); perform testkit.check(false, 'v2 pay: a link must be https');
+exception when others then perform testkit.check(true, 'v2 pay: a link must be https', sqlerrm); end $$;
+select testkit.as_profile('00000000-0000-0000-0000-0000000000e1');
+do $$ begin perform public.station_payment_submit(100, 1, 'bit', null); perform testkit.check(false, 'v2 pay: a viewer cannot send a payment');
+exception when others then perform testkit.check(sqlerrm = 'אין הרשאה', 'v2 pay: a viewer cannot send a payment', sqlerrm); end $$;
+select testkit.as_profile('00000000-0000-0000-0000-0000000000e2');
+do $$ begin perform public.station_payment_submit(100, 1, 'bit', null); perform testkit.check(false, 'v2 pay: an operator cannot send a payment');
+exception when others then perform testkit.check(sqlerrm = 'אין הרשאה', 'v2 pay: an operator cannot send a payment', sqlerrm); end $$;
+reset role;
+select sub_end::text as a_end_before from stations where id = '0000000a-0000-0000-0000-000000000000' \gset
+set role anon; select testkit.as_station('tok-a');
+select (r ->> 'id') as pr_a, (r ->> 'token') as pr_a_tok from (select public.station_payment_submit(260, 1, 'bit', 'data:image/png;base64,iVBORw0KGgo=', 'שולם בביט') r) x \gset
+select testkit.check(:'pr_a' is not null and :'pr_a_tok' is not null, 'v2 pay: the station manager sends a payment with a proof');
+do $$ begin perform public.station_payment_submit(260, 1, 'bit', null); perform testkit.check(false, 'v2 pay: only one waiting request per station');
+exception when others then perform testkit.check(sqlerrm = 'כבר קיימת בקשה ממתינה', 'v2 pay: only one waiting request per station', sqlerrm); end $$;
+select testkit.check((select json_array_length(public.station_billing() -> 'requests')) = 1 and (public.station_billing() ->> 'bit_link') = 'https://bit.example/pay'
+  and (public.station_billing() ->> 'days_left') is not null, 'v2 pay: the billing screen shows the request, the bit link and days left');
+reset role;
+select testkit.check((select count(*) from wa_outbox where to_phone = '972532306885' and body like '%#' || :'pr_a' || '%' and body like '%תחנה א%'
+  and body like '%260 ₪ (ביט)%' and body like '%https://app.test/pay?r=' || :'pr_a_tok' || '%' and expires_at > now() + interval '23 hours') = 1,
+  'v2 pay: the owner gets a WhatsApp with station, amount, method and the approve link');
+select set_config('v2.pr_a', :'pr_a', false);
+set role anon; select testkit.as_station('tok-b');
+select testkit.check(json_array_length(public.station_billing() -> 'requests') = 0, 'v2 pay: station B does not see A''s request');
+do $$ begin perform public.station_payment_cancel(current_setting('v2.pr_a')::bigint); perform testkit.check(false, 'v2 pay: B cannot cancel A''s request');
+exception when others then perform testkit.check(true, 'v2 pay: B cannot cancel A''s request', sqlerrm); end $$;
+do $$ begin perform public.owner_payment_decide(current_setting('v2.pr_a')::bigint, true); perform testkit.check(false, 'v2 pay: a station cannot approve payments');
+exception when others then perform testkit.check(true, 'v2 pay: a station cannot approve payments'); end $$;
+do $$ begin perform public.owner_payment_requests(); perform testkit.check(false, 'v2 pay: a station cannot list payment requests');
+exception when others then perform testkit.check(true, 'v2 pay: a station cannot list payment requests'); end $$;
+do $$ begin perform public.station_payment_submit(100, 1, 'cash', null); perform testkit.check(false, 'v2 pay: unknown method refused');
+exception when others then perform testkit.check(true, 'v2 pay: unknown method refused', sqlerrm); end $$;
+do $$ begin perform public.station_payment_submit(100, 30, 'bit', null); perform testkit.check(false, 'v2 pay: more than 24 months refused');
+exception when others then perform testkit.check(true, 'v2 pay: more than 24 months refused', sqlerrm); end $$;
+do $$ begin perform public.station_payment_submit(100, 1, 'bit', 'data:text/html;base64,PHNjcmlwdD4='); perform testkit.check(false, 'v2 pay: a proof that is not an image / PDF is refused');
+exception when others then perform testkit.check(true, 'v2 pay: a proof that is not an image / PDF is refused', sqlerrm); end $$;
+reset role;
+set role authenticated; select testkit.as_owner();
+select testkit.check((select count(*) from public.owner_payment_requests('pending')) = 1
+  and (public.owner_payment_request_get(null, :'pr_a_tok'::uuid) ->> 'proof_data') like 'data:image/png%', 'v2 pay: the owner lists the request and opens it by the link token with the proof');
+do $$ begin perform public.owner_payment_decide(current_setting('v2.pr_a')::bigint, false, ' '); perform testkit.check(false, 'v2 pay: a rejection needs a reason');
+exception when others then perform testkit.check(true, 'v2 pay: a rejection needs a reason', sqlerrm); end $$;
+select testkit.check((public.owner_payment_decide(:pr_a, true) ->> 'status') = 'approved', 'v2 pay: the owner approves');
+do $$ begin perform public.owner_payment_decide(current_setting('v2.pr_a')::bigint, true); perform testkit.check(false, 'v2 pay: a second approval is blocked');
+exception when others then perform testkit.check(sqlerrm = 'הבקשה כבר טופלה', 'v2 pay: a second approval is blocked', sqlerrm); end $$;
+reset role;
+select testkit.check((select sub_end from stations where id = '0000000a-0000-0000-0000-000000000000') = (:'a_end_before'::date + interval '1 month')::date,
+  'v2 pay: approval extends a running subscription from its end date');
+select testkit.check((select count(*) from station_payments where station_id = '0000000a-0000-0000-0000-000000000000' and amount = 260 and months = 1 and method = 'ביט') = 1
+  and (select payment_id is not null and decided_by = '00000000-0000-0000-0000-00000000000f' from payment_requests where id = :pr_a), 'v2 pay: the payment is recorded once and linked to the request');
+select testkit.check((select count(*) from wa_outbox where to_phone = '972507654321' and body like '%אושר%') = 1
+  and (select count(*) from system_messages where station_id = '0000000a-0000-0000-0000-000000000000' and title = 'התשלום אושר') = 1, 'v2 pay: the station is told (WhatsApp + message in the app)');
+-- an ended subscription: the manager's existing login can still pay; approval counts from today
+update stations set sub_end = (now() at time zone 'Asia/Jerusalem')::date - 10, phone = '052-0000003' where id = '0000000c-0000-0000-0000-000000000000';
+set role anon; select testkit.as_station('tok-c');
+select testkit.check((select count(*) from arms) = 0, 'v2 pay: an ended station is still locked out of its data');
+select testkit.check((public.station_billing() ->> 'days_left')::int = -10, 'v2 pay: but its manager sees the billing screen (days_left -10)');
+select (public.station_payment_submit(400, 2, 'paybox', 'data:application/pdf;base64,JVBERi0=') ->> 'id') as pr_c \gset
+reset role;
+set role authenticated; select testkit.as_owner();
+select public.owner_payment_decide(:pr_c, true);
+reset role;
+select testkit.check((select sub_end from stations where id = '0000000c-0000-0000-0000-000000000000') = (:'il_today'::date + interval '2 months')::date,
+  'v2 pay: approval of an ended subscription counts the months from today');
+set role anon; select testkit.as_station('tok-c');
+select testkit.check((select count(*) from arms) = 2, 'v2 pay: after approval the station works again with all its data');
+reset role;
+-- rejection
+set role anon; select testkit.as_station('tok-b');
+select (public.station_payment_submit(100, 1, 'bit', null) ->> 'id') as pr_b \gset
+reset role;
+select sub_end::text as b_end_before from stations where id = '0000000b-0000-0000-0000-000000000000' \gset
+set role authenticated; select testkit.as_owner();
+select testkit.check((public.owner_payment_decide(:pr_b, false, 'הסכום לא תואם') ->> 'status') = 'rejected', 'v2 pay: the owner rejects with a reason');
+reset role;
+select testkit.check((select sub_end from stations where id = '0000000b-0000-0000-0000-000000000000') = :'b_end_before'::date
+  and (select count(*) from wa_outbox where to_phone = '972541112222' and body like '%הסכום לא תואם%' and body like '%אסמכתה מחדש%') = 1
+  and (select count(*) from system_messages where station_id = '0000000b-0000-0000-0000-000000000000' and level = 'warning' and body like '%הסכום לא תואם%') = 1,
+  'v2 pay: a rejection changes nothing and tells the station why (can send again)');
+set role anon; select testkit.as_station('tok-b');
+select (public.station_payment_submit(100, 1, 'bit', null) ->> 'id') as pr_b2 \gset
+select public.station_payment_cancel(:pr_b2);
+select testkit.check((select string_agg(e ->> 'status', ',' order by (e ->> 'id')::int) from json_array_elements(public.station_billing() -> 'requests') e) = 'rejected,cancelled',
+  'v2 pay: after a rejection the station sends again and can cancel its own waiting request');
+reset role;
+select testkit.check((select count(*) from information_schema.role_table_grants where grantee in ('anon', 'authenticated')
+  and table_name in ('payment_requests', 'support_tickets', 'support_messages', 'sub_alerts')) = 0, 'v2 pay: requests, support and alert tables are not reachable directly');
+
+-- ---------- subscription alerts ----------
+reset role;
+update stations set sub_end = (now() at time zone 'Asia/Jerusalem')::date + 2 where id = '0000000b-0000-0000-0000-000000000000';
+update stations set sub_end = (now() at time zone 'Asia/Jerusalem')::date - 1 where id = '0000000c-0000-0000-0000-000000000000';
+select testkit.check(public.subscription_alerts() = 4, 'v2 alerts: B (ends in 2 days) and C (ended yesterday): station + owner each; old and suspended stations skipped');
+select testkit.check((select count(*) from wa_outbox where to_phone = '972541112222' and body like 'תזכורת%בעוד 2 ימים%') = 1
+  and (select count(*) from wa_outbox where to_phone = '972520000003' and body like '%הבוט הפסיק לטפל%אין צורך לסרוק QR%') = 1
+  and (select count(*) from wa_outbox where to_phone = '972520000014') = 0
+  and (select count(*) from system_messages where station_id = '0000000c-0000-0000-0000-000000000000' and title = 'המנוי הסתיים') = 1,
+  'v2 alerts: the right texts reach the right phones; a long-ended station gets nothing');
+select testkit.check(public.subscription_alerts() = 0, 'v2 alerts: running again sends nothing twice');
+update stations set sub_end = sub_end + 1 where id = '0000000b-0000-0000-0000-000000000000';
+select testkit.check(public.subscription_alerts() = 2, 'v2 alerts: a new end date gets its own reminder');
+select testkit.check(not has_function_privilege('anon', 'public.subscription_alerts()', 'execute')
+  and not has_function_privilege('authenticated', 'public.subscription_alerts()', 'execute'), 'v2 alerts: only the server runs the alerts');
+update stations set sub_end = (now() at time zone 'Asia/Jerusalem')::date + 30 where id in ('0000000b-0000-0000-0000-000000000000', '0000000c-0000-0000-0000-000000000000');
+
+-- ---------- support ----------
+set role anon; select testkit.as_station('tok-a');
+select public.support_ticket_create('arm', 'הזרוע לא מתחברת', 'מאז הבוקר', '00000000-0000-0000-0001-00000000000a') as t_a \gset
+select set_config('v2.t_a', :'t_a', false);
+do $$ begin perform public.support_ticket_create('arm', 'x', 'y', '00000000-0000-0000-0001-00000000000b'); perform testkit.check(false, 'v2 support: an arm of another station is refused');
+exception when others then perform testkit.check(true, 'v2 support: an arm of another station is refused', sqlerrm); end $$;
+do $$ begin perform public.support_ticket_create('bugs', 'x', 'y'); perform testkit.check(false, 'v2 support: unknown category refused');
+exception when others then perform testkit.check(true, 'v2 support: unknown category refused', sqlerrm); end $$;
+select testkit.as_station('tok-b');
+select public.support_ticket_create('billing', 'שאלה על חשבונית', 'איפה החשבונית?') as t_b \gset
+select testkit.check((select count(*) from public.support_tickets()) = 1 and public.support_ticket_get(:t_a) is null, 'v2 support: a station sees only its own tickets');
+do $$ begin perform public.support_reply(current_setting('v2.t_a')::bigint, 'hack'); perform testkit.check(false, 'v2 support: a station cannot reply on another station''s ticket');
+exception when others then perform testkit.check(true, 'v2 support: a station cannot reply on another station''s ticket', sqlerrm); end $$;
+do $$ begin perform public.support_ticket_status(current_setting('v2.t_a')::bigint, 'closed'); perform testkit.check(false, 'v2 support: a station cannot set ticket status');
+exception when others then perform testkit.check(true, 'v2 support: a station cannot set ticket status'); end $$;
+reset role;
+select testkit.check((select count(*) from wa_outbox where to_phone = '972532306885' and body like 'פנייה חדשה #' || :t_a || ' מתחנה תחנה א: הזרוע לא מתחברת (זרוע)%'
+  and body like '%https://app.test/support?t=' || :t_a) = 1, 'v2 support: a new ticket reaches the owner on WhatsApp with a link');
+set role authenticated; select testkit.as_profile('00000000-0000-0000-0000-0000000000e1');
+do $$ begin perform public.support_ticket_create('other', 'x', 'y'); perform testkit.check(false, 'v2 support: a viewer cannot open a ticket');
+exception when others then perform testkit.check(true, 'v2 support: a viewer cannot open a ticket', sqlerrm); end $$;
+select testkit.as_owner();
+select testkit.check((select count(*) from public.support_tickets()) = 2 and (select count(*) from public.support_tickets('open')) = 2, 'v2 support: the owner sees all tickets');
+select public.support_reply(:t_a, 'נא לסרוק QR מחדש');
+select testkit.check((select status = 'waiting' and last_reply_by = 'owner' from public.support_tickets() where id = :t_a), 'v2 support: owner reply → waiting for the station');
+select testkit.as_owner('0000000b-0000-0000-0000-000000000000');
+select testkit.check((select count(*) from public.support_tickets()) = 1, 'v2 support: the owner acting as a station sees that station only');
+reset role;
+select testkit.check((select count(*) from wa_outbox where to_phone = '972507654321' and body like 'התקבלה תשובה לפנייה #' || :t_a || '%') = 1, 'v2 support: the station gets a WhatsApp about the reply');
+set role anon; select testkit.as_station('tok-a');
+select public.support_reply(:t_a, 'עדיין לא עובד', 'data:image/png;base64,iVBORw0KGgo=');
+select testkit.check((select status = 'open' and last_reply_by = 'station' from public.support_tickets() where id = :t_a), 'v2 support: station reply → open again');
+do $$ begin perform public.support_reply(current_setting('v2.t_a')::bigint, 'x', 'data:text/html;base64,PHNjcmlwdD4='); perform testkit.check(false, 'v2 support: a non-image attachment is refused');
+exception when others then perform testkit.check(true, 'v2 support: a non-image attachment is refused', sqlerrm); end $$;
+reset role;
+set role authenticated; select testkit.as_owner();
+select public.support_ticket_status(:t_a, 'closed');
+select public.support_reply(:t_a, 'סוגר');
+select testkit.check((select status from public.support_tickets() where id = :t_a) = 'closed', 'v2 support: an owner reply on a closed ticket keeps it closed');
+select testkit.check(json_array_length(public.support_ticket_get(:t_a) -> 'messages') = 4
+  and (public.support_ticket_get(:t_a) ->> 'arm_name') is not null, 'v2 support: the ticket shows all messages and the arm');
+reset role;
+
+-- ---------- the migration itself: runs again through the update center, and its undo removes only what it added ----------
+reset role;
+\set mv2 `cat ../supabase/pending/20261013_v2.sql`
+\set rv2 `cat ../supabase/pending/20261013_v2_rollback.sql`
+insert into releases (version, title, components, commit_sha, migration_sql, rollback_sql) values ('t2.0', 'test', '{db}', 'x', :'mv2', :'rv2') returning id as rel2 \gset
+create temp table v2_counts as select (select count(*) from group_flags) gf, (select count(*) from payment_requests) pr, (select count(*) from support_messages) sm,
+  (select count(*) from stations where logo_data is not null) logos, (select count(*) from station_payments) sp;
+select public.runner_exec(:rel2, false);
+select testkit.check((select gf = (select count(*) from group_flags) and pr = (select count(*) from payment_requests) and sm = (select count(*) from support_messages)
+  and logos = (select count(*) from stations where logo_data is not null) from v2_counts), 'v2 migration: running it again changes nothing (idempotent, works in the update runner)');
+create temp table v2_keep as select (select count(*) from stations) s, (select count(*) from arms) a, (select count(*) from groups) g, (select count(*) from arm_auth) au,
+  (select count(*) from station_payments) sp, (select count(*) from distribution_lists) dl, (select count(*) from wa_outbox) o, (select count(*) from system_messages) m;
+select public.runner_exec(:rel2, true);
+select testkit.check(to_regclass('public.payment_requests') is null and to_regclass('public.group_flags') is null and to_regprocedure('public.station_billing()') is null
+  and not exists (select 1 from information_schema.columns where table_name = 'stations' and column_name in ('logo_data', 'plan')), 'v2 migration: the undo removes the new objects');
+select testkit.check((select s = (select count(*) from stations) and a = (select count(*) from arms) and g = (select count(*) from groups) and au = (select count(*) from arm_auth)
+  and sp = (select count(*) from station_payments) and dl = (select count(*) from distribution_lists) and o = (select count(*) from wa_outbox) and m = (select count(*) from system_messages) from v2_keep),
+  'v2 migration: the undo keeps stations, arms, groups, connections, payments, lists, outbox and messages');
+select public.runner_exec(:rel2, false);
+select testkit.check(to_regclass('public.payment_requests') is not null and to_regprocedure('public.subscription_alerts()') is not null
+  and not has_function_privilege('anon', 'public.subscription_alerts()', 'execute'), 'v2 migration: applying again after the undo works');
+
+
 select n, case when ok then 'PASS' else 'FAIL' end as result, name, coalesce(left(detail, 80), '') from testkit.results where name not like '%(update attempted)%' order by n;
