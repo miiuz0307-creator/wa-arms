@@ -3,9 +3,10 @@
 // fingerprint / face (this device's own biometric unlock, via WebAuthn), or – without it – the station code,
 // a WhatsApp code to the manager's phone, or (main admin) the password.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Fingerprint, KeyRound, LogOut, MessageCircle, ShieldCheck } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Fingerprint, KeyRound, LogOut, MessageCircle, X } from 'lucide-react';
 import { sb, enterStationMode } from '@/lib/supabase';
-import { Button, Field, Input } from './ui';
+import { BrandMark } from './Brand';
+import { Button, Card, Field, Input, cx } from './ui';
 
 const KEY = 'wa-lock-cred';
 const LAST = 'wa-last-active';
@@ -48,10 +49,10 @@ export function RememberMe() {
     } catch {}
   }, []);
   return (
-    <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-600">
+    <label className="flex cursor-pointer items-start gap-2.5 text-sm leading-snug text-slate-600">
       <input
         type="checkbox"
-        className="h-4 w-4 accent-indigo-600"
+        className="mt-0.5 h-[18px] w-[18px] shrink-0 rounded border-slate-300 accent-indigo-600"
         checked={on}
         onChange={(e) => {
           setOn(e.target.checked);
@@ -61,8 +62,29 @@ export function RememberMe() {
           } catch {}
         }}
       />
-      זכור אותי במכשיר הזה ({REMEMBER_DAYS} יום, בלי לבקש קוד בכל פתיחה)
+      <span>
+        לזכור אותי במכשיר הזה
+        <span className="block text-xs text-slate-500">
+          <span className="tabular-nums">{REMEMBER_DAYS}</span> יום בלי לבקש קוד בכל פתיחה
+        </span>
+      </span>
     </label>
+  );
+}
+
+/** Inline message under a login / lock form (the toast host is not mounted on these screens). */
+export function FormNote({ ok, children }: { ok?: boolean; children: React.ReactNode }) {
+  return (
+    <div
+      role={ok ? 'status' : 'alert'}
+      className={cx(
+        'flex items-start gap-2.5 rounded-xl px-3.5 py-3 text-sm leading-relaxed ring-1 ring-inset',
+        ok ? 'bg-emerald-50 text-emerald-800 ring-emerald-600/20' : 'bg-rose-50 text-rose-700 ring-rose-600/20',
+      )}
+    >
+      {ok ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /> : <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />}
+      <div className="min-w-0">{children}</div>
+    </div>
   );
 }
 
@@ -95,7 +117,7 @@ async function registerBiometric(name: string) {
   const cred = (await navigator.credentials.create({
     publicKey: {
       challenge: rand(32),
-      rp: { name: 'זרועות', id: window.location.hostname },
+      rp: { name: 'BotiX', id: window.location.hostname },
       user: { id: rand(16), name, displayName: name },
       pubKeyCredParams: [
         { type: 'public-key', alg: -7 },
@@ -192,12 +214,18 @@ export function AppLock({
   return (
     <>
       {offerBio && (
-        <div className="fixed inset-x-3 bottom-24 z-50 mx-auto max-w-md rounded-2xl bg-slate-900 p-4 text-white shadow-2xl md:bottom-6">
+        <div
+          role="dialog"
+          aria-label="כניסה בטביעת אצבע"
+          className="fixed inset-x-3 bottom-24 z-50 mx-auto max-w-md animate-rise rounded-2xl bg-[#151920] p-4 text-white shadow-[var(--shadow-pop)] ring-1 ring-white/10 md:bottom-6"
+        >
           <div className="flex items-start gap-3">
-            <Fingerprint className="mt-0.5 h-6 w-6 shrink-0 text-emerald-400" />
-            <div className="flex-1 text-sm">
-              <div className="font-semibold">כניסה בטביעת אצבע / זיהוי פנים</div>
-              <div className="mt-0.5 text-white/70">בכל פתיחה של האפליקציה תתבקש לאשר. בלי זה תצטרך להזין קוד בכל פעם.</div>
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/10">
+              <Fingerprint className="h-5 w-5 text-[#7ee2b8]" />
+            </div>
+            <div className="min-w-0 flex-1 text-sm">
+              <div className="font-semibold">כניסה בטביעת אצבע או בזיהוי פנים</div>
+              <div className="mt-0.5 leading-relaxed text-white/70">בכל פתיחה של האפליקציה תאשר בנגיעה אחת. בלי זה תצטרך להקליד קוד בכל פעם.</div>
               <div className="mt-3 flex gap-2">
                 <Button
                   size="sm"
@@ -211,12 +239,13 @@ export function AppLock({
                     setOfferBio(false);
                   }}
                 >
+                  <Fingerprint className="h-4 w-4" />
                   הפעלה
                 </Button>
                 <Button
                   size="sm"
                   variant="ghost"
-                  className="text-white/70 hover:bg-white/10"
+                  className="!text-white/70 hover:!bg-white/10 hover:!text-white"
                   onClick={() => {
                     set(ASKED, '1');
                     setOfferBio(false);
@@ -226,6 +255,17 @@ export function AppLock({
                 </Button>
               </div>
             </div>
+            <button
+              type="button"
+              aria-label="סגירה"
+              onClick={() => {
+                set(ASKED, '1');
+                setOfferBio(false);
+              }}
+              className="rounded-lg p-1.5 text-white/50 hover:bg-white/10 hover:text-white"
+            >
+              <X className="h-4 w-4" />
+            </button>
           </div>
         </div>
       )}
@@ -301,80 +341,95 @@ function LockScreen({
     }
   }
 
+  const switchTo = (m: typeof mode) => {
+    setMode(m);
+    setValue('');
+    setErr(null);
+    if (m === 'phone') setSent(false);
+  };
+  const others: { m: typeof mode; label: string; icon: any }[] = [
+    ...(hasBio && mode !== 'bio' ? [{ m: 'bio' as const, label: 'טביעת אצבע', icon: Fingerprint }] : []),
+    ...(isStation && mode !== 'code' ? [{ m: 'code' as const, label: 'קוד תחנה', icon: KeyRound }] : []),
+    ...(isStation && mode !== 'phone' ? [{ m: 'phone' as const, label: 'קוד בוואטסאפ', icon: MessageCircle }] : []),
+    ...(!isStation && mode !== 'password' ? [{ m: 'password' as const, label: 'סיסמה', icon: KeyRound }] : []),
+  ];
+
   return (
-    <div className="grid min-h-dvh place-items-center bg-slate-50 p-6">
-      <div className="w-full max-w-sm text-center">
-        <div className="brand-gradient mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl text-white shadow-lg">
-          <ShieldCheck className="h-7 w-7" />
-        </div>
-        <h1 className="text-xl font-bold">האפליקציה נעולה</h1>
-        <p className="mt-1 text-sm text-slate-500">אשר שזה אתה כדי להמשיך</p>
-
-        {mode === 'bio' ? (
-          <Button size="lg" className="mt-6 w-full" onClick={bio}>
-            <Fingerprint className="h-5 w-5" />
-            טביעת אצבע / זיהוי פנים
-          </Button>
-        ) : (
-          <form onSubmit={submit} className="mt-6 space-y-3 text-right">
-            {mode === 'phone' && (
-              <Field label="מספר הטלפון של מנהל התחנה">
-                <Input dir="ltr" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="050-0000000" disabled={sent} required />
-              </Field>
-            )}
-            {(mode !== 'phone' || sent) && (
-              <Field label={mode === 'password' ? 'סיסמה' : mode === 'code' ? 'קוד התחנה' : 'הקוד שקיבלת בוואטסאפ'}>
-                <Input
-                  dir="ltr"
-                  type={mode === 'password' ? 'password' : 'text'}
-                  inputMode={mode === 'phone' ? 'numeric' : undefined}
-                  autoComplete={mode === 'password' ? 'current-password' : 'one-time-code'}
-                  value={value}
-                  onChange={(e) => setValue(mode === 'code' ? e.target.value.toUpperCase() : e.target.value)}
-                  className="text-center font-mono text-lg tracking-widest"
-                  autoFocus
-                  required
-                />
-              </Field>
-            )}
-            <Button type="submit" size="lg" className="w-full" loading={busy}>
-              {mode === 'phone' && !sent ? 'שליחת קוד בוואטסאפ' : 'כניסה'}
-            </Button>
-          </form>
-        )}
-        {err && <div className="mt-3 rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{err}</div>}
-        <div className="mt-4 flex justify-center">
-          <RememberMe />
+    <div className="grid min-h-dvh place-items-center bg-[var(--bg)] p-4 sm:p-6">
+      <div className="w-full max-w-sm">
+        <div className="mb-6 flex flex-col items-center text-center">
+          <BrandMark size={52} />
+          <h1 className="mt-4 text-[22px] font-bold tracking-tight text-slate-900">האפליקציה נעולה</h1>
+          <p className="mt-1 text-sm text-slate-500">כדי להמשיך, אשר שזה אתה.</p>
         </div>
 
-        <div className="mt-6 flex flex-wrap justify-center gap-x-4 gap-y-2 text-sm font-medium text-slate-500">
-          {hasBio && mode !== 'bio' && (
-            <button onClick={() => setMode('bio')} className="flex items-center gap-1 hover:text-indigo-600">
-              <Fingerprint className="h-4 w-4" />
-              טביעת אצבע
-            </button>
+        <Card className="p-5">
+          {mode === 'bio' ? (
+            <div className="text-center">
+              <div className="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-2xl bg-indigo-50 text-indigo-600">
+                <Fingerprint className="h-8 w-8" />
+              </div>
+              <Button size="lg" className="w-full" onClick={bio}>
+                <Fingerprint className="h-5 w-5" />
+                פתיחה בטביעת אצבע / זיהוי פנים
+              </Button>
+            </div>
+          ) : (
+            <form onSubmit={submit} className="space-y-4">
+              {mode === 'phone' && (
+                <Field label="מספר הטלפון של מנהל התחנה">
+                  <Input dir="ltr" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="050-0000000" disabled={sent} required autoComplete="tel" />
+                </Field>
+              )}
+              {(mode !== 'phone' || sent) && (
+                <Field label={mode === 'password' ? 'הסיסמה שלך' : mode === 'code' ? 'קוד התחנה' : 'הקוד שקיבלת בוואטסאפ'}>
+                  <Input
+                    dir="ltr"
+                    type={mode === 'password' ? 'password' : 'text'}
+                    inputMode={mode === 'phone' ? 'numeric' : undefined}
+                    autoComplete={mode === 'password' ? 'current-password' : 'one-time-code'}
+                    value={value}
+                    onChange={(e) => setValue(mode === 'code' ? e.target.value.toUpperCase() : e.target.value)}
+                    className={cx('text-center tabular-nums', mode !== 'password' && 'font-mono text-lg tracking-widest')}
+                    autoFocus
+                    required
+                  />
+                </Field>
+              )}
+              <Button type="submit" size="lg" className="w-full" loading={busy}>
+                {mode === 'phone' && !sent ? 'שליחת קוד בוואטסאפ' : 'פתיחה'}
+              </Button>
+            </form>
           )}
-          {isStation && mode !== 'code' && (
-            <button onClick={() => (setMode('code'), setValue(''), setErr(null))} className="flex items-center gap-1 hover:text-indigo-600">
-              <KeyRound className="h-4 w-4" />
-              קוד תחנה
-            </button>
+          {err && (
+            <div className="mt-4">
+              <FormNote>{err}</FormNote>
+            </div>
           )}
-          {isStation && mode !== 'phone' && (
-            <button onClick={() => (setMode('phone'), setValue(''), setSent(false), setErr(null))} className="flex items-center gap-1 hover:text-indigo-600">
-              <MessageCircle className="h-4 w-4" />
-              קוד בוואטסאפ
+          <div className="mt-4 border-t border-slate-100 pt-4">
+            <RememberMe />
+          </div>
+        </Card>
+
+        <div className="mt-5 flex flex-wrap justify-center gap-1">
+          {others.map((o) => (
+            <button
+              key={o.m}
+              type="button"
+              onClick={() => switchTo(o.m)}
+              className="flex h-10 items-center gap-1.5 rounded-lg px-3 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+            >
+              <o.icon className="h-4 w-4" />
+              {o.label}
             </button>
-          )}
-          {!isStation && mode !== 'password' && (
-            <button onClick={() => (setMode('password'), setValue(''), setErr(null))} className="flex items-center gap-1 hover:text-indigo-600">
-              <KeyRound className="h-4 w-4" />
-              סיסמה
-            </button>
-          )}
-          <button onClick={onSignOut} className="flex items-center gap-1 hover:text-rose-600">
+          ))}
+          <button
+            type="button"
+            onClick={onSignOut}
+            className="flex h-10 items-center gap-1.5 rounded-lg px-3 text-sm font-medium text-slate-500 hover:bg-rose-50 hover:text-rose-700"
+          >
             <LogOut className="h-4 w-4" />
-            יציאה
+            יציאה מהחשבון
           </button>
         </div>
       </div>

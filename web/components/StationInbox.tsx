@@ -1,6 +1,7 @@
 'use client';
 // What the system owner shows inside a station's app: system messages and the payment reminder.
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { AlertTriangle, CalendarClock, Info, Megaphone, X } from 'lucide-react';
 import { sb } from '@/lib/supabase';
 import { cx } from './ui';
@@ -53,42 +54,71 @@ export function StationBanners({ inbox }: { inbox: Inbox | null }) {
   };
   const msgs = inbox.messages.filter((m) => !dismissed.includes(m.id));
   const b = inbox.billing;
+  const tone = (level: 'red' | 'amber' | 'blue') =>
+    level === 'red'
+      ? 'bg-rose-50 text-rose-900 ring-rose-600/20 [&_svg]:text-rose-600'
+      : level === 'amber'
+        ? 'bg-amber-50 text-amber-900 ring-amber-600/25 [&_svg]:text-amber-600'
+        : 'bg-indigo-50 text-indigo-900 ring-indigo-600/20 [&_svg]:text-indigo-600';
   return (
     <>
       {b && b.remind && (
         <div
+          role="status"
           className={cx(
-            'mx-auto mb-4 flex max-w-6xl items-start gap-2.5 rounded-2xl px-4 py-3 text-sm ring-1',
-            b.owed > 0 || (b.days_left ?? 1) < 0 ? 'bg-rose-50 text-rose-900 ring-rose-200' : 'bg-amber-50 text-amber-900 ring-amber-200',
+            'mx-auto mb-4 flex max-w-6xl items-start gap-3 rounded-2xl px-4 py-3 text-sm ring-1 ring-inset',
+            tone(b.owed > 0 || (b.days_left ?? 1) < 0 ? 'red' : 'amber'),
           )}
         >
           <CalendarClock className="mt-0.5 h-4 w-4 shrink-0" />
-          <div>
+          <div className="min-w-0 flex-1">
             <div className="font-semibold">
-              {b.owed > 0
-                ? `המנוי הסתיים ב-${fmtDate(b.sub_end)} – לתשלום ${money(b.owed)}`
-                : b.days_left === 0
-                  ? `התשלום החודשי (${money(b.price)}) מגיע היום`
-                  : `תזכורת: התשלום החודשי (${money(b.price)}) מגיע בעוד ${b.days_left} ימים, ב-${fmtDate(b.sub_end)}`}
+              {b.owed > 0 ? (
+                <>
+                  המנוי הסתיים ב-<span className="tabular-nums">{fmtDate(b.sub_end)}</span> · לתשלום <span className="tabular-nums">{money(b.owed)}</span>
+                </>
+              ) : b.days_left === 0 ? (
+                <>
+                  התשלום החודשי (<span className="tabular-nums">{money(b.price)}</span>) מגיע היום
+                </>
+              ) : (
+                <>
+                  תזכורת: התשלום החודשי (<span className="tabular-nums">{money(b.price)}</span>) מגיע בעוד <span className="tabular-nums">{b.days_left}</span> ימים, ב-
+                  <span className="tabular-nums">{fmtDate(b.sub_end)}</span>
+                </>
+              )}
             </div>
-            {b.payment_note && <div className="mt-0.5 whitespace-pre-line">{b.payment_note}</div>}
+            {b.payment_note && <div className="mt-0.5 whitespace-pre-line leading-relaxed opacity-90">{b.payment_note}</div>}
           </div>
+          <Link
+            href="/subscription"
+            className="-my-1 inline-flex h-9 shrink-0 items-center rounded-xl bg-white px-3 text-[13px] font-semibold ring-1 ring-inset ring-black/10 hover:bg-slate-50"
+          >
+            לחידוש המנוי
+          </Link>
         </div>
       )}
       {msgs.map((m) => (
         <div
           key={m.id}
+          role={m.level === 'urgent' ? 'alert' : 'status'}
           className={cx(
-            'mx-auto mb-4 flex max-w-6xl items-start gap-2.5 rounded-2xl px-4 py-3 text-sm ring-1',
-            m.level === 'urgent' ? 'bg-rose-50 text-rose-900 ring-rose-200' : m.level === 'warning' ? 'bg-amber-50 text-amber-900 ring-amber-200' : 'bg-indigo-50 text-indigo-900 ring-indigo-200',
+            'mx-auto mb-4 flex max-w-6xl items-start gap-3 rounded-2xl px-4 py-3 text-sm ring-1 ring-inset',
+            tone(m.level === 'urgent' ? 'red' : m.level === 'warning' ? 'amber' : 'blue'),
           )}
         >
           {m.level === 'urgent' ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> : m.level === 'warning' ? <Megaphone className="mt-0.5 h-4 w-4 shrink-0" /> : <Info className="mt-0.5 h-4 w-4 shrink-0" />}
           <div className="min-w-0 flex-1">
             <div className="font-semibold">{m.title}</div>
-            {m.body && <div className="mt-0.5 whitespace-pre-line">{m.body}</div>}
+            {m.body && <div className="mt-0.5 whitespace-pre-line leading-relaxed opacity-90">{m.body}</div>}
           </div>
-          <button onClick={() => dismiss(m.id)} className="rounded-lg p-1 opacity-60 hover:bg-white/60 hover:opacity-100" title="סגירה">
+          <button
+            type="button"
+            onClick={() => dismiss(m.id)}
+            className="-m-1 grid h-8 w-8 shrink-0 place-items-center rounded-lg opacity-70 hover:bg-black/5 hover:opacity-100"
+            title="הסתרת ההודעה"
+            aria-label={`הסתרת ההודעה: ${m.title}`}
+          >
             <X className="h-4 w-4" />
           </button>
         </div>
