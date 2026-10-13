@@ -48,6 +48,8 @@ function GroupsAndLists() {
   const [listMode, setListMode] = useState<'in' | 'add'>('in');
   const [statusF, setStatusF] = useState<'all' | 'ok' | 'bad'>('all');
   const [showUnavailable, setShowUnavailable] = useState(true);
+  // outside a list: all groups / only groups not in any list yet / only groups already in lists
+  const [assignF, setAssignF] = useState<'all' | 'none' | 'assigned'>('all');
   const [sel, setSel] = useState<Set<string>>(new Set());
 
   const [addOpen, setAddOpen] = useState(false);
@@ -140,10 +142,11 @@ function GroupsAndLists() {
         (!t || r.name.toLowerCase().includes(t)) &&
         (!armF || r.armIds.includes(armF)) &&
         (!listF || (listMode === 'in' ? r.lists.includes(listF) : !r.lists.includes(listF))) &&
+        (listF || assignF === 'all' || (assignF === 'none' ? r.lists.length === 0 : r.lists.length > 0)) &&
         (statusF === 'all' || (statusF === 'ok' ? r.available : !r.available)) &&
         (showUnavailable || r.available || (listF && listMode === 'in' && r.lists.includes(listF))),
     );
-  }, [viewRows, q, armF, listF, listMode, statusF, showUnavailable]);
+  }, [viewRows, q, armF, listF, listMode, assignF, statusF, showUnavailable]);
 
   useEffect(() => setSel(new Set()), [armF, listF, listMode]);
 
@@ -276,6 +279,31 @@ function GroupsAndLists() {
             })}
           </div>
         )}
+        {!curList && (
+          <div className="mb-3 grid grid-cols-3 gap-1 rounded-xl bg-slate-100 p-1" role="tablist">
+            {(
+              [
+                ['all', 'כל הקבוצות', rows.length],
+                ['none', 'לא ברשימה', rows.filter((r) => r.lists.length === 0).length],
+                ['assigned', 'כבר ברשימות', rows.filter((r) => r.lists.length > 0).length],
+              ] as const
+            ).map(([m, label, n]) => (
+              <button
+                key={m}
+                type="button"
+                role="tab"
+                aria-selected={assignF === m}
+                onClick={() => setAssignF(m)}
+                className={cx(
+                  'rounded-lg px-2 py-2 text-sm font-medium transition',
+                  assignF === m ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800',
+                )}
+              >
+                {label} <span className="text-slate-400">{n}</span>
+              </button>
+            ))}
+          </div>
+        )}
         {/* filters */}
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <div className="relative min-w-48 flex-1">
@@ -291,14 +319,10 @@ function GroupsAndLists() {
             ))}
           </Select>
           <Select value={statusF} onChange={(e) => setStatusF(e.target.value as any)} className="w-auto">
-            <option value="all">כל הסטטוסים</option>
-            <option value="ok">זמינות</option>
-            <option value="bad">לא זמינות</option>
+            <option value="all">כל הקבוצות</option>
+            <option value="ok">רק קבוצות שמקבלות נסיעות</option>
+            <option value="bad">רק קבוצות עם בעיה</option>
           </Select>
-          <label className="flex items-center gap-2 text-sm text-slate-600">
-            <Toggle checked={showUnavailable} onChange={setShowUnavailable} />
-            הצג קבוצות לא זמינות
-          </label>
           {armF && can('admin') && (
             <Button size="sm" variant="secondary" onClick={refreshArm} disabled={armById[armF]?.status !== 'online'}>
               <RefreshCw className="h-4 w-4" /> רענן מ-WhatsApp
@@ -355,28 +379,30 @@ function GroupsAndLists() {
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="truncate text-sm font-medium">{r.name}</span>
-                        {r.available ? (
-                          <Badge tone="green" dot>
-                            זמינה
-                          </Badge>
+                        {r.lists.length > 0 ? (
+                          <Badge tone="sky">✓ ברשימה</Badge>
                         ) : (
+                          <Badge tone="amber">לא ברשימה</Badge>
+                        )}
+                        {!r.available && (
                           <Badge tone="red" dot>
-                            לא זמינה – {r.reason}
+                            לא תקבל נסיעות – {r.reason}
                           </Badge>
                         )}
                       </div>
-                      <div className="mt-0.5 truncate text-xs text-slate-500">
-                        {r.armIds.length ? r.armIds.map((id) => armById[id]?.name || '?').join(' · ') : 'אין זרוע'}
-                      </div>
                       {r.lists.length > 0 && (
-                        <div className="mt-1 flex flex-wrap gap-1">
+                        <div className="mt-1 flex flex-wrap items-center gap-1">
+                          <span className="text-[11px] font-medium text-sky-700">ברשימות:</span>
                           {r.lists.map((id) => (
-                            <span key={id} className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600">
+                            <span key={id} className="rounded-md bg-sky-50 px-1.5 py-0.5 text-[11px] font-medium text-sky-800 ring-1 ring-inset ring-sky-600/20">
                               {listById[id]?.name || '—'}
                             </span>
                           ))}
                         </div>
                       )}
+                      <div className="mt-1 truncate text-[11px] text-slate-400">
+                        זרועות בקבוצה: {r.armIds.length ? r.armIds.map((id) => armById[id]?.name || '?').join(' · ') : 'אין'}
+                      </div>
                     </div>
                     {r.participants != null && (
                       <span className="flex shrink-0 items-center gap-1 text-xs text-slate-400">
