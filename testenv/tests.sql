@@ -848,6 +848,31 @@ select testkit.check(json_array_length(public.support_ticket_get(:t_a) -> 'messa
   and (public.support_ticket_get(:t_a) ->> 'arm_name') is not null, 'v2 support: the ticket shows all messages and the arm');
 reset role;
 
+-- ---------- message footer (owner controls the line under every message) ----------
+reset role;
+set role authenticated; select testkit.as_owner();
+select testkit.check(public.owner_footer_set(null, '  🚕 BotiX – הפצה חכמה לתחנות  ') = (select count(*) from stations), 'v2 footer: the owner sets the footer for all stations at once');
+select testkit.check((select bool_and(footer_text = '🚕 BotiX – הפצה חכמה לתחנות' and enabled) from public.owner_footers()), 'v2 footer: all stations got the trimmed text, enabled');
+select testkit.check(public.owner_footer_set(array['0000000b-0000-0000-0000-000000000000']::uuid[], 'תחנה ב – 03-1234567') = 1, 'v2 footer: one station can get its own footer');
+select public.owner_footer_set(array['0000000c-0000-0000-0000-000000000000']::uuid[], 'x', false);
+do $$ begin perform public.owner_footer_set(null, repeat('א', 501)); perform testkit.check(false, 'v2 footer: over 500 characters refused');
+exception when others then perform testkit.check(true, 'v2 footer: over 500 characters refused', sqlerrm); end $$;
+reset role;
+set role anon; select testkit.as_station('tok-a');
+select testkit.check((public.station_footer()->>'footer_text') = '🚕 BotiX – הפצה חכמה לתחנות', 'v2 footer: a station sees its own footer');
+do $$ begin perform public.owner_footer_set(null, 'hack'); perform testkit.check(false, 'v2 footer: a station cannot change footers');
+exception when others then perform testkit.check(true, 'v2 footer: a station cannot change footers'); end $$;
+do $$ begin perform public.engine_station_footer('0000000a-0000-0000-0000-000000000000'); perform testkit.check(false, 'v2 footer: only the engine reads any station''s footer');
+exception when others then perform testkit.check(true, 'v2 footer: only the engine reads any station''s footer'); end $$;
+select testkit.as_engine();
+select testkit.check(public.engine_station_footer('0000000b-0000-0000-0000-000000000000') = 'תחנה ב – 03-1234567'
+  and public.engine_station_footer('0000000c-0000-0000-0000-000000000000') is null, 'v2 footer: the engine gets each station''s text, none when switched off');
+reset role;
+set role authenticated; select testkit.as_owner();
+select public.owner_footer_set(null, '');
+select testkit.check((select bool_and(not enabled) from public.owner_footers()), 'v2 footer: an empty text switches the footer off everywhere');
+reset role;
+
 -- ---------- the migration itself: runs again through the update center, and its undo removes only what it added ----------
 reset role;
 \set mv2 `cat ../supabase/pending/20261013_v2.sql`
