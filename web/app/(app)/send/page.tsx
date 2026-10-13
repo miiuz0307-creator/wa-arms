@@ -7,6 +7,7 @@ import { ARM_STATUS } from '@/lib/format';
 import { RequireRole } from '@/components/Shell';
 import { GroupPicker, mergeGroups } from '@/components/GroupPicker';
 import { Badge, Button, Card, Checkbox, PageHeader, Select, Spinner, Textarea, cx, toast } from '@/components/ui';
+import { allGroups } from '@/lib/allRows';
 
 export default function SendPage() {
   return (
@@ -37,7 +38,7 @@ function Wizard() {
     (async () => {
       const [a, g, l, s] = await Promise.all([
         sb().from('arms').select('*').eq('is_active', true).order('created_at'),
-        sb().from('groups').select('arm_id,wa_group_id,name,participants').limit(5000),
+        allGroups('arm_id,wa_group_id,name,participants'),
         sb().from('distribution_lists').select('id,name').order('name'),
         sb().from('app_settings').select('*').limit(1).single(),
       ]);

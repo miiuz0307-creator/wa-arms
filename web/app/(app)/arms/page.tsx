@@ -9,6 +9,7 @@ import { ARM_STATUS, timeAgo } from '@/lib/format';
 import { RequireRole } from '@/components/Shell';
 import { Badge, Button, Card, Empty, Field, Input, Modal, PageHeader, Select, Spinner, Textarea, Toggle, toast } from '@/components/ui';
 import { useInbox } from '@/components/StationInbox';
+import { allGroups } from '@/lib/allRows';
 
 const WARMUP_MS = 24 * 60 * 60_000;
 /** A new number sends slowly (6 msgs/min) for 24h after linking, so WhatsApp does not flag it. */
@@ -42,7 +43,7 @@ function Arms() {
     const [a, q, g] = await Promise.all([
       sb().from('arms').select('*').order('created_at'),
       sb().from('arm_qr').select('*'),
-      sb().from('groups').select('arm_id'),
+      allGroups('arm_id'),
     ]);
     setArms(a.data || []);
     setQr(Object.fromEntries((q.data || []).map((r: any) => [r.arm_id, r.qr])));

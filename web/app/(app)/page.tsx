@@ -7,6 +7,7 @@ import { useRealtime } from '@/lib/hooks';
 import { useAuth } from '@/lib/auth';
 import { ACTION_LABEL, KIND_LABEL, ARM_STATUS, CAMPAIGN_STATUS, firstLine, fmtTime, timeAgo } from '@/lib/format';
 import { Badge, Card, PageHeader, Progress, Spinner, Stat, Button } from '@/components/ui';
+import { allGroups } from '@/lib/allRows';
 
 export default function Dashboard() {
   const { can, profile, isSuper, station } = useAuth();
@@ -16,7 +17,7 @@ export default function Dashboard() {
     const today = new Date().toISOString().slice(0, 10);
     const [arms, groups, active, pendingPhone, recentFailed, log] = await Promise.all([
       sb().from('arms').select('*').order('created_at'),
-      sb().from('groups').select('arm_id,wa_group_id'),
+      allGroups('arm_id,wa_group_id'),
       sb().from('campaigns').select('*').in('status', ['queued', 'running', 'paused']).order('created_at', { ascending: false }).limit(8),
       sb().from('campaigns').select('id', { count: 'exact', head: true }).eq('status', 'pending_phone'),
       sb()

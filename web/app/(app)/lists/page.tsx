@@ -6,6 +6,7 @@ import { useAuth, myUid } from '@/lib/auth';
 import { RequireRole } from '@/components/Shell';
 import { GroupPicker, mergeGroups } from '@/components/GroupPicker';
 import { Button, Card, Checkbox, Empty, Field, Input, Modal, PageHeader, Spinner, toast } from '@/components/ui';
+import { allGroups } from '@/lib/allRows';
 
 export default function ListsPage() {
   return (
@@ -111,7 +112,7 @@ function ListEditor({ list, onClose, onSaved }: { list: any; onClose: () => void
     (async () => {
       const [a, g, lg, la] = await Promise.all([
         sb().from('arms').select('id,name,status').order('created_at'),
-        sb().from('groups').select('arm_id,wa_group_id,name,participants').limit(5000),
+        allGroups('arm_id,wa_group_id,name,participants'),
         list.id ? sb().from('list_groups').select('wa_group_id').eq('list_id', list.id) : Promise.resolve({ data: [] }),
         list.id ? sb().from('list_arms').select('arm_id').eq('list_id', list.id) : Promise.resolve({ data: [] }),
       ]);
