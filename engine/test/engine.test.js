@@ -495,7 +495,7 @@ test('row cap: a ride to lists with 2,500 groups gets all 2,500 (not the first 1
 });
 
 test('row cap guard: no read of a big table without paging (engine and website)', () => {
-  // Tables that can pass 1,000 rows for one station or one ride. A read must page (fetchAll / allGroups /
+  // Tables that can pass 1,000 rows for one station or one ride. A read must page (fetchAll / allRows / allGroups /
   // .range) or be bounded (.limit(n<=1000), .single(), head count, one id).
   const BIG = ['groups', 'list_groups', 'campaign_targets', 'campaigns', 'activity_log', 'processed_messages', 'arm_auth', 'quote_sessions', 'campaign_arms'];
   const root = path.join(__dirname, '..', '..');
@@ -521,7 +521,7 @@ test('row cap guard: no read of a big table without paging (engine and website)'
       const s = before.split(';').pop() + ' ' + rest.split(';')[0];
       if (!/\.select\(/.test(s)) return; // writes are fine
       // bounded by design: mark the line with  // rows: bounded – <why>
-      const ok = /fetchAll|allGroups|\.range\(|\.single\(|\.maybeSingle\(|head:\s*true|\.eq\('id'|\.limit\((\d{1,3}|1000)\)|rows: bounded/.test(s);
+      const ok = /fetchAll|allGroups|allRows|\.range\(|\.single\(|\.maybeSingle\(|head:\s*true|\.eq\('id'|\.limit\((\d{1,3}|1000)\)|rows: bounded/.test(s);
       if (!ok && !/rows: bounded/.test(lines.slice(i, i + 4).join(' '))) bad.push(`${path.relative(root, f)}:${i + 1} ${m[1]}`);
     });
   }
