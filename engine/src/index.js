@@ -5,6 +5,7 @@ const help = require('./help');
 const quote = require('./quote');
 const backup = require('./backup');
 const outbox = require('./outbox');
+const gates = require('./gates');
 const { randomBetween, sleep } = require('./util');
 
 const arms = new Map(); // arm id -> Arm
@@ -290,9 +291,11 @@ async function sendOne(arm) {
   let errText = null;
   let uncertain = false;
   const messageId = msgIdFor(job.target_id, arm.id);
+  // the owner's footer line under every message of this station (cached; on any doubt the text goes as is)
+  const text = gates.withFooter(job.final_text, await gates.stationFooter(arm.stationId).catch(() => ''));
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      await arm.send(job.wa_group_id, job.final_text, messageId);
+      await arm.send(job.wa_group_id, text, messageId);
       ok = true;
       break;
     } catch (e) {

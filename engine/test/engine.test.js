@@ -781,3 +781,25 @@ test('reachability: any doubt (database error, empty answers) keeps every group 
   assert.equal(gates.armCanSend({ is_active: true, status: 'online', sent_day: '2000-01-01', sent_today: 5, daily_limit: 0 }), true);
   assert.equal(gates.armCanSend({ is_active: true, status: 'online', sent_day: today, sent_today: 5, daily_limit: 5 }), !sameDay);
 });
+
+// ---------- message footer (owner's line under every message) ----------
+test('footer: added once under the message; none / already there → text unchanged', () => {
+  assert.equal(gates.withFooter('נסיעה מחיפה', '🚕 BotiX'), 'נסיעה מחיפה\n\n🚕 BotiX');
+  assert.equal(gates.withFooter('נסיעה מחיפה\n\n🚕 BotiX', '🚕 BotiX'), 'נסיעה מחיפה\n\n🚕 BotiX');
+  assert.equal(gates.withFooter('נסיעה', ''), 'נסיעה');
+  assert.equal(gates.withFooter('נסיעה', null), 'נסיעה');
+});
+
+test('footer: read per station and cached; database error → last known footer, never throws', async () => {
+  gates._reset();
+  let answer = { data: 'תחנה א – 03-1234567', error: null };
+  dbAnswer((op) => (op.rpc === 'engine_station_footer' ? answer : { data: [], error: null }));
+  ops.length = 0;
+  assert.equal(await gates.stationFooter('st'), 'תחנה א – 03-1234567');
+  assert.equal(await gates.stationFooter('st'), 'תחנה א – 03-1234567');
+  assert.equal(ops.filter((o) => o.rpc === 'engine_station_footer').length, 1, 'cached');
+  gates._reset();
+  answer = { data: null, error: { message: 'function does not exist' } };
+  assert.equal(await gates.stationFooter('st'), '', 'old database without the function → no footer');
+  assert.equal(await gates.stationFooter(null), '');
+});

@@ -178,7 +178,43 @@ async function includeAnyway(stationId) {
   return new Set([...flags].filter(([, f]) => f.include_anyway).map(([g]) => g));
 }
 
+// ---------- message footer (the owner's line under every message of a station) ----------
+const FOOTER_TTL_MS = 30_000;
+const footerCache = new Map(); // station -> { at, ttl, value, pending }
+
+// the footer text for a station, or '' (none / switched off / DB without the function / error → last known)
+async function stationFooter(stationId) {
+  if (!stationId) return '';
+  const c = footerCache.get(stationId);
+  if (c?.pending) return c.pending;
+  if (c && Date.now() - c.at < c.ttl) return c.value;
+  const pending = withLimit(db.rpc('engine_station_footer', { p_station: stationId }))
+    .then(({ data, error }) => {
+      if (error) throw error;
+      const value = typeof data === 'string' ? data.trim() : '';
+      footerCache.set(stationId, { at: Date.now(), ttl: FOOTER_TTL_MS, value });
+      return value;
+    })
+    .catch((e) => {
+      if (onceAnHour(`footer-err|${stationId}`)) log.warn({ station: stationId, err: String(e?.message || e).slice(0, 120) }, 'footer check failed – last known footer used');
+      const value = c?.value || '';
+      footerCache.set(stationId, { at: Date.now(), ttl: ERROR_TTL_MS, value });
+      return value;
+    });
+  footerCache.set(stationId, { ...(c || {}), pending });
+  return pending;
+}
+
+// the message with the footer under it (once: a text that already ends with it is left as is)
+function withFooter(text, footer) {
+  const t = String(text ?? '');
+  const f = String(footer || '').trim();
+  if (!f || t.trimEnd().endsWith(f)) return t;
+  return `${t.trimEnd()}\n\n${f}`;
+}
+
 function _reset() {
+  footerCache.clear();
   activeCache.clear();
   flagsCache.clear();
   warnedAt.clear();
@@ -194,5 +230,7 @@ module.exports = {
   targetRows,
   armCanSend,
   UNREACHABLE_TEXT,
+  stationFooter,
+  withFooter,
   _reset,
 };
