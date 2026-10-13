@@ -527,3 +527,257 @@ test('row cap guard: no read of a big table without paging (engine and website)'
   }
   assert.deepEqual(bad, [], 'reads that can be cut at 1,000 rows:\n' + bad.join('\n'));
 });
+
+// ---------- system messages to private numbers (wa_outbox) ----------
+function waArm(id, stationId, { online = true, onWa = true, sendErr = null } = {}) {
+  const arm = { id, name: id, stationId, online, sent: [], checked: [] };
+  arm.sock = { onWhatsApp: async (jid) => (arm.checked.push(jid), onWa ? [{ exists: true, jid }] : []) };
+  arm.send = async (jid, text) => {
+    if (sendErr) throw new Error(sendErr);
+    arm.sent.push({ jid, text, at: Date.now() });
+    return {};
+  };
+  return arm;
+}
+function outboxDb(msgs, results, extra = () => null) {
+  let taken = false;
+  dbAnswer((op) => {
+    const x = extra(op);
+    if (x) return x;
+    if (op.rpc === 'engine_home_station') return { data: 'home', error: null };
+    if (op.rpc === 'engine_outbox_take') {
+      const d = taken ? [] : msgs;
+      taken = true;
+      return { data: d, error: null };
+    }
+    if (op.rpc === 'engine_outbox_done') results.push(op.args);
+    return { data: [], error: null };
+  });
+}
+
+test('outbox: phone numbers become WhatsApp addresses (Israeli 05X, +972, 00972, dashes)', () => {
+  const { phoneJid } = require('../src/outbox');
+  assert.equal(phoneJid('050-123-4567'), '972501234567@s.whatsapp.net');
+  assert.equal(phoneJid('+972 50 123 4567'), '972501234567@s.whatsapp.net');
+  assert.equal(phoneJid('00972501234567'), '972501234567@s.whatsapp.net');
+  assert.equal(phoneJid('972501234567'), '972501234567@s.whatsapp.net');
+  assert.equal(phoneJid('12'), null);
+  assert.equal(phoneJid(''), null);
+});
+
+test('outbox: sent through an online HOME station arm (never a customer station arm), results recorded, ≥1.5s apart', async () => {
+  const outbox = require('../src/outbox');
+  outbox.state.home = null;
+  const home = waArm('h1', 'home');
+  const homeOff = waArm('h2', 'home', { online: false });
+  const customer = waArm('c1', 'other');
+  const arms = new Map([['c1', customer], ['h2', homeOff], ['h1', home]]);
+  const results = [];
+  outboxDb([{ id: 1, to_phone: '050-1234567', body: 'קוד: 1234' }, { id: 2, to_phone: '0521112222', body: 'שלום' }], results);
+  const t0 = Date.now();
+  await outbox.tick(arms);
+  assert.equal(customer.sent.length + homeOff.sent.length, 0, 'only the online home arm sends');
+  assert.deepEqual(home.sent.map((s) => s.jid), ['972501234567@s.whatsapp.net', '972521112222@s.whatsapp.net']);
+  assert.equal(home.sent[0].text, 'קוד: 1234');
+  assert.deepEqual(home.checked, ['972501234567@s.whatsapp.net', '972521112222@s.whatsapp.net'], 'checked on WhatsApp first');
+  assert.ok(home.sent[1].at - home.sent[0].at >= 1450, 'paced');
+  assert.ok(Date.now() - t0 >= 1450);
+  assert.deepEqual(results.map((r) => [r.p_id, r.p_ok, r.p_error, r.p_arm]), [[1, true, null, 'h1'], [2, true, null, 'h1']]);
+  assert.equal(outbox.state.busy, false);
+});
+
+test('outbox: nothing is taken while no home arm is online', async () => {
+  const outbox = require('../src/outbox');
+  outbox.state.home = null;
+  const arms = new Map([['c1', waArm('c1', 'other')], ['h2', waArm('h2', 'home', { online: false })]]);
+  const results = [];
+  outboxDb([{ id: 1, to_phone: '0501234567', body: 'x' }], results);
+  await outbox.tick(arms);
+  assert.ok(!ops.some((o) => o.rpc === 'engine_outbox_take'), 'queue untouched');
+});
+
+test('outbox: number not on WhatsApp → failed without sending; send error → failed with the error; never throws', async () => {
+  const outbox = require('../src/outbox');
+  outbox.state.home = null;
+  const notOnWa = waArm('h1', 'home', { onWa: false });
+  let results = [];
+  outboxDb([{ id: 5, to_phone: '0501234567', body: 'x' }], results);
+  await outbox.tick(new Map([['h1', notOnWa]]));
+  assert.equal(notOnWa.sent.length, 0);
+  assert.deepEqual(results.map((r) => [r.p_id, r.p_ok, r.p_error, r.p_arm]), [[5, false, 'המספר לא בוואטסאפ', 'h1']]);
+
+  const broken = waArm('h1', 'home', { sendErr: 'Connection Closed' });
+  results = [];
+  outboxDb([{ id: 6, to_phone: '0501234567', body: 'x' }], results);
+  await outbox.tick(new Map([['h1', broken]]));
+  assert.deepEqual(results.map((r) => [r.p_id, r.p_ok, r.p_error]), [[6, false, 'Connection Closed']]);
+
+  // database down: the pass ends quietly
+  dbAnswer(() => ({ data: null, error: { message: 'timeout' } }));
+  outbox.state.home = null;
+  await outbox.tick(new Map([['h1', waArm('h1', 'home')]]));
+  assert.equal(outbox.state.busy, false);
+});
+
+test('outbox: while shutting down nothing new is taken; messages already taken are closed, not left hanging', async () => {
+  const outbox = require('../src/outbox');
+  outbox.state.home = null;
+  const arm = waArm('h1', 'home');
+  const results = [];
+  outboxDb([{ id: 1, to_phone: '0501234567', body: 'a' }], results);
+  await outbox.tick(new Map([['h1', arm]]), () => true);
+  assert.ok(!ops.some((o) => o.rpc === 'engine_outbox_take'), 'nothing taken once shutting down');
+  let stopping = false;
+  outboxDb([{ id: 1, to_phone: '0501234567', body: 'a' }, { id: 2, to_phone: '0501234568', body: 'b' }], results);
+  arm.send = async (jid, text) => {
+    arm.sent.push({ jid, text });
+    stopping = true; // shutdown starts during the first send
+    return {};
+  };
+  await outbox.tick(new Map([['h1', arm]]), () => stopping);
+  assert.equal(arm.sent.length, 1);
+  assert.deepEqual(results.map((r) => [r.p_id, r.p_ok]), [[1, true], [2, false]]);
+});
+
+// ---------- subscription ended / disabled groups / groups no arm can reach ----------
+const gates = require('../src/gates');
+const help = require('../src/help');
+
+function rideDb({ active = true, activeErr = false, flags = [], arms = [], groups = [], listGroups = [], listArms = [] } = {}) {
+  const inserted = { targets: [], processed: 0 };
+  dbAnswer((op) => {
+    if (op.rpc === 'engine_station_active') return activeErr ? { data: null, error: { message: 'function does not exist' } } : { data: active, error: null };
+    if (op.rpc === 'engine_group_flags') return { data: flags, error: null };
+    if (op.table === 'app_settings') return { data: [{ station_id: 'st', auto_distribution_enabled: true }], error: null };
+    if (op.table === 'source_groups') return { data: [{ station_id: 'st', wa_group_id: 'src@g.us', name: 'מקור' }], error: null };
+    if (op.table === 'triggers') return { data: [{ id: 't1', station_id: 'st', keyword: 'עזרה', list_id: 'L1' }], error: null };
+    if (op.table === 'list_groups') {
+      const r = op.mods.find((m) => m[0] === 'range');
+      return { data: r && r[1] > 0 ? [] : listGroups, error: null };
+    }
+    if (op.table === 'list_arms') return { data: listArms, error: null };
+    if (op.table === 'arms') return { data: arms, error: null };
+    if (op.table === 'groups') {
+      const r = op.mods.find((m) => m[0] === 'range');
+      const ids = op.filters.find((f) => f[0] === 'in' && f[1] === 'arm_id')?.[2] || [];
+      return { data: r && r[1] > 0 ? [] : groups.filter((g) => ids.includes(g.arm_id)), error: null };
+    }
+    if (op.table === 'processed_messages' && op.action === 'insert') inserted.processed += 1;
+    if (op.table === 'campaigns' && op.action === 'insert') return { data: { id: 'camp1' }, error: null };
+    if (op.table === 'campaign_targets' && op.action === 'insert') inserted.targets.push(...op.payload);
+    if (op.maybeSingle) return { data: null, error: null };
+    return { data: [], error: null };
+  });
+  return inserted;
+}
+function helpArm() {
+  return { id: 'a1', name: 'a1', stationId: 'st', online: true, sock: {}, isOwnSent: () => false, react: async () => true, ownJids: () => [] };
+}
+const helpMsg = (id) => ({
+  key: { remoteJid: 'src@g.us', id, participant: '972501111111@s.whatsapp.net' },
+  message: { conversation: 'עזרה נסיעה מתל אביב לחיפה' },
+  messageTimestamp: Math.floor(Date.now() / 1000),
+  pushName: 'סדרן',
+});
+
+test('station inactive (subscription ended): a help trigger is ignored – no ride, arm untouched', async () => {
+  gates._reset();
+  const db = rideDb({ active: false, listGroups: [{ wa_group_id: 'g1@g.us', group_name: 'g1' }] });
+  await help.refreshConfig();
+  const arm = helpArm();
+  arm.stop = () => assert.fail('the arm must not be stopped');
+  ops.length = 0;
+  await help.onMessage(arm, helpMsg('M-off'));
+  assert.equal(db.processed, 0, 'not handled');
+  assert.ok(!ops.some((o) => o.table === 'campaigns' && o.action === 'insert'), 'no ride created');
+  assert.ok(!ops.some((o) => o.table === 'arms' || o.table === 'arm_auth'), 'arm and its login untouched');
+});
+
+test('station check failing (database hiccup / function missing) → fail-open, the ride goes out', async () => {
+  gates._reset();
+  const db = rideDb({
+    activeErr: true,
+    listGroups: [{ wa_group_id: 'g1@g.us', group_name: 'g1' }],
+    listArms: [{ arm_id: 'a1' }],
+    arms: [{ id: 'a1', is_active: true, status: 'online' }],
+    groups: [{ arm_id: 'a1', wa_group_id: 'g1@g.us' }],
+  });
+  await help.refreshConfig();
+  await help.onMessage(helpArm(), helpMsg('M-err'));
+  assert.equal(db.processed, 1);
+  assert.equal(db.targets.length, 1);
+  assert.equal(db.targets[0].status, undefined, 'pending as always');
+});
+
+test('station check is cached per station (one question a minute, not one per message)', async () => {
+  gates._reset();
+  rideDb({ active: true });
+  for (let i = 0; i < 5; i++) assert.equal(await gates.stationActive('st'), true);
+  assert.equal(ops.filter((o) => o.rpc === 'engine_station_active').length, 1);
+});
+
+test('disabled groups are left out of a ride (quote selectedGroups); flags unavailable → nothing removed', async () => {
+  gates._reset();
+  const quote = require('../src/quote');
+  rideDb({
+    flags: [{ wa_group_id: 'g2@g.us', disabled: true, include_anyway: false }, { wa_group_id: 'g3@g.us', disabled: false, include_anyway: true }],
+    listGroups: [{ wa_group_id: 'g1@g.us', group_name: 'g1' }, { wa_group_id: 'g2@g.us', group_name: 'g2' }, { wa_group_id: 'g3@g.us', group_name: 'g3' }],
+  });
+  const groups = await quote.selectedGroups(['L1'], 'src@g.us', 'st');
+  assert.deepEqual(groups.map((g) => g.wa_group_id), ['g1@g.us', 'g3@g.us']);
+  gates._reset();
+  dbAnswer((op) => (op.rpc === 'engine_group_flags' ? { data: null, error: { message: 'down' } } : { data: [{ wa_group_id: 'g2@g.us' }], error: null }));
+  assert.deepEqual((await quote.selectedGroups(['L1'], 'src@g.us', 'st')).map((g) => g.wa_group_id), ['g2@g.us']);
+});
+
+test('groups no arm of the ride can reach are added as skipped; a group with one possible arm stays pending', async () => {
+  gates._reset();
+  const db = rideDb({
+    flags: [{ wa_group_id: 'g6@g.us', disabled: false, include_anyway: true }, { wa_group_id: 'g7@g.us', disabled: true, include_anyway: false }],
+    listGroups: ['g1', 'g2', 'g3', 'g4', 'g5', 'g6', 'g7'].map((g) => ({ wa_group_id: `${g}@g.us`, group_name: g })),
+    listArms: [{ arm_id: 'a1' }, { arm_id: 'a2' }, { arm_id: 'a3' }, { arm_id: 'a4' }],
+    arms: [
+      { id: 'a1', is_active: true, status: 'online' },
+      { id: 'a2', is_active: true, status: 'paused' }, // paused: cannot send
+      { id: 'a3', is_active: true, status: 'connecting' }, // reconnecting: still counts (as in the database)
+      { id: 'a4', is_active: false, status: 'online' }, // switched off
+    ],
+    groups: [
+      { arm_id: 'a1', wa_group_id: 'g1@g.us' },
+      { arm_id: 'a2', wa_group_id: 'g1@g.us' },
+      { arm_id: 'a2', wa_group_id: 'g2@g.us' }, // only the paused arm
+      { arm_id: 'a3', wa_group_id: 'g3@g.us' },
+      { arm_id: 'a4', wa_group_id: 'g4@g.us' }, // only the switched-off arm
+      // g5: no arm of the ride is in it; g6: same, but "include anyway"
+    ],
+  });
+  await help.refreshConfig();
+  await help.onMessage(helpArm(), helpMsg('M-reach'));
+  const by = new Map(db.targets.map((t) => [t.wa_group_id, t]));
+  assert.equal(by.has('g7@g.us'), false, 'disabled group not added');
+  for (const g of ['g1@g.us', 'g3@g.us', 'g6@g.us']) {
+    assert.equal(by.get(g).status, undefined, `${g} pending exactly as before`);
+    assert.equal(by.get(g).error, undefined);
+  }
+  for (const g of ['g2@g.us', 'g4@g.us', 'g5@g.us']) {
+    assert.equal(by.get(g).status, 'skipped', `${g} skipped`);
+    assert.equal(by.get(g).error, gates.UNREACHABLE_TEXT);
+  }
+  const camp = ops.find((o) => o.table === 'campaigns' && o.action === 'insert');
+  assert.equal(camp.payload.total, 6, 'total without the disabled group');
+});
+
+test('reachability: any doubt (database error, empty answers) keeps every group pending', async () => {
+  gates._reset();
+  dbAnswer(() => ({ data: null, error: { message: 'timeout' } }));
+  assert.equal((await gates.unreachableGroups(['a1'], ['g1@g.us'])).size, 0);
+  dbAnswer((op) => (op.table === 'arms' ? { data: [{ id: 'a1', is_active: true, status: 'online' }], error: null } : { data: [], error: null }));
+  assert.equal((await gates.unreachableGroups(['a1'], ['g1@g.us'])).size, 0, 'no group rows at all → leave it to the database');
+  dbAnswer(() => ({ data: [], error: null }));
+  assert.equal((await gates.unreachableGroups(['a1'], ['g1@g.us'])).size, 0, 'arms not found → not judged');
+  // daily limit reached today rules the arm out, an old day does not
+  const today = new Date().toISOString().slice(0, 10);
+  const sameDay = today === new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jerusalem' }).format(new Date());
+  assert.equal(gates.armCanSend({ is_active: true, status: 'online', sent_day: '2000-01-01', sent_today: 5, daily_limit: 0 }), true);
+  assert.equal(gates.armCanSend({ is_active: true, status: 'online', sent_day: today, sent_today: 5, daily_limit: 5 }), !sameDay);
+});

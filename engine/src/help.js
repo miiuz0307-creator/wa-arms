@@ -3,6 +3,7 @@
 const { db, log } = require('./config');
 const { extractText, containsKeyword, formatPhone, jidUser, buildHelpText, fetchAll } = require('./util');
 const quote = require('./quote');
+const gates = require('./gates');
 
 // Everything is per station: an arm only sees its own station's settings, sources and triggers.
 const state = {
@@ -155,6 +156,8 @@ async function onMessage(arm, m) {
   if (!text) return;
   const trigger = triggersOf(st).find((t) => containsKeyword(text, t.keyword));
   if (!trigger) return;
+  // subscription ended / station suspended: not handled (arms stay connected)
+  if (!(await gates.stationAllowed(arm, 'help'))) return;
 
   // duplicate guard – the first arm (of this station) to insert wins, everyone else stops here
   const { error: dupErr } = await db
@@ -184,13 +187,18 @@ async function onMessage(arm, m) {
     fetchAll(() => db.from('list_groups').select('wa_group_id,group_name').eq('list_id', trigger.list_id).order('wa_group_id')),
     db.from('list_arms').select('arm_id').eq('list_id', trigger.list_id),
   ]);
-  const targets = (lg.data || []).filter((g) => g.wa_group_id !== groupJid);
+  // groups the station switched off (group status "disabled") never get rides
+  const targets = await gates.dropDisabled(st, (lg.data || []).filter((g) => g.wa_group_id !== groupJid));
   let armIds = (la.data || []).map((r) => r.arm_id);
   if (!armIds.length) {
     const { data } = await db.from('arms').select('id').eq('station_id', st).eq('is_active', true);
     armIds = (data || []).map((r) => r.id);
   }
   const plan = { armIds, exclude: () => [] }; // ladder: the database splits the work between arms
+  // groups none of these arms can send to: added as 'skipped' (decided while the ride row is created)
+  const unreachableP = gates.includeAnyway(st).then((keep) =>
+    gates.unreachableGroups(armIds, targets.map((t) => t.wa_group_id), keep),
+  );
 
   const { data: campaign, error } = await db
     .from('campaigns')
@@ -220,15 +228,10 @@ async function onMessage(arm, m) {
   if (armIds.length) {
     await db.from('campaign_arms').insert(armIds.map((arm_id) => ({ campaign_id: campaign.id, arm_id })));
   }
+  const unreachable = await unreachableP;
+  if (unreachable.size) log.info({ campaign: campaign.id, unreachable: unreachable.size, groups: targets.length }, 'help: groups no arm can reach added as skipped');
   for (let i = 0; i < targets.length; i += 500) {
-    await db.from('campaign_targets').insert(
-      targets.slice(i, i + 500).map((t) => ({
-        campaign_id: campaign.id,
-        wa_group_id: t.wa_group_id,
-        group_name: t.group_name,
-        tried_arms: plan.exclude(t.wa_group_id),
-      })),
-    );
+    await db.from('campaign_targets').insert(gates.targetRows(campaign.id, targets.slice(i, i + 500), unreachable, plan.exclude));
   }
   await db.from('campaigns').update({ status: requester.phone ? 'queued' : 'pending_phone' }).eq('id', campaign.id);
   await db

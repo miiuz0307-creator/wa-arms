@@ -6,6 +6,7 @@ const { db, log } = require('./config');
 const { extractText, jidUser, fetchAll } = require('./util');
 
 const { sanitize, verifyNoCustomerPhone, normalize, formatPhone, findPhones } = require('./phones');
+const gates = require('./gates');
 
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const normJid = (j) => (j ? String(j).replace(/:\d+(?=@)/, '') : null);
@@ -117,19 +118,20 @@ async function loadLists(stationId) {
   return (data || []).map((l) => ({ id: l.id, name: l.name, count: l.list_groups?.[0]?.count ?? 0 }));
 }
 
-async function selectedGroups(listIds, excludeGroup) {
+// stationId given → groups the station switched off (group status "disabled") are left out
+async function selectedGroups(listIds, excludeGroup, stationId) {
   if (!listIds.length) return [];
   const { data } = await fetchAll(() =>
     db.from('list_groups').select('wa_group_id,group_name').in('list_id', listIds).order('list_id').order('wa_group_id'),
   );
   const map = new Map();
   for (const g of data || []) if (g.wa_group_id !== excludeGroup && !map.has(g.wa_group_id)) map.set(g.wa_group_id, g);
-  return [...map.values()];
+  return stationId ? gates.dropDisabled(stationId, [...map.values()]) : [...map.values()];
 }
 
 async function renderMenu(session, note) {
   const lists = await loadLists(session.station_id);
-  const groups = await selectedGroups(session.selected_list_ids, session.source_group_id);
+  const groups = await selectedGroups(session.selected_list_ids, session.source_group_id, session.station_id);
   const sel = new Set(session.selected_list_ids);
   const lines = [];
   if (note) lines.push(note, '');
@@ -302,6 +304,10 @@ async function handleGroup(arm, m) {
 
   const groupJid = m.key.remoteJid;
   const fromMe = !!m.key.fromMe;
+
+  // subscription ended / station suspended: the bot does not handle new rides (arms stay connected).
+  // "ביטול" above still works, so rides already running can be stopped.
+  if (!(await gates.stationAllowed(arm, 'quote'))) return true;
 
   // No tagging needed. If the sender is one of our own arms, that arm handles it (as "fromMe").
   const other = sentByOtherArm(arm, m);
@@ -707,7 +713,7 @@ async function distribute(arm, chat, session, allow, opts = {}) {
     return true;
   }
 
-  const groups = await selectedGroups(session.selected_list_ids, session.source_group_id);
+  const groups = await selectedGroups(session.selected_list_ids, session.source_group_id, arm.stationId);
   if (!groups.length) {
     await fail(arm, session.trigger_key, session.id, '⚠️ ברשימות שנבחרו אין קבוצות.');
     return true;
@@ -721,6 +727,10 @@ async function distribute(arm, chat, session, allow, opts = {}) {
   // all the station's arms join; the database hands out the work like a ladder
   // (each arm on its own ride under load, all arms on one ride when it's the only one)
   const plan = { armIds, exclude: () => [] };
+  // groups none of these arms can send to: added as 'skipped' (decided while the ride row is created)
+  const unreachableP = gates.includeAnyway(arm.stationId).then((keep) =>
+    gates.unreachableGroups(armIds, groups.map((g) => g.wa_group_id), keep),
+  );
 
   const { data: campaign, error } = await db
     .from('campaigns')
@@ -754,17 +764,11 @@ async function distribute(arm, chat, session, allow, opts = {}) {
       await new Promise((r) => setTimeout(r, 1000 * attempt));
     }
   };
+  const unreachable = await unreachableP;
+  if (unreachable.size) log.info({ arm: arm.name, campaign: campaign.id, unreachable: unreachable.size, groups: groups.length }, 'quote: groups no arm can reach added as skipped');
   let insErr = await insertWithRetry('campaign_arms', armIds.map((arm_id) => ({ campaign_id: campaign.id, arm_id })));
   for (let i = 0; !insErr && i < groups.length; i += 500) {
-    insErr = await insertWithRetry(
-      'campaign_targets',
-      groups.slice(i, i + 500).map((g) => ({
-        campaign_id: campaign.id,
-        wa_group_id: g.wa_group_id,
-        group_name: g.group_name,
-        tried_arms: plan.exclude(g.wa_group_id),
-      })),
-    );
+    insErr = await insertWithRetry('campaign_targets', gates.targetRows(campaign.id, groups.slice(i, i + 500), unreachable, plan.exclude));
   }
   if (insErr) {
     log.error({ arm: arm.name, err: insErr.message }, 'quote: adding groups failed');
@@ -835,4 +839,4 @@ async function handle(arm, m) {
   return false;
 }
 
-module.exports = { handle, notifyFinished, setTriggerSource, setArmsSource, setSettingsSource, setSourceGroupCheck, renderMenu, selectedGroups };
+module.exports = { handle, notifyFinished, setTriggerSource, setArmsSource, setSettingsSource, setSourceGroupCheck, renderMenu, selectedGroups, distribute };

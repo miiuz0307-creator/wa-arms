@@ -4,6 +4,7 @@ const { Arm } = require('./arm');
 const help = require('./help');
 const quote = require('./quote');
 const backup = require('./backup');
+const outbox = require('./outbox');
 const { randomBetween, sleep } = require('./util');
 
 const arms = new Map(); // arm id -> Arm
@@ -579,6 +580,8 @@ async function main() {
   every(10 * 60_000, () => backup.maybeBackup(), 'backup');
   every(5_000, () => quote.notifyFinished(arms), 'quote-notify');
   every(5_000, () => help.reactFinished(arms), 'help-react');
+  // system messages to private numbers (login codes, payments, support, subscription alerts) via a home-station arm
+  every(4_000, () => outbox.tick(arms, () => shuttingDown), 'outbox');
   // each arm sends on its own: one slow or stuck send never delays the other arms
   every(250, async () => {
     await checkWork();
@@ -592,7 +595,7 @@ async function shutdown(signal) {
   log.info({ signal }, 'shutting down');
   // no new sends start now (loops stop on shuttingDown); let sends already on the way finish and be recorded
   const t0 = Date.now();
-  while (Date.now() - t0 < 12_000 && [...arms.values()].some((a) => a.inFlight > 0 || a.busy)) await sleep(200);
+  while (Date.now() - t0 < 12_000 && (outbox.state.busy || [...arms.values()].some((a) => a.inFlight > 0 || a.busy))) await sleep(200);
   await Promise.race([
     Promise.all([...arms.values()].map((a) => a.stop())),
     sleep(8000),
