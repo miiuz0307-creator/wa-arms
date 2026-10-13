@@ -7,7 +7,7 @@ import { ARM_STATUS } from '@/lib/format';
 import { RequireRole } from '@/components/Shell';
 import { GroupPicker, mergeGroups } from '@/components/GroupPicker';
 import { Badge, Button, Card, Checkbox, PageHeader, Select, Spinner, Textarea, cx, toast } from '@/components/ui';
-import { allGroups } from '@/lib/allRows';
+import { allGroups, allRows } from '@/lib/allRows';
 
 export default function SendPage() {
   return (
@@ -54,7 +54,7 @@ function Wizard() {
   useEffect(() => {
     if (!listId) return;
     Promise.all([
-      sb().from('list_groups').select('wa_group_id').eq('list_id', listId),
+      allRows(() => sb().from('list_groups').select('wa_group_id').eq('list_id', listId).order('wa_group_id')),
       sb().from('list_arms').select('arm_id').eq('list_id', listId),
     ]).then(([g, a]) => setListInfo({ groups: (g.data || []).map((r: any) => r.wa_group_id), arms: (a.data || []).map((r: any) => r.arm_id) }));
   }, [listId]);
