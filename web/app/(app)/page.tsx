@@ -7,7 +7,7 @@ import { useRealtime } from '@/lib/hooks';
 import { useAuth } from '@/lib/auth';
 import { ACTION_LABEL, KIND_LABEL, ARM_STATUS, CAMPAIGN_STATUS, firstLine, fmtTime, timeAgo } from '@/lib/format';
 import { Badge, Card, PageHeader, Progress, Spinner, Stat, Button } from '@/components/ui';
-import { allGroups } from '@/lib/allRows';
+import { allGroups, allRows } from '@/lib/allRows';
 
 export default function Dashboard() {
   const { can, profile, isSuper, station } = useAuth();
@@ -62,7 +62,7 @@ export default function Dashboard() {
     const npIds = [...new Set((np.data || []).map((r: any) => r.wa_group_id))];
     let noPerm = { count: 0, campaign: null as string | null };
     if (npIds.length) {
-      const { data: listed } = await sb().from('list_groups').select('wa_group_id').in('wa_group_id', npIds);
+      const { data: listed } = await allRows(() => sb().from('list_groups').select('wa_group_id').in('wa_group_id', npIds).order('wa_group_id').order('list_id'));
       const still = new Set((listed || []).map((r: any) => r.wa_group_id));
       noPerm = { count: still.size, campaign: (np.data || []).find((r: any) => still.has(r.wa_group_id))?.campaign_id || null };
     }

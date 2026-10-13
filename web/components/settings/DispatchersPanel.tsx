@@ -29,7 +29,7 @@ function Dispatchers() {
   const load = useCallback(async () => {
     const [d, p] = await Promise.all([
       sb().from('dispatchers').select('*').order('created_at', { ascending: false }),
-      sb().from('campaigns').select('*').eq('status', 'pending_phone').order('created_at', { ascending: false }),
+      sb().from('campaigns').select('*').eq('status', 'pending_phone').order('created_at', { ascending: false }), // rows: bounded – help requests still waiting for a phone
     ]);
     setList(d.data || []);
     setPending(p.data || []);

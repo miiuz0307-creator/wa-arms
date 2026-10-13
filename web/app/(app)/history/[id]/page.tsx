@@ -11,6 +11,7 @@ import { CAMPAIGN_STATUS, TARGET_STATUS, fmtTime } from '@/lib/format';
 
 const TITLE: Record<string, string> = { manual: 'הפצה ידנית', help: 'הפצת עזרה', quote: 'הפצה מציטוט' };
 import { Badge, Button, Card, Progress, Spinner, cx, toast } from '@/components/ui';
+import { allRows } from '@/lib/allRows';
 
 export default function CampaignPage() {
   const { id } = useParams<{ id: string }>();
@@ -23,9 +24,9 @@ export default function CampaignPage() {
   const load = useCallback(async () => {
     const [cr, tr, ar, ca] = await Promise.all([
       sb().from('campaigns').select('*').eq('id', id).single(),
-      sb().from('campaign_targets').select('*').eq('campaign_id', id).order('id').limit(5000),
+      allRows(() => sb().from('campaign_targets').select('*').eq('campaign_id', id).order('id')),
       sb().from('arms').select('id,name'),
-      sb().from('campaign_arms').select('arm_id').eq('campaign_id', id),
+      sb().from('campaign_arms').select('arm_id').eq('campaign_id', id), // rows: bounded – the arms of one ride
     ]);
     setC({ ...cr.data, armIds: (ca.data || []).map((r: any) => r.arm_id) });
     setTargets(tr.data || []);
@@ -240,10 +241,7 @@ function NoPermissionReview({ targets }: { targets: any[] }) {
   useEffect(() => {
     if (!groups.length) return;
     const ids = groups.map((g) => g.wa_group_id);
-    sb()
-      .from('list_groups')
-      .select('wa_group_id, distribution_lists(name)')
-      .in('wa_group_id', ids)
+    allRows(() => sb().from('list_groups').select('wa_group_id, distribution_lists(name)').in('wa_group_id', ids).order('wa_group_id').order('list_id'))
       .then(({ data }) => {
         const m: Record<string, string[]> = {};
         for (const r of (data as any[]) || []) (m[r.wa_group_id] ||= []).push(r.distribution_lists?.name || '');

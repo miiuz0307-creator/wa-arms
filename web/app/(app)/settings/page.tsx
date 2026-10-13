@@ -10,6 +10,7 @@ import { DispatchersPanel } from '@/components/settings/DispatchersPanel';
 import { ChangePassword } from '@/components/settings/ChangePassword';
 import { MailSettings } from '@/components/settings/MailSettings';
 import { Button, Card, Field, Input, PageHeader, Select, Spinner, toast } from '@/components/ui';
+import { allRows } from '@/lib/allRows';
 
 const TABS = [
   ['help', 'עזרה ומפעילים'],
@@ -64,7 +65,7 @@ function Settings() {
   useEffect(() => {
     (async () => {
       const [lg, a] = await Promise.all([
-        sb().from('list_groups').select('list_id'),
+        allRows(() => sb().from('list_groups').select('list_id').order('list_id').order('wa_group_id')),
         sb().from('arms').select('id').eq('status', 'online'),
       ]);
       const per: Record<string, number> = {};
