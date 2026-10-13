@@ -26,6 +26,7 @@ export default function HistoryPage() {
   }, []);
 
   const load = useCallback(async () => {
+    // rows: bounded – the latest 200 rides (limit)
     let query = sb().from('campaigns').select('*, campaign_arms(count)').order('created_at', { ascending: false }).limit(200);
     if (kind) query = query.eq('kind', kind);
     if (status) query = query.eq('status', status);

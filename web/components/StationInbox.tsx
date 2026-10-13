@@ -1,6 +1,7 @@
 'use client';
 // What the system owner shows inside a station's app: system messages and the payment reminder.
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { AlertTriangle, CalendarClock, Info, Megaphone, X } from 'lucide-react';
 import { sb } from '@/lib/supabase';
 import { cx } from './ui';
@@ -89,6 +90,12 @@ export function StationBanners({ inbox }: { inbox: Inbox | null }) {
             </div>
             {b.payment_note && <div className="mt-0.5 whitespace-pre-line leading-relaxed opacity-90">{b.payment_note}</div>}
           </div>
+          <Link
+            href="/subscription"
+            className="-my-1 inline-flex h-9 shrink-0 items-center rounded-xl bg-white px-3 text-[13px] font-semibold ring-1 ring-inset ring-black/10 hover:bg-slate-50"
+          >
+            לחידוש המנוי
+          </Link>
         </div>
       )}
       {msgs.map((m) => (

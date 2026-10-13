@@ -37,6 +37,8 @@ function Wizard() {
   const [listId, setListId] = useState('');
   const [listInfo, setListInfo] = useState<{ groups: string[]; arms: string[] }>({ groups: [], arms: [] });
   const [busy, setBusy] = useState(false);
+  // the footer the system owner adds to this station's messages (shown in the preview only)
+  const [footer, setFooter] = useState('');
 
   useEffect(() => {
     (async () => {
@@ -53,13 +55,19 @@ function Wizard() {
       setArmSel(new Set((a.data || []).filter((x: any) => x.status === 'online').map((x: any) => x.id)));
       if (l.data?.length) setListId(l.data[0].id);
     })();
+    sb()
+      .rpc('station_footer')
+      .then(({ data }) => {
+        const f = data as { enabled?: boolean; footer_text?: string } | null;
+        setFooter(f?.enabled && f.footer_text ? f.footer_text : '');
+      });
   }, []);
 
   useEffect(() => {
     if (!listId) return;
     Promise.all([
       allRows(() => sb().from('list_groups').select('wa_group_id').eq('list_id', listId).order('wa_group_id')),
-      sb().from('list_arms').select('arm_id').eq('list_id', listId),
+      sb().from('list_arms').select('arm_id').eq('list_id', listId), // rows: bounded – the arms of one list
     ]).then(([g, a]) => setListInfo({ groups: (g.data || []).map((r: any) => r.wa_group_id), arms: (a.data || []).map((r: any) => r.arm_id) }));
   }, [listId]);
 
@@ -148,7 +156,7 @@ function Wizard() {
           </Card>
           <WaPreview label="כך זה ייראה בקבוצה">
             {text.trim() ? (
-              <div className="wa-bubble mr-auto max-w-[85%] p-3 text-sm shadow-sm">{text}</div>
+              <Bubble text={text} footer={footer} />
             ) : (
               <div className="py-6 text-center text-sm text-[#54656f] dark:text-[#8696a0]">ההודעה תופיע כאן בזמן שאתה כותב</div>
             )}
@@ -315,7 +323,7 @@ function Wizard() {
             </Button>
           </Section>
           <WaPreview label="ההודעה שתישלח" className="lg:col-span-3">
-            <div className="wa-bubble mr-auto max-w-[85%] p-3 text-sm shadow-sm">{text}</div>
+            <Bubble text={text} footer={footer} />
           </WaPreview>
         </div>
       )}
@@ -346,6 +354,24 @@ function WaPreview({ label, className, children }: { label: string; className?: 
       <div className="mb-3 text-xs font-medium text-[#54656f] dark:text-[#8696a0]">{label}</div>
       {children}
     </div>
+  );
+}
+
+/** The message bubble; the station footer (if the owner set one) follows after a blank line. */
+function Bubble({ text, footer }: { text: string; footer: string }) {
+  return (
+    <>
+      <div className="wa-bubble mr-auto max-w-[85%] p-3 text-sm shadow-sm">
+        {text}
+        {footer && (
+          <>
+            {'\n\n'}
+            {footer}
+          </>
+        )}
+      </div>
+      {footer && <p className="mt-2 text-xs text-[#54656f] dark:text-[#8696a0]">החתימה מתווספת אוטומטית על ידי בעל המערכת</p>}
+    </>
   );
 }
 

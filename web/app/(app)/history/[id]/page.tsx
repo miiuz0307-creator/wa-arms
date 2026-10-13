@@ -8,10 +8,10 @@ import { sb, logAct } from '@/lib/supabase';
 import { useRealtime } from '@/lib/hooks';
 import { useAuth } from '@/lib/auth';
 import { CAMPAIGN_STATUS, TARGET_STATUS, fmtTime } from '@/lib/format';
-
-const TITLE: Record<string, string> = { manual: 'הפצה ידנית', help: 'הפצת עזרה', quote: 'הפצה מציטוט' };
 import { Badge, Button, Card, Empty, PageHeader, Progress, Section, Segmented, Skeleton, ask, cx, toast } from '@/components/ui';
 import { allRows } from '@/lib/allRows';
+
+const TITLE: Record<string, string> = { manual: 'הפצה ידנית', help: 'הפצת עזרה', quote: 'הפצה מציטוט' };
 
 export default function CampaignPage() {
   const { id } = useParams<{ id: string }>();
@@ -25,7 +25,7 @@ export default function CampaignPage() {
     const [cr, tr, ar, ca] = await Promise.all([
       sb().from('campaigns').select('*').eq('id', id).single(),
       allRows(() => sb().from('campaign_targets').select('*').eq('campaign_id', id).order('id')),
-      sb().from('arms').select('id,name'),
+      sb().from('arms').select('id,name'), // rows: bounded – the station's arms
       sb().from('campaign_arms').select('arm_id').eq('campaign_id', id), // rows: bounded – the arms of one ride
     ]);
     setC({ ...cr.data, armIds: (ca.data || []).map((r: any) => r.arm_id) });
