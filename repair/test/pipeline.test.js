@@ -30,7 +30,8 @@ async function setup({ files = ['engine/src/arm.js'], checks = [ok], claudeResul
   deps.runChecks = async () => checks[Math.min(i++, checks.length - 1)];
   const pipeline = createPipeline(deps);
   const intake = createIntake({ cfg: deps.cfg, store, wa: deps.wa, pipeline, log: h.silentLog });
-  const say = (phone, text, extra = {}) => intake.handle({ jid: `${phone}@s.whatsapp.net`, phone, lid: null, name: '', text, image: null, ...extra });
+  // most tests talk inside an open conversation; `raw: true` sends without one
+  const say = (phone, text, extra = {}) => (extra.raw ? null : intake.touch(phone), intake.handle({ jid: `${phone}@s.whatsapp.net`, phone, lid: null, name: "", text, image: null, ...extra }));
   const runNext = async () => {
     const t = await store.claimNextTicket();
     await pipeline.processTicket(t);
@@ -44,14 +45,43 @@ const codeFrom = (texts) => {
   return m && m[1];
 };
 
-test('stranger is refused, logged, answered only once', async () => {
+test('strangers are never answered; their "עזרה" is logged', async () => {
   const s = await setup();
   await s.say('972509999999', 'ההפצה לא עובדת');
-  await s.say('972509999999', 'שוב');
-  assert.equal(s.wa.textsTo('972509999999@s.whatsapp.net').length, 1);
+  await s.say('972509999999', 'עזרה');
+  assert.equal(s.wa.textsTo('972509999999@s.whatsapp.net').length, 0);
   assert.equal((await s.store.listTickets()).length, 0);
   const ev = await s.store.listEvents();
-  assert.equal(ev.filter((e) => e.type === 'rejected_sender').length, 2);
+  assert.equal(ev.filter((e) => e.type === 'rejected_sender').length, 1);
+});
+
+test('only "עזרה" opens a conversation; other messages are ignored until then', async () => {
+  const s = await setup();
+  const J = `${ASKER}@s.whatsapp.net`;
+  await s.say(ASKER, 'ההפצה לא עובדת', { raw: true });
+  await s.say(ASKER, 'סטטוס', { raw: true });
+  assert.equal(s.wa.textsTo(J).length, 0, 'silent before עזרה');
+  assert.equal((await s.store.listTickets()).length, 0);
+  await s.say(ASKER, 'עזרה', { raw: true });
+  assert.ok(s.wa.textsTo(J)[0].includes('BotiX AI Repair'));
+  await s.say(ASKER, 'ההפצה לא עובדת', { raw: true });
+  assert.equal((await s.store.listTickets()).length, 1, 'inside the conversation a description opens a ticket');
+});
+
+test('"עזרה <description>" opens a ticket in one message', async () => {
+  const s = await setup();
+  await s.say(ASKER, 'עזרה ההפצה לא עובדת מהבוקר', { raw: true });
+  const t = (await s.store.listTickets())[0];
+  assert.equal(t.description, 'ההפצה לא עובדת מהבוקר');
+});
+
+test('an approval code works without an open conversation', async () => {
+  const s = await setup();
+  await s.say(ASKER, 'עזרה ההפצה לא עובדת', { raw: true });
+  await s.runNext();
+  const code = codeFrom(s.wa.textsTo(OWNER));
+  await s.say(OWNER, `אשר ${code}`, { raw: true });
+  await h.waitFor(async () => (await s.store.getTicket(1)).status === 'deployed');
 });
 
 test('full happy path: ticket → fix → tests → staging → approval → production', async () => {
@@ -333,7 +363,7 @@ test('command group: everything goes to the group, chatter is ignored, approver 
   const s = await setup();
   const G = '120363000000000000@g.us';
   s.wa.commandGroup = () => G;
-  const inGroup = (phone, text) => s.intake.handle({ jid: G, phone, lid: null, name: '', text, image: null });
+  const inGroup = (phone, text) => (s.intake.touch(phone), s.intake.handle({ jid: G, phone, lid: null, name: '', text, image: null }));
   await inGroup(ASKER, 'תודה');
   assert.equal((await s.store.listTickets()).length, 0, 'short chatter in the group opens nothing');
   await inGroup(ASKER, 'ההפצה לא עובדת מהבוקר');

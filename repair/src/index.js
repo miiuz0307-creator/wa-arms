@@ -72,7 +72,7 @@ async function main() {
   const ws = createWorkspace(cfg);
   if (!ws.runner) log.warn('Claude והבדיקות ירוצו באותו משתמש כמו השרת (לא בתוך ה-Dockerfile). הפרדת ההרשאות לא פעילה.');
   const claude = createClaude(cfg, ws);
-  const pipeline = createPipeline({ cfg, store, wa, railway, github, ws, claude, log });
+  const pipeline = createPipeline({ cfg, store, wa, railway, github, ws, claude, log, onNotify: (p) => intake?.touch(p) });
   intake = createIntake({ cfg, store, wa, pipeline, log });
 
   for (const t of await store.resetStuck()) {

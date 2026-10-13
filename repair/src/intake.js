@@ -9,6 +9,11 @@ const { formatLocal } = require('./phones');
 
 const IMAGE_WINDOW_MS = 3 * 60_000;
 const MAX_TICKETS_PER_HOUR = 10;
+const SESSION_MS = 30 * 60_000; // a conversation stays open 30 minutes after the last message
+
+// Explicit commands that carry a ticket number or approval code always work for approved numbers
+// (the bot asked for them). Anything else is answered only inside a conversation opened by "עזרה".
+const ALWAYS = new Set(['help', 'help_text', 'approve', 'reject', 'cancel', 'rollback', 'show']);
 
 function parseCommand(raw) {
   const t = String(raw || '')
@@ -17,6 +22,7 @@ function parseCommand(raw) {
     .trim();
   let m;
   if (/^(עזרה|תפריט|help|\?)$/i.test(t)) return { cmd: 'help' };
+  if ((m = /^עזרה[\s,:.!-]+([\s\S]{4,})$/.exec(t))) return { cmd: 'help_text', text: m[1].trim() };
   if (/^(סטטוס|מצב)$/.test(t)) return { cmd: 'status' };
   if (/^(פניות|רשימה)$/.test(t)) return { cmd: 'list' };
   if ((m = /^פני(?:י)?ה\s*#?(\d+)$/.exec(t))) return { cmd: 'show', id: Number(m[1]) };
@@ -29,7 +35,9 @@ function parseCommand(raw) {
 }
 
 function createIntake({ cfg, store, wa, pipeline, log }) {
-  const lastStrangerReply = new Map();
+  const sessions = new Map(); // approved phone -> last activity
+  const inSession = (phone) => Date.now() - (sessions.get(phone) || 0) < SESSION_MS;
+  const touch = (phone) => phone && sessions.set(phone, Date.now());
   const recentTickets = new Map(); // phone -> timestamps
 
   async function findSender(phone, lid) {
@@ -66,18 +74,18 @@ function createIntake({ cfg, store, wa, pipeline, log }) {
     if (!sender) {
       const who = phone || `lid:${lid}`;
       log.warn({ from: phone ? `${phone.slice(0, 5)}***${phone.slice(-2)}` : null, lid: Boolean(lid) }, 'message from a number that is not on the approved list');
-      await pipeline.audit(null, who, 'rejected_sender', `הודעה ממספר לא מאושר (${phone ? formatLocal(phone) : 'מספר מוסתר'})`, { phone, lid, name });
-      const last = lastStrangerReply.get(who) || 0;
-      if (Date.now() - last > 24 * 3600_000) {
-        lastStrangerReply.set(who, Date.now());
-        await reply(jid, M.notAllowed);
+      // only someone who writes "עזרה" gets attention – and only approved numbers at all
+      if (/^\s*עזרה/.test(text || '')) {
+        await pipeline.audit(null, who, 'rejected_sender', `"עזרה" ממספר לא מאושר (${phone ? formatLocal(phone) : 'מספר מוסתר'})`, { phone, lid, name });
       }
-      return;
+      return; // never answer strangers
     }
     const actor = sender.phone;
     const isApprover = sender.role === 'approver';
     const displayName = sender.name || name || formatLocal(actor);
     const c = parseCommand(text);
+    if (!ALWAYS.has(c.cmd) && !inSession(actor)) return; // not talking to the bot – ignore
+    touch(actor);
 
     // ---- screenshots ----
     if (image && typeof image.load === 'function') image = await image.load();
@@ -102,6 +110,8 @@ function createIntake({ cfg, store, wa, pipeline, log }) {
     switch (c.cmd) {
       case 'help':
         return reply(jid, M.help(isApprover));
+      case 'help_text':
+        return createTicket(jid, actor, displayName, c.text, []);
       case 'status': {
         const open = await store.listTickets(10, ['queued', 'awaiting_approval', 'blocked', ...pipeline.ACTIVE]);
         return reply(jid, open.length ? `*פניות פתוחות:*\n${open.map(M.statusLine).join('\n')}` : 'אין פניות פתוחות כרגע. ✅');
@@ -158,7 +168,7 @@ function createIntake({ cfg, store, wa, pipeline, log }) {
     return reply(jid, M.received(t, await queuePosition(t.id)));
   }
 
-  return { handle };
+  return { handle, touch };
 }
 
 module.exports = { createIntake, parseCommand };

@@ -56,6 +56,7 @@ function createPipeline(deps) {
   }
 
   async function sendTo(phone, text, ticketId) {
+    if (deps.onNotify && !String(phone).includes('@')) deps.onNotify(phone);
     try {
       await wa.send(phone, clean(text));
     } catch (e) {
@@ -71,7 +72,14 @@ function createPipeline(deps) {
   const group = () => (typeof wa.commandGroup === 'function' ? wa.commandGroup() : null);
 
   async function notify(t, text, { toApprovers = false } = {}) {
-    if (group()) return sendTo(group(), text, t.id); // everyone involved is in the command group
+    if (group()) {
+      // everyone involved is in the command group; keep their conversations open for replies
+      if (deps.onNotify) {
+        deps.onNotify(t.requester_phone);
+        if (toApprovers) for (const a of await approvers()) deps.onNotify(a.phone);
+      }
+      return sendTo(group(), text, t.id);
+    }
     const to = new Set([t.requester_phone]);
     if (toApprovers) for (const a of await approvers()) to.add(a.phone);
     for (const p of to) await sendTo(p, text, t.id);
