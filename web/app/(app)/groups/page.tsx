@@ -85,6 +85,18 @@ function GroupsAndLists() {
   const armById = useMemo(() => Object.fromEntries((arms || []).map((a) => [a.id, a])), [arms]);
   const listById = useMemo(() => Object.fromEntries(lists.map((l) => [l.id, l])), [lists]);
 
+  // why a group cannot get rides. `pool` = the sending arms chosen for a list (null/empty = any arm of the station)
+  function reasonOf(r: Row, pool: string[] | null): string | null {
+    if (r.armIds.length === 0) return 'אף זרוע אינה חברה בקבוצה';
+    const members = pool && pool.length ? r.armIds.filter((id) => pool.includes(id)) : r.armIds;
+    if (members.length === 0) return 'אף זרוע שולחת של הרשימה אינה בקבוצה';
+    const usable = members.filter((id) => armById[id]?.is_active && armById[id]?.status === 'online');
+    if (usable.length === 0) return pool && pool.length ? 'הזרועות השולחות של הרשימה מנותקות או מושבתות' : 'הזרוע מנותקת';
+    if (usable.every((id) => noPerm.has(`${id}|${r.id}`))) return 'אין הרשאת שליחה (רק מנהלים)';
+    return null;
+  }
+  const armsOfList = (listId: string) => listArms.filter((x) => x.list_id === listId).map((x) => x.arm_id as string);
+
   // one row per WhatsApp group, with its arms, its lists and its real availability
   const rows: Row[] = useMemo(() => {
     const m = new Map<string, Row>();
@@ -101,19 +113,27 @@ function GroupsAndLists() {
       m.get(lg.wa_group_id)!.lists.push(lg.list_id);
     }
     for (const r of m.values()) {
-      const usable = r.armIds.filter((id) => armById[id]?.is_active && armById[id]?.status === 'online');
-      const canSend = usable.filter((id) => !noPerm.has(`${id}|${r.id}`));
-      if (r.armIds.length === 0) r.reason = 'אף זרוע אינה חברה בקבוצה';
-      else if (usable.length === 0) r.reason = 'הזרוע מנותקת';
-      else if (canSend.length === 0) r.reason = 'אין הרשאת שליחה (רק מנהלים)';
+      r.reason = reasonOf(r, null);
       r.available = !r.reason;
     }
     return [...m.values()].sort((a, b) => a.name.localeCompare(b.name, 'he'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groups, listGroups, armById, noPerm]);
+
+  const viewRows: Row[] = useMemo(() => {
+    if (!listF) return rows;
+    const pool = armsOfList(listF);
+    if (!pool.length) return rows;
+    return rows.map((r) => {
+      const reason = reasonOf(r, pool);
+      return { ...r, reason, available: !reason };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, listF, listArms]);
 
   const filtered = useMemo(() => {
     const t = q.trim().toLowerCase();
-    return rows.filter(
+    return viewRows.filter(
       (r) =>
         (!t || r.name.toLowerCase().includes(t)) &&
         (!armF || r.armIds.includes(armF)) &&
@@ -121,13 +141,15 @@ function GroupsAndLists() {
         (statusF === 'all' || (statusF === 'ok' ? r.available : !r.available)) &&
         (showUnavailable || r.available || (listF && r.lists.includes(listF))),
     );
-  }, [rows, q, armF, listF, statusF, showUnavailable]);
+  }, [viewRows, q, armF, listF, statusF, showUnavailable]);
 
   useEffect(() => setSel(new Set()), [armF, listF]);
 
   const countsFor = (listId: string) => {
+    const pool = armsOfList(listId);
     const inList = rows.filter((r) => r.lists.includes(listId));
-    return { total: inList.length, ok: inList.filter((r) => r.available).length, bad: inList.filter((r) => !r.available).length };
+    const ok = inList.filter((r) => !reasonOf(r, pool)).length;
+    return { total: inList.length, ok, bad: inList.length - ok };
   };
 
   async function refreshArm() {
@@ -183,6 +205,7 @@ function GroupsAndLists() {
             )}
           >
             {l.name} <span className="text-xs text-slate-400">{countsFor(l.id).total}</span>
+            {countsFor(l.id).bad > 0 && <span className="h-2 w-2 rounded-full bg-rose-500" title={`${countsFor(l.id).bad} קבוצות לא יקבלו נסיעות`} />}
           </button>
         ))}
         <button
@@ -201,7 +224,7 @@ function GroupsAndLists() {
               <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-600">
                 <span>{curCounts.total} קבוצות</span>
                 <span className="text-emerald-700">● {curCounts.ok} זמינות</span>
-                <span className="text-rose-700">● {curCounts.bad} לא זמינות</span>
+                <span className="text-rose-700">● {curCounts.bad} לא יקבלו נסיעות</span>
                 <span className="flex items-center gap-1">
                   <Smartphone className="h-4 w-4 text-pink-500" />
                   {curListArms.length ? curListArms.join(' · ') : 'כל הזרועות הפעילות'}

@@ -27,6 +27,12 @@ export default function Dashboard() {
         .gte('claimed_at', new Date(Date.now() - 86400000).toISOString()),
       can('admin') ? sb().from('activity_log').select('*').order('created_at', { ascending: false }).limit(8) : Promise.resolve({ data: [] }),
     ]);
+    // today's rides (since local midnight): how many, and how their sends ended
+    const midnight = new Date();
+    midnight.setHours(0, 0, 0, 0);
+    const todayRides = await allRows(() =>
+      sb().from('campaigns').select('kind,sent,failed,total,status').gte('created_at', midnight.toISOString()).order('created_at'),
+    ).catch(() => ({ data: [] as any[] }));
     // owner (own account, not inside a station): stations whose subscription ends this week or already ended
     let stationAlerts: any[] = [];
     let health: any[] = [];
@@ -69,15 +75,27 @@ export default function Dashboard() {
 
     const perArm: Record<string, number> = {};
     const distinct = new Set<string>();
+    const reachable = new Set<string>();
+    const armRows = arms.data || [];
+    const liveArm = new Set(armRows.filter((a: any) => a.is_active && a.status === 'online').map((a: any) => a.id));
     for (const g of groups.data || []) {
       perArm[g.arm_id] = (perArm[g.arm_id] || 0) + 1;
       distinct.add(g.wa_group_id);
+      if (liveArm.has(g.arm_id)) reachable.add(g.wa_group_id);
     }
-    const armRows = arms.data || [];
+    const tr = todayRides.data || [];
+    const today2 = {
+      rides: tr.length,
+      sent: tr.reduce((n: number, c: any) => n + (c.sent || 0), 0),
+      failed: tr.reduce((n: number, c: any) => n + (c.failed || 0), 0),
+      total: tr.reduce((n: number, c: any) => n + (c.total || 0), 0),
+    };
     setD({
       arms: armRows,
       perArm,
       groupCount: distinct.size,
+      groupsReachable: reachable.size,
+      today2,
       sentToday: armRows.reduce((s: number, a: any) => s + (a.sent_day === today ? a.sent_today : 0), 0),
       sentTotal: armRows.reduce((s: number, a: any) => s + Number(a.sent_total || 0), 0),
       active: active.data || [],
@@ -124,10 +142,18 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4">
         <Stat label="זרועות מחוברות" value={`${online}/${d.arms.length}`} icon={<Smartphone className="h-5 w-5" />} tone="green" />
-        <Stat label="קבוצות" value={d.groupCount} icon={<UsersRound className="h-5 w-5" />} tone="sky" />
+        <Stat
+          label="קבוצות זמינות"
+          value={`${d.groupsReachable}/${d.groupCount}`}
+          sub={d.groupCount - d.groupsReachable > 0 ? `${d.groupCount - d.groupsReachable} בלי זרוע מחוברת` : 'כולן עם זרוע מחוברת'}
+          icon={<UsersRound className="h-5 w-5" />}
+          tone="sky"
+        />
         <Stat label="נשלחו היום" value={d.sentToday} sub={`סה״כ ${d.sentTotal.toLocaleString('he-IL')}`} icon={<Send className="h-5 w-5" />} tone="violet" />
         <Stat label="הפצות פעילות" value={d.active.length} icon={<Radio className="h-5 w-5" />} tone="pink" />
       </div>
+
+      <TodayStrip t={d.today2} station={station} isSuper={isSuper} />
 
       {d.delivery.length > 0 && <DeliveryMonitor rows={d.delivery} />}
 
@@ -290,6 +316,45 @@ export default function Dashboard() {
         </Card>
       )}
     </>
+  );
+}
+
+// Today at a glance: rides, how the sends ended, and the station's subscription
+function TodayStrip({ t, station, isSuper }: { t: { rides: number; sent: number; failed: number; total: number }; station: any; isSuper: boolean }) {
+  const done = t.sent + t.failed;
+  const rate = done > 0 ? Math.round((t.sent / done) * 100) : null;
+  let sub: { text: string; tone: 'green' | 'amber' | 'red' | 'slate' } | null = null;
+  if (station && !station.is_home && !(isSuper && !station.acting)) {
+    if (!station.sub_end) sub = { text: 'מנוי פעיל', tone: 'green' };
+    else {
+      const left = Math.ceil((new Date(station.sub_end + 'T23:59:59').getTime() - Date.now()) / 86400000);
+      const end = new Date(station.sub_end).toLocaleDateString('he-IL');
+      if (left < 0) sub = { text: `המנוי הסתיים ב-${end}`, tone: 'red' };
+      else if (left <= 7) sub = { text: left === 0 ? 'המנוי מסתיים היום' : `המנוי מסתיים בעוד ${left} ימים (${end})`, tone: 'amber' };
+      else sub = { text: `מנוי פעיל עד ${end}`, tone: 'green' };
+    }
+  }
+  return (
+    <Card className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-2 p-4 text-sm">
+      <span className="font-semibold">היום</span>
+      <span>
+        <b>{t.rides}</b> נסיעות
+      </span>
+      <span className="text-emerald-700">
+        <b>{t.sent.toLocaleString('he-IL')}</b> נשלחו לקבוצות
+      </span>
+      <span className={t.failed > 0 ? 'text-rose-700' : 'text-slate-500'}>
+        <b>{t.failed.toLocaleString('he-IL')}</b> לא נשלחו
+      </span>
+      {rate !== null && <span className="text-slate-500">{rate}% הצלחה</span>}
+      {sub && (
+        <span className="ms-auto">
+          <Badge tone={sub.tone} dot>
+            {sub.text}
+          </Badge>
+        </span>
+      )}
+    </Card>
   );
 }
 
