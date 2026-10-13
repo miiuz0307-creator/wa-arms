@@ -28,7 +28,13 @@ export const needsPolling = () => !!(stationToken() || actingStation());
 
 let client: SupabaseClient | null = null;
 
+// Demo build (NEXT_PUBLIC_DEMO=1): an in-browser fake database instead of Supabase (see web/lib/demo).
+// In the real app this condition is false at build time and the demo code is not included.
+const DEMO = process.env.NEXT_PUBLIC_DEMO === '1';
+const demo = () => require('./demo/client') as typeof import('./demo/client');
+
 export function sb(): SupabaseClient {
+  if (!client && DEMO) client = demo().createDemoClient() as unknown as SupabaseClient;
   if (!client) {
     const token = stationToken();
     const acting = actingStation();
@@ -49,14 +55,17 @@ export function sb(): SupabaseClient {
 export function enterStationMode(token: string) {
   write(TOKEN_KEY, token);
   write(ACT_KEY, null);
+  if (DEMO) return demo().demoGo('/');
   window.location.href = '/';
 }
 export function leaveStationMode() {
   write(TOKEN_KEY, null);
+  if (DEMO) return demo().demoGo('/login');
   window.location.href = '/login';
 }
 export function actAsStation(id: string | null, path = '/') {
   write(ACT_KEY, id);
+  if (DEMO) return demo().demoGo(id ? path : '/stations');
   window.location.href = id ? path : '/stations';
 }
 
