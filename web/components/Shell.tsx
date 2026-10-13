@@ -23,6 +23,7 @@ import {
   Wallet,
   Rocket,
   CreditCard,
+  PenLine,
 } from 'lucide-react';
 import { useAuth, ROLE_LABEL, Role } from '@/lib/auth';
 import { actAsStation } from '@/lib/supabase';
@@ -40,6 +41,7 @@ const NAV: Item[] = [
   { href: '/stations', label: 'תחנות', icon: Building2, min: 'owner', superOnly: true, group: 'owner' },
   { href: '/billing', label: 'מנויים ותשלומים', icon: Wallet, min: 'owner', superOnly: true, group: 'owner' },
   { href: '/support', label: 'פניות תמיכה', icon: LifeBuoy, min: 'owner', superOnly: true, group: 'owner' },
+  { href: '/footer', label: 'חתימה בהודעות', icon: PenLine, min: 'owner', superOnly: true, group: 'owner' },
   { href: '/updates', label: 'ניהול עדכונים', icon: Rocket, min: 'owner', superOnly: true, group: 'owner' },
   { href: '/', label: 'בית', icon: LayoutDashboard, min: 'viewer', group: 'ops' },
   { href: '/send', label: 'שליחת הודעה', short: 'שליחה', icon: Send, min: 'operator', group: 'ops' },
