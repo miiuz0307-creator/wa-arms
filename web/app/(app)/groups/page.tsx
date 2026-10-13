@@ -46,6 +46,8 @@ function GroupsAndLists() {
   const [listF, setListF] = useState(ALL);
   // inside a list: 'in' = the groups already in it, 'add' = groups not in it yet (to add)
   const [listMode, setListMode] = useState<'in' | 'add'>('in');
+  // in 'add': also offer groups only OTHER arms are in (adding them adds that arm to the list's sending arms)
+  const [addOthers, setAddOthers] = useState(false);
   const [statusF, setStatusF] = useState<'all' | 'ok' | 'bad'>('all');
   const [showUnavailable, setShowUnavailable] = useState(true);
   // outside a list: all groups / only groups not in any list yet / only groups already in lists
@@ -142,7 +144,13 @@ function GroupsAndLists() {
     const active = new Set((arms || []).filter((a) => a.is_active).map((a) => a.id));
     const chosen = armsOfList(listF);
     const pool = (chosen.length ? chosen : [...active]).filter((id) => active.has(id)); // switched-off arms send nothing
-    return r.armIds.some((id) => pool.includes(id));
+    return r.armIds.some((id) => (addOthers ? active.has(id) : pool.includes(id)));
+  };
+  // reachable through the open list's own sending arms (false = only through another arm)
+  const viaListArms = (r: Row) => {
+    if (!listF) return true;
+    const chosen = armsOfList(listF);
+    return !chosen.length || r.armIds.some((id) => chosen.includes(id));
   };
 
   const filtered = useMemo(() => {
@@ -156,9 +164,9 @@ function GroupsAndLists() {
         (statusF === 'all' || (statusF === 'ok' ? r.available : !r.available)) &&
         (showUnavailable || r.available || (listF && listMode === 'in' && r.lists.includes(listF))),
     );
-  }, [viewRows, q, armF, listF, listMode, assignF, statusF, showUnavailable, listArms, arms]);
+  }, [viewRows, q, armF, listF, listMode, addOthers, assignF, statusF, showUnavailable, listArms, arms]);
 
-  useEffect(() => setSel(new Set()), [armF, listF, listMode]);
+  useEffect(() => setSel(new Set()), [armF, listF, listMode, addOthers]);
 
   const countsFor = (listId: string) => {
     const pool = armsOfList(listId);
@@ -314,6 +322,14 @@ function GroupsAndLists() {
             ))}
           </div>
         )}
+        {curList && listMode === 'add' && armsOfList(listF).length > 0 && (
+          <label className="mb-3 flex cursor-pointer items-start gap-2.5 rounded-xl bg-amber-50 p-3 text-sm text-amber-900 ring-1 ring-amber-200">
+            <input type="checkbox" checked={addOthers} onChange={(e) => setAddOthers(e.target.checked)} className="mt-0.5 h-4 w-4 accent-indigo-600" />
+            <span>
+              <b>הצג גם קבוצות של זרועות אחרות</b> – קבוצה שאין בה זרוע של הרשימה תתווסף יחד עם הזרוע שנמצאת בה, והזרוע הזו תצטרף לזרועות השולחות של הרשימה.
+            </span>
+          </label>
+        )}
         {/* filters */}
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <div className="relative min-w-48 flex-1">
@@ -389,21 +405,19 @@ function GroupsAndLists() {
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="truncate text-sm font-medium">{r.name}</span>
-                        {r.lists.length > 0 ? (
-                          <Badge tone="sky">✓ ברשימה</Badge>
-                        ) : (
-                          <Badge tone="amber">לא ברשימה</Badge>
-                        )}
+                        {!listF &&
+                          (r.lists.length > 0 ? <Badge tone="sky">✓ ברשימה</Badge> : <Badge tone="amber">לא באף רשימה</Badge>)}
+                        {listF && listMode === 'add' && !viaListArms(r) && <Badge tone="amber">דרך זרוע אחרת</Badge>}
                         {!r.available && (
                           <Badge tone="red" dot>
                             לא תקבל נסיעות – {r.reason}
                           </Badge>
                         )}
                       </div>
-                      {r.lists.length > 0 && (
+                      {r.lists.filter((id) => id !== listF).length > 0 && (
                         <div className="mt-1 flex flex-wrap items-center gap-1">
-                          <span className="text-[11px] font-medium text-sky-700">ברשימות:</span>
-                          {r.lists.map((id) => (
+                          <span className="text-[11px] font-medium text-sky-700">{listF ? 'נמצאת גם ברשימות:' : 'ברשימות:'}</span>
+                          {r.lists.filter((id) => id !== listF).map((id) => (
                             <span key={id} className="rounded-md bg-sky-50 px-1.5 py-0.5 text-[11px] font-medium text-sky-800 ring-1 ring-inset ring-sky-600/20">
                               {listById[id]?.name || '—'}
                             </span>
@@ -497,6 +511,7 @@ function AddToList({
     setListId(defaultList || lists[0]?.id || 'new');
     setName('');
     setAddArms(true);
+    setShare(true);
     // only when the window opens – the screen refreshes every few seconds and must not reset the choice
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -507,6 +522,11 @@ function AddToList({
   const chosenArms = listId === 'new' ? [] : listArms.filter((x) => x.list_id === listId).map((x) => x.arm_id);
   const unreachable = chosenArms.length ? groups.filter((g) => g.armIds.length && !g.armIds.some((a) => chosenArms.includes(a))) : [];
   const missingArms = [...new Set(unreachable.map((g) => g.armIds.find((a) => armById[a]?.is_active) || g.armIds[0]).filter(Boolean))] as string[];
+  // other active arms that are in the chosen groups but don't send for this list yet: adding them shares the rides between all arms
+  const otherArms = chosenArms.length
+    ? ([...new Set(groups.flatMap((g) => g.armIds))].filter((a) => armById[a]?.is_active && !chosenArms.includes(a) && !missingArms.includes(a)) as string[])
+    : [];
+  const [share, setShare] = useState(true);
 
   async function save() {
     setBusy(true);
@@ -522,13 +542,14 @@ function AddToList({
         const { error } = await sb().from('list_groups').upsert(rowsToAdd.slice(i, i + 500), { onConflict: 'list_id,wa_group_id' });
         if (error) throw error;
       }
-      if (addArms && missingArms.length) {
+      const armsToAdd = [...(addArms ? missingArms : []), ...(share ? otherArms : [])];
+      if (armsToAdd.length) {
         const { error } = await sb()
           .from('list_arms')
-          .upsert(missingArms.map((arm_id) => ({ list_id: id, arm_id })), { onConflict: 'list_id,arm_id' });
+          .upsert(armsToAdd.map((arm_id) => ({ list_id: id, arm_id })), { onConflict: 'list_id,arm_id' });
         if (error) throw error;
       }
-      await logAct('list_saved', 'list', id, { added: groups.length, arms_added: addArms ? missingArms.length : 0 });
+      await logAct('list_saved', 'list', id, { added: groups.length, arms_added: armsToAdd.length });
       toast(`${groups.length} קבוצות שויכו לרשימה`);
       onDone();
       onClose();
@@ -579,13 +600,24 @@ function AddToList({
             <li>קבוצה שנמצאת בכמה רשימות מקבלת כל נסיעה פעם אחת בלבד</li>
           </ul>
         </div>
+        {otherArms.length > 0 && (
+          <Checkbox
+            checked={share}
+            onChange={setShare}
+            label={
+              <span className="text-sm">
+                <b>חלוקת עבודה בין הזרועות:</b> בקבוצות שבחרת נמצאות גם הזרועות {otherArms.map((a) => armById[a]?.name).join(', ')}. הוסף אותן לזרועות השולחות של הרשימה – הנסיעות יתחלקו בין כל הזרועות (כל קבוצה עדיין מקבלת כל נסיעה פעם אחת).
+              </span>
+            }
+          />
+        )}
         {missingArms.length > 0 && (
           <Checkbox
             checked={addArms}
             onChange={setAddArms}
             label={
               <span className="text-sm">
-                {unreachable.length} קבוצות שאף זרוע שולחת של הרשימה לא חברה בהן – הוסף לרשימה את הזרועות: {missingArms.map((a) => armById[a]?.name).join(', ')}
+                {unreachable.length} קבוצות שאין בהן זרוע של הרשימה – הוסף לרשימה את הזרועות שנמצאות בהן: {missingArms.map((a) => armById[a]?.name).join(', ')}
               </span>
             }
           />
