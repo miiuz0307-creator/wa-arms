@@ -873,6 +873,29 @@ select public.owner_footer_set(null, '');
 select testkit.check((select bool_and(not enabled) from public.owner_footers()), 'v2 footer: an empty text switches the footer off everywhere');
 reset role;
 
+-- ---------- v2b: an ended subscription keeps arms connected and can log in to pay ----------
+reset role;
+update stations set sub_end = current_date - 3, status = 'active' where id = '0000000a-0000-0000-0000-000000000000';
+delete from station_login_attempts;
+set role anon; select testkit.as_nobody('10.0.0.77');
+select (public.station_login('codeaaaa')) as v2b_login \gset
+select testkit.check((:'v2b_login'::json ->> 'token') is not null and (:'v2b_login'::json ->> 'expired')::boolean, 'v2b: a station whose subscription ended can still log in (marked expired)');
+select testkit.as_station(:'v2b_login'::json ->> 'token');
+select testkit.check(public.station_me() is null, 'v2b: an ended station gets no normal access (station_me empty)');
+select testkit.check((public.station_billing() ->> 'station_id') = '0000000a-0000-0000-0000-000000000000', 'v2b: an ended station reaches its billing to renew');
+select testkit.check((select count(*) from arms) = 0, 'v2b: an ended station sees no arms or data');
+select testkit.as_engine();
+select testkit.check((select allowed from public.engine_station_states() where id = '0000000a-0000-0000-0000-000000000000'), 'v2b: arms of an ended (not suspended) station keep running');
+select testkit.check(not public.engine_station_active('0000000a-0000-0000-0000-000000000000'), 'v2b: but the engine is told not to handle its rides');
+reset role;
+update stations set status = 'suspended' where id = '0000000a-0000-0000-0000-000000000000';
+set role anon; select testkit.as_engine();
+select testkit.check(not (select allowed from public.engine_station_states() where id = '0000000a-0000-0000-0000-000000000000'), 'v2b: a suspended station''s arms stop as before');
+select testkit.as_nobody('10.0.0.78');
+select testkit.check((public.station_login('codeaaaa') ->> 'token') is null, 'v2b: a suspended station cannot log in');
+reset role;
+update stations set status = 'active', sub_end = current_date + 30 where id = '0000000a-0000-0000-0000-000000000000';
+
 -- ---------- the migration itself: runs again through the update center, and its undo removes only what it added ----------
 reset role;
 \set mv2 `cat ../supabase/pending/20261013_v2.sql`
