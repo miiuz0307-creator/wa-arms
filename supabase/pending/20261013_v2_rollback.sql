@@ -9,6 +9,11 @@ do $$ begin
   end if;
 end $$;
 
+drop function if exists public.owner_footers();
+drop function if exists public.owner_footer_set(uuid[], text, boolean);
+drop function if exists public.station_footer();
+drop function if exists public.engine_station_footer(uuid);
+drop table if exists public.message_footers;
 drop function if exists public.station_set_logo(uuid, text);
 drop function if exists public.station_brand();
 drop function if exists public.owner_station_logos();

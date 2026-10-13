@@ -661,6 +661,85 @@ begin
 end $function$;
 
 -- =====================================================================================
+-- 6. Message footer ("חתימה בהודעות"): a line the OWNER controls that is added under every message the
+--    engine sends for a station (rides, help, manual sends). Set per station or for all stations at once.
+--    Stations can read their own footer (to preview it) but cannot change it.
+-- =====================================================================================
+create table if not exists public.message_footers (
+  station_id uuid primary key references public.stations(id) on delete cascade,
+  footer_text text not null default '' check (char_length(footer_text) <= 500),
+  enabled boolean not null default true,
+  updated_at timestamptz not null default now(),
+  updated_by uuid
+);
+alter table public.message_footers enable row level security;
+revoke all on public.message_footers from public, anon, authenticated;
+
+-- all stations with their footer (owner screen)
+create or replace function public.owner_footers()
+ returns table(station_id uuid, station_name text, is_home boolean, status text, footer_text text, enabled boolean, updated_at timestamptz)
+ language plpgsql stable security definer set search_path to 'public'
+as $function$
+#variable_conflict use_column
+begin
+  if not public.is_super() then raise exception 'not allowed'; end if;
+  return query
+  select s.id, s.name, s.is_home, s.status, coalesce(f.footer_text, ''), coalesce(f.enabled, false), f.updated_at
+  from public.stations s left join public.message_footers f on f.station_id = s.id
+  order by s.is_home desc, s.name;
+end $function$;
+
+-- set the footer for the given stations (null/empty array = ALL stations) in one action; returns rows changed
+create or replace function public.owner_footer_set(p_stations uuid[], p_text text, p_enabled boolean default true)
+ returns integer language plpgsql volatile security definer set search_path to 'public'
+as $function$
+declare n int; t text := coalesce(btrim(p_text), '');
+begin
+  if not public.is_super() then raise exception 'not allowed'; end if;
+  if char_length(t) > 500 then raise exception 'החתימה ארוכה מדי (עד 500 תווים)'; end if;
+  insert into public.message_footers (station_id, footer_text, enabled, updated_at, updated_by)
+  select s.id, t, coalesce(p_enabled, true) and t <> '', now(), auth.uid()
+  from public.stations s
+  where p_stations is null or cardinality(p_stations) = 0 or s.id = any(p_stations)
+  on conflict (station_id) do update
+    set footer_text = excluded.footer_text, enabled = excluded.enabled, updated_at = now(), updated_by = auth.uid();
+  get diagnostics n = row_count;
+  return n;
+end $function$;
+
+-- the footer of the station I am in (read-only preview for station users)
+create or replace function public.station_footer()
+ returns json language plpgsql stable security definer set search_path to 'public'
+as $function$
+declare sid uuid := public.my_station(); r record;
+begin
+  if sid is null or public.my_rank() < 1 then return null; end if;
+  select footer_text, enabled into r from public.message_footers where station_id = sid;
+  if not found or not r.enabled or r.footer_text = '' then return json_build_object('enabled', false, 'footer_text', ''); end if;
+  return json_build_object('enabled', true, 'footer_text', r.footer_text);
+end $function$;
+
+-- engine: the footer text to add for a station, or null when none
+create or replace function public.engine_station_footer(p_station uuid)
+ returns text language plpgsql stable security definer set search_path to 'public'
+as $function$
+begin
+  if not public.is_engine() then raise exception 'not allowed'; end if;
+  return (select nullif(footer_text, '') from public.message_footers where station_id = p_station and enabled);
+end $function$;
+
+do $$ declare f text; begin
+  foreach f in array array['owner_footers()', 'owner_footer_set(uuid[],text,boolean)'] loop
+    execute format('revoke execute on function public.%s from public, anon', f);
+    execute format('grant execute on function public.%s to authenticated', f);
+  end loop;
+  execute 'revoke execute on function public.station_footer() from public';
+  execute 'grant execute on function public.station_footer() to anon, authenticated';
+  execute 'revoke execute on function public.engine_station_footer(uuid) from public, authenticated';
+  execute 'grant execute on function public.engine_station_footer(uuid) to anon';
+end $$;
+
+-- =====================================================================================
 -- Function permissions (Supabase grants new functions to everyone by default: revoke, then grant)
 -- =====================================================================================
 do $$ declare f text; begin

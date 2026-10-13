@@ -91,14 +91,18 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const [more, setMore] = useState(false);
   // messages and payment reminders from the system owner (station logins and the owner inside a station)
   const inStation = isStation || !!station?.acting;
-  const { inbox } = useInbox(!!session && inStation);
-  const brand = useBrand(!!session && inStation);
+  const { inbox } = useInbox(!!session && inStation && !station?.expired);
+  const brand = useBrand(!!session && inStation && !station?.expired);
 
   useEffect(() => {
     if (!loading && !session) router.replace('/login');
   }, [loading, session, router]);
 
   useEffect(() => setMore(false), [path]);
+  // subscription ended: only the subscription page (pay and renew) is open
+  useEffect(() => {
+    if (station?.expired && !path.startsWith('/subscription')) router.replace('/subscription');
+  }, [station?.expired, path, router]);
 
   if (loading || !session) return <Spinner className="min-h-dvh items-center" />;
 
@@ -120,9 +124,11 @@ export function Shell({ children }: { children: React.ReactNode }) {
   }
 
   const ownerView = isSuper && !station?.acting;
-  const items = NAV.filter(
-    (n) => can(n.min) && (!n.superOnly || ownerView) && (!n.stationOnly || (inStation && !station?.is_home)) && !(ownerView && n.stationOnly),
-  );
+  const items = station?.expired
+    ? NAV.filter((n) => n.href === '/subscription')
+    : NAV.filter(
+        (n) => can(n.min) && (!n.superOnly || ownerView) && (!n.stationOnly || (inStation && !station?.is_home)) && !(ownerView && n.stationOnly),
+      );
   const daysLeft = station?.sub_end ? Math.ceil((new Date(station.sub_end + 'T23:59:59').getTime() - Date.now()) / 86400000) : null;
   const active = (href: string) => (href === '/' ? path === '/' : path.startsWith(href));
   const mobileMain = MOBILE_MAIN.map((h) => items.find((i) => i.href === h)).filter(Boolean) as Item[];
