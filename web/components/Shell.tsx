@@ -6,7 +6,6 @@ import {
   LayoutDashboard,
   Smartphone,
   UsersRound,
-  ListChecks,
   Send,
   LifeBuoy,
   Contact,
@@ -43,8 +42,7 @@ const NAV: Item[] = [
   { href: '/send', label: 'שליחת הודעה', icon: Send, min: 'operator' },
   { href: '/history', label: 'היסטוריה', icon: History, min: 'viewer' },
   { href: '/arms', label: 'חיבור זרועות', icon: Smartphone, min: 'admin' },
-  { href: '/groups', label: 'ניהול קבוצות', icon: UsersRound, min: 'operator' },
-  { href: '/lists', label: 'רשימות הפצה', icon: ListChecks, min: 'operator' },
+  { href: '/groups', label: 'ניהול קבוצות והפצה', icon: UsersRound, min: 'operator' },
   { href: '/users', label: 'משתמשים והרשאות', icon: ShieldCheck, min: 'owner' },
   { href: '/settings', label: 'הגדרות', icon: Settings, min: 'admin' },
 ];
