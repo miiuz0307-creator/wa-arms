@@ -173,7 +173,7 @@ function Sources({ d, reload }: any) {
                 ))}
               </Select>
               <Toggle checked={s.is_active} onChange={(v) => upd(s.id, { is_active: v })} label="האזנה פעילה" />
-              <Button size="sm" variant="ghost" className="text-rose-600 hover:bg-rose-50" onClick={() => del(s)} aria-label={`הסרת ${s.name || 'הקבוצה'}`} title="הסרה">
+              <Button size="sm" variant="ghost" className="!text-rose-600 hover:!bg-rose-50" onClick={() => del(s)} aria-label={`הסרת ${s.name || 'הקבוצה'}`} title="הסרה">
                 <Trash2 className="h-4 w-4" />
               </Button>
             </li>
@@ -237,7 +237,7 @@ function Triggers({ d, reload }: any) {
             <div className="flex items-center gap-3 pb-2">
               <span className="text-xs text-slate-500">{t.is_active ? 'פעילה' : 'כבויה'}</span>
               <Toggle checked={t.is_active} onChange={(v) => upd(t.id, { is_active: v })} label={`המילה ${t.keyword} פעילה`} />
-              <Button size="sm" variant="ghost" className="text-rose-600 hover:bg-rose-50" onClick={() => del(t)} aria-label={`מחיקת המילה ${t.keyword}`} title="מחיקה">
+              <Button size="sm" variant="ghost" className="!text-rose-600 hover:!bg-rose-50" onClick={() => del(t)} aria-label={`מחיקת המילה ${t.keyword}`} title="מחיקה">
                 <Trash2 className="h-4 w-4" />
               </Button>
             </div>
@@ -529,7 +529,7 @@ function Operators({ d, reload }: any) {
                   חסימה
                 </Button>
               )}
-              <Button size="sm" variant="ghost" className="text-rose-600 hover:bg-rose-50" onClick={() => del(o)} aria-label={`הסרת ${o.name || o.phone || 'המספר'}`} title="הסרה">
+              <Button size="sm" variant="ghost" className="!text-rose-600 hover:!bg-rose-50" onClick={() => del(o)} aria-label={`הסרת ${o.name || o.phone || 'המספר'}`} title="הסרה">
                 <Trash2 className="h-4 w-4" />
               </Button>
             </li>

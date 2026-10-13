@@ -191,7 +191,7 @@ function DispatcherRow({ d, onChange }: { d: any; onChange: () => void }) {
       <Button size="sm" variant={dirty ? 'primary' : 'secondary'} onClick={save} disabled={!dirty} aria-label="שמירת הסדרן" title="שמירה">
         <Save className="h-4 w-4" />
       </Button>
-      <Button size="sm" variant="ghost" className="text-rose-600 hover:bg-rose-50 hover:text-rose-700" onClick={del} aria-label="מחיקת הסדרן" title="מחיקה">
+      <Button size="sm" variant="ghost" className="!text-rose-600 hover:!bg-rose-50" onClick={del} aria-label="מחיקת הסדרן" title="מחיקה">
         <Trash2 className="h-4 w-4" />
       </Button>
     </li>

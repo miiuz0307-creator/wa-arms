@@ -53,7 +53,7 @@ export default function ControlPage() {
   return <Control />;
 }
 
-const iconBtn = 'h-9 w-9 !px-0';
+const iconBtn = '!h-9 !w-9 !px-0';
 
 function Control() {
   const [arms, setArms] = useState<Arm[] | null>(null);
@@ -242,7 +242,7 @@ function Control() {
                   </div>
                   <div className="flex flex-wrap gap-1.5">
                     {a.status !== 'online' && (
-                      <Button size="sm" variant="secondary" className="h-9" loading={busy === a.arm_id + 'connect'} onClick={() => command(a, 'connect', 'מתחבר מחדש…')}>
+                      <Button size="sm" variant="secondary" className="!h-9" loading={busy === a.arm_id + 'connect'} onClick={() => command(a, 'connect', 'מתחבר מחדש…')}>
                         <PlayCircle className="h-4 w-4" />
                         חיבור מחדש
                       </Button>
@@ -262,7 +262,7 @@ function Control() {
                       <Button
                         size="sm"
                         variant="success"
-                        className="h-9"
+                        className="!h-9"
                         loading={busy === a.arm_id + 'limit'}
                         onClick={() => run(a.arm_id + 'limit', () => sb().rpc('owner_arm_limit', { p_arm: a.arm_id, p_limit: 500 }), 'השליחה חודשה (עד 500 ביום)')}
                       >

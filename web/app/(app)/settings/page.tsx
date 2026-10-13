@@ -146,12 +146,6 @@ function Settings() {
       title="קצב ושליחה"
       icon={<Gauge className="h-4 w-4" />}
       bodyClass="space-y-6 p-5"
-      action={
-        <Button onClick={save} loading={busy} size="sm" className="hidden md:inline-flex">
-          <Save className="h-4 w-4" />
-          שמירה
-        </Button>
-      }
     >
       <div>
         <div className="mb-2 text-sm font-medium text-slate-700">איך לקבוע את הקצב</div>
