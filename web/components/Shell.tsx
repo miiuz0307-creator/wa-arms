@@ -30,6 +30,7 @@ import { cx, Spinner } from './ui';
 import { StationBanners, useInbox } from './StationInbox';
 import { AppLock } from './AppLock';
 import { UpdateNotifier } from './UpdateNotifier';
+import { LiveDot } from '@/components/LiveDot';
 
 type Item = { href: string; label: string; icon: any; min: Role; superOnly?: boolean };
 
@@ -136,6 +137,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
             <div className="max-w-[10rem] truncate text-xs text-slate-500">
               {isStation || station?.acting ? station?.name : 'ניהול הפצות WhatsApp'}
             </div>
+            <LiveDot className="mt-1" />
           </div>
         </div>
         <nav className="scroll-thin flex-1 space-y-0.5 overflow-y-auto px-3">
@@ -173,7 +175,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
       <header className="sticky top-0 z-30 flex items-center justify-between border-b border-slate-200/70 bg-white/85 px-4 py-3 backdrop-blur md:hidden">
         <div className="flex items-center gap-2.5">
           <div className="brand-gradient grid h-8 w-8 place-items-center rounded-lg text-sm font-bold text-white">ז</div>
-          <span className="font-bold">{isStation || station?.acting ? station?.name : 'זרועות'}</span>
+          <div className="leading-tight">
+            <div className="font-bold">{isStation || station?.acting ? station?.name : 'זרועות'}</div>
+            <LiveDot />
+          </div>
         </div>
         <button onClick={signOut} className="rounded-lg p-2 text-slate-500">
           <LogOut className="h-5 w-5" />
