@@ -222,7 +222,7 @@ function Support() {
             <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="חיפוש לפי נושא, תחנה, זרוע או מספר פנייה" className="pr-9" aria-label="חיפוש פנייה" />
           </div>
           <div className="scroll-thin -mx-4 overflow-x-auto px-4 md:mx-0 md:px-0">
-            <Segmented
+            <Segmented<'active' | Status | 'all'>
               value={statusF}
               onChange={setStatusF}
               options={[

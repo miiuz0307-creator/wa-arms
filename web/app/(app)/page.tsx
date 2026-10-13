@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Smartphone, UsersRound, Send, Route, Activity, ChevronLeft, CheckCircle2, BellRing, Radio } from 'lucide-react';
+import { Smartphone, UsersRound, Send, Route, Activity, ChevronLeft, CheckCircle2, BellRing, Radio, Building2, LifeBuoy, Wallet } from 'lucide-react';
 import { sb } from '@/lib/supabase';
 import { useRealtime } from '@/lib/hooks';
 import { useAuth } from '@/lib/auth';
@@ -50,13 +50,19 @@ export default function Dashboard() {
     let armRequests: any[] = [];
     let engineSeen: string | null = null;
     let delivery: any[] = [];
+    let owner: { stations: any[]; tickets: any[] | null; payments: any[] | null } | null = null;
+    let support: any[] = [];
     if (ownerView) {
-      const [{ data: h }, { data: rq }, { data: dl }, { data: st }] = await Promise.all([
+      const [{ data: h }, { data: rq }, { data: dl }, { data: st }, tk, pay] = await Promise.all([
         sb().rpc('owner_health'),
         sb().rpc('owner_arm_requests'),
         sb().rpc('owner_delivery'),
         sb().rpc('stations_overview'),
+        sb().rpc('support_tickets'),
+        sb().rpc('owner_payment_requests', { p_status: 'pending' }),
       ]);
+      // a database without the v2 support / payment functions answers with an error: those tiles are then hidden
+      owner = { stations: (st as any[]) || [], tickets: tk.error ? null : (tk.data as any[]) || [], payments: pay.error ? null : (pay.data as any[]) || [] };
       // delivery monitor: members who could not decrypt our messages ("waiting for this message"), per arm
       delivery = (dl as any[]) || [];
       armRequests = ((rq as any[]) || []).filter((r) => r.status === 'pending');
@@ -65,6 +71,10 @@ export default function Dashboard() {
       stationAlerts = (st || [])
         .map((s: any) => ({ ...s, left: daysLeft(s.sub_end) }))
         .filter((s: any) => s.status === 'active' && s.left !== null && s.left <= 7);
+    } else if (station && !station.is_home) {
+      // the station's support tickets: an answer from the BotiX team that waits for the station
+      const { data, error } = await sb().rpc('support_tickets');
+      if (!error) support = ((data as any[]) || []).filter((t) => t.status === 'waiting');
     }
 
     const tr = todayRides.data || [];
@@ -83,9 +93,11 @@ export default function Dashboard() {
       health,
       armRequests,
       delivery,
+      owner,
+      support,
       engineDown: ownerView && engineSeen && Date.now() - new Date(engineSeen).getTime() > 3 * 60_000 ? engineSeen : null,
     });
-  }, [can, ownerView]);
+  }, [can, ownerView, station]);
 
   // the group picture is heavier to read (a station can have 1,500 groups), so once a minute, not every 5 seconds
   const loadProblems = useCallback(async () => {
@@ -265,6 +277,20 @@ export default function Dashboard() {
     });
   if (listedBad > 0)
     alerts.push({ key: 'gbad', tone: 'amber', text: `${listedBad} קבוצות ברשימות ההפצה לא זמינות ולא יקבלו נסיעות`, href: '/groups?show=bad', cta: 'לבדיקה' });
+  for (const t of d.support)
+    alerts.push({ key: `sup${t.id}`, tone: 'sky', text: <>צוות התמיכה ענה לפנייה <b className="font-semibold">{t.subject}</b> וממתין לתשובתך</>, href: `/support?t=${t.id}`, cta: 'לפנייה' });
+  const ownerOpen = d.owner?.tickets ? d.owner.tickets.filter((t: any) => t.status !== 'closed') : null;
+  const ownerToAnswer = ownerOpen ? ownerOpen.filter((t: any) => t.last_reply_by === 'station') : [];
+  if (ownerToAnswer.length > 0)
+    alerts.push({
+      key: 'tickets',
+      tone: 'amber',
+      text: ownerToAnswer.length === 1 ? <>פנייה מתחנה <b className="font-semibold">{ownerToAnswer[0].station_name}</b> ממתינה לתשובה שלך</> : `${ownerToAnswer.length} פניות תמיכה ממתינות לתשובה שלך`,
+      href: ownerToAnswer.length === 1 ? `/support?t=${ownerToAnswer[0].id}` : '/support',
+      cta: 'לפניות',
+    });
+  if (d.owner?.payments?.length)
+    alerts.push({ key: 'pay', tone: 'amber', text: `${d.owner.payments.length} תשלומים ממתינים לאישור שלך`, href: '/billing', cta: 'לאישור' });
   if (d.recentFailed > 0) alerts.push({ key: 'failed', tone: 'red', text: `${d.recentFailed} שליחות נכשלו ב-24 השעות האחרונות`, href: '/history', cta: 'לפרטים' });
   for (const r of d.armRequests)
     alerts.push({
@@ -312,7 +338,10 @@ export default function Dashboard() {
     <>
       {header}
 
+      {ownerView && d.owner && <OwnerKpis owner={d.owner} openTickets={ownerOpen} toAnswer={ownerToAnswer.length} />}
+
       {/* KPIs */}
+      {ownerView && <h2 className="mb-2 mt-6 text-sm font-semibold text-slate-500">החשבון הראשי שלך</h2>}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4">
         <Stat
           label="זרועות מחוברות"
@@ -356,44 +385,41 @@ export default function Dashboard() {
       </div>
 
       {/* needs attention */}
-        <div className="mt-4">
-          {alerts.length === 0 ? (
-            <Card className="flex items-center gap-3 px-5 py-4">
-              <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600" />
-              <div>
-                <div className="font-medium text-slate-900">הכול תקין</div>
-                <div className="text-sm text-slate-500">אין כרגע שום דבר שדורש טיפול.</div>
-              </div>
-            </Card>
-          ) : (
-            <Section
-              title={`דורש תשומת לב (${alerts.length})`}
-              icon={<BellRing className="h-4 w-4" />}
-            >
-              <ul className="divide-y divide-slate-100">
-                {alerts.map((a) => (
-                  <li key={a.key}>
-                    {a.href ? (
-                      <Link href={a.href} className="flex items-center gap-3 px-5 py-3.5 transition hover:bg-slate-50">
-                        <Lamp tone={a.tone} />
-                        <span className="min-w-0 flex-1 text-sm leading-relaxed text-slate-800">{a.text}</span>
-                        <span className="flex shrink-0 items-center text-sm font-medium text-indigo-600">
-                          {a.cta}
-                          <ChevronLeft className="h-4 w-4" />
-                        </span>
-                      </Link>
-                    ) : (
-                      <div className="flex items-center gap-3 px-5 py-3.5">
-                        <Lamp tone={a.tone} />
-                        <span className="min-w-0 flex-1 text-sm leading-relaxed text-slate-800">{a.text}</span>
-                      </div>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </Section>
-          )}
-        </div>
+      <div className="mt-4">
+        {alerts.length === 0 ? (
+          <Card className="flex items-center gap-3 px-5 py-4">
+            <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600" />
+            <div>
+              <div className="font-medium text-slate-900">הכול תקין</div>
+              <div className="text-sm text-slate-500">אין כרגע שום דבר שדורש טיפול.</div>
+            </div>
+          </Card>
+        ) : (
+          <Section title={`דורש תשומת לב (${alerts.length})`} icon={<BellRing className="h-4 w-4" />}>
+            <ul className="divide-y divide-slate-100">
+              {alerts.map((a) => (
+                <li key={a.key}>
+                  {a.href ? (
+                    <Link href={a.href} className="flex items-center gap-3 px-5 py-3.5 transition hover:bg-slate-50">
+                      <Lamp tone={a.tone} />
+                      <span className="min-w-0 flex-1 text-sm leading-relaxed text-slate-800">{a.text}</span>
+                      <span className="flex shrink-0 items-center text-sm font-medium text-indigo-600">
+                        {a.cta}
+                        <ChevronLeft className="h-4 w-4" />
+                      </span>
+                    </Link>
+                  ) : (
+                    <div className="flex items-center gap-3 px-5 py-3.5">
+                      <Lamp tone={a.tone} />
+                      <span className="min-w-0 flex-1 text-sm leading-relaxed text-slate-800">{a.text}</span>
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </Section>
+        )}
+      </div>
 
       {ownerView && d.delivery.length > 0 && <DeliveryMonitor rows={d.delivery} />}
 
@@ -529,6 +555,58 @@ export default function Dashboard() {
           )}
         </Section>
       )}
+    </>
+  );
+}
+
+// Owner (own account): the whole system at a glance – stations, their arms, support and payments. Real data only;
+// a tile whose source is missing (older database) is not shown.
+function OwnerKpis({ owner, openTickets, toAnswer }: { owner: { stations: any[]; tickets: any[] | null; payments: any[] | null }; openTickets: any[] | null; toAnswer: number }) {
+  const st = owner.stations;
+  const active = st.filter((s) => s.status === 'active').length;
+  const armsTotal = st.reduce((n, s) => n + (s.arms_total || 0), 0);
+  const armsOnline = st.reduce((n, s) => n + (s.arms_online || 0), 0);
+  return (
+    <>
+      <h2 className="mb-2 text-sm font-semibold text-slate-500">כל המערכת</h2>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4">
+        <Stat
+          label="תחנות פעילות"
+          value={`${active}/${st.length}`}
+          sub={st.length === 0 ? 'עדיין אין תחנות' : st.length - active > 0 ? `${st.length - active} לא פעילות` : 'כל התחנות פעילות'}
+          icon={<Building2 className="h-5 w-5" />}
+          tone="violet"
+          href="/stations"
+        />
+        <Stat
+          label="זרועות מחוברות בתחנות"
+          value={`${armsOnline}/${armsTotal}`}
+          sub={armsTotal === 0 ? 'אין זרועות בתחנות' : armsOnline === armsTotal ? 'כולן מחוברות' : `${armsTotal - armsOnline} לא מחוברות`}
+          icon={<Smartphone className="h-5 w-5" />}
+          tone={armsTotal && armsOnline === armsTotal ? 'green' : armsOnline === 0 && armsTotal ? 'red' : 'amber'}
+          href="/control"
+        />
+        {openTickets && (
+          <Stat
+            label="פניות תמיכה פתוחות"
+            value={openTickets.length}
+            sub={toAnswer > 0 ? <span className="text-amber-800">{toAnswer} ממתינות לתשובה שלך</span> : openTickets.length ? 'אין פנייה שממתינה לך' : 'אין פניות פתוחות'}
+            icon={<LifeBuoy className="h-5 w-5" />}
+            tone={toAnswer > 0 ? 'amber' : 'sky'}
+            href="/support"
+          />
+        )}
+        {owner.payments && (
+          <Stat
+            label="תשלומים לאישור"
+            value={owner.payments.length}
+            sub={owner.payments.length ? 'ממתינים לאישור שלך' : 'אין תשלומים ממתינים'}
+            icon={<Wallet className="h-5 w-5" />}
+            tone={owner.payments.length ? 'amber' : 'green'}
+            href="/billing"
+          />
+        )}
+      </div>
     </>
   );
 }

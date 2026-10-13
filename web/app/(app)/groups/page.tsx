@@ -387,10 +387,10 @@ function GroupsAndLists() {
               </div>
               <div className="mt-2.5 flex flex-wrap gap-2">
                 <Button size="sm" variant="secondary" onClick={() => setRemoveRows(curStats.warn)}>
-                  <ListMinus className="h-4 w-4" /> הסר מהרשימה את {curStats.warn.length} הקבוצות הלא זמינות
+                  <ListMinus className="h-4 w-4" /> הסרה מהרשימה ({curStats.warn.length})
                 </Button>
                 <Button size="sm" variant="ghost" loading={busy} onClick={() => includeAnyway(curStats.warn.map((r) => r.id))}>
-                  <ShieldCheck className="h-4 w-4" /> כלול בכל זאת
+                  <ShieldCheck className="h-4 w-4" /> כלול בכל זאת ({curStats.warn.length})
                 </Button>
               </div>
             </div>
@@ -399,7 +399,7 @@ function GroupsAndLists() {
       )}
 
       {/* filters + bulk actions – stay on screen while scrolling */}
-      <div className="sticky top-[53px] z-20 -mx-4 mb-3 border-b border-slate-200/70 bg-[var(--bg)]/95 px-4 pb-3 pt-2 backdrop-blur-md md:top-0 md:mx-0 md:rounded-b-2xl md:px-0">
+      <div className="sticky top-[55px] z-20 -mx-4 mb-3 border-b border-slate-200/70 bg-[var(--bg)]/95 px-4 pb-3 pt-2 backdrop-blur-md md:top-0 md:mx-0 md:rounded-b-2xl md:px-0">
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative min-w-0 flex-1 basis-56">
             <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -616,7 +616,10 @@ function ListCard({
       )}
     >
       <div className="flex w-full items-center justify-between gap-2">
-        <span className={cx('truncate text-sm font-semibold', active ? 'text-indigo-800' : 'text-slate-900')}>{title}</span>
+        <span className="flex min-w-0 items-center gap-1.5">
+          {bad > 0 && <span className="h-2 w-2 shrink-0 rounded-full bg-rose-500" aria-label={`${bad} קבוצות לא יקבלו נסיעות`} />}
+          <span className={cx('truncate text-sm font-semibold', active ? 'text-indigo-800' : 'text-slate-900')}>{title}</span>
+        </span>
         <span className="shrink-0 text-xs tabular-nums text-slate-500">{total.toLocaleString('he-IL')}</span>
       </div>
       <div className="flex items-center gap-3 text-xs">

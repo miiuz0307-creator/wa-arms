@@ -150,7 +150,7 @@ export function indexProblems(rows: { wa_group_id: string; arm_id: string | null
   return m;
 }
 
-const PRIORITY: GroupReason[] = ['no_permission', 'send_error', 'arm_offline', 'no_arm'];
+const PRIORITY: GroupReason[] = ['no_permission', 'send_error'];
 
 /**
  * Why a group cannot get rides now (null = available).
@@ -170,9 +170,12 @@ export function groupReason(
   if (members.length === 0) return 'no_list_arm';
   const live = members.filter((id) => armById[id]?.is_active && armById[id]?.status === 'online');
   if (live.length === 0) return 'arm_offline';
-  const general = problems.get(`*|${g.id}`);
-  const per = live.map((id) => problems.get(`${id}|${g.id}`) || general || null);
+  // with a live member arm, only what the group itself answered still counts (no permission / send error);
+  // "no arm" / "arm offline" from history describe the arms at that time and the arm state above replaces them
+  const sticky = (p?: string | null) => (p === 'no_permission' || p === 'send_error' ? p : null);
+  const general = sticky(problems.get(`*|${g.id}`));
+  const per = live.map((id) => sticky(problems.get(`${id}|${g.id}`)) || general);
   if (per.some((p) => !p)) return null;
-  for (const p of PRIORITY) if (per.includes(p)) return p;
+  for (const p of PRIORITY) if ((per as string[]).includes(p)) return p;
   return 'unknown';
 }
