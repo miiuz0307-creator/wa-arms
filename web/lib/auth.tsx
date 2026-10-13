@@ -13,6 +13,8 @@ export type Station = {
   max_arms: number | null;
   via_code: boolean;
   acting: boolean;
+  /** subscription ended: the station may only open its subscription page to pay and renew */
+  expired?: boolean;
 };
 
 const RANK: Record<Role, number> = { owner: 4, admin: 3, operator: 2, viewer: 1 };
@@ -55,8 +57,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const loadStation = useCallback(async () => {
     const { data } = await sb().rpc('station_me');
-    setStation((data as Station) ?? null);
-    return (data as Station) ?? null;
+    let st = (data as Station) ?? null;
+    // station-code login whose subscription ended: the database still lets it reach its billing (to pay and renew)
+    if (!st && stationToken()) {
+      const { data: b } = await sb().rpc('station_billing');
+      const bill = b as any;
+      if (bill?.station_id)
+        st = { id: bill.station_id, name: bill.name, is_home: false, status: bill.status, sub_end: bill.sub_end, max_arms: null, via_code: true, acting: false, expired: true };
+    }
+    setStation(st);
+    return st;
   }, []);
 
   const loadProfile = useCallback(
@@ -78,20 +88,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (isStation) {
       // station code login: the token is checked by the database on every request
+      let wasExpired = false;
       loadStation().then((st) => {
         if (!st) {
           leaveStationMode();
           return;
         }
+        wasExpired = !!st.expired;
         setSession({ station: st.id });
         setProfile({ id: 'station', email: '', full_name: st.name, role: 'admin', is_active: true });
         setLoading(false);
       });
       const ping = setInterval(() => {
         sb().rpc('station_ping');
-        // suspended / code changed / subscription ended → out
+        // suspended / code changed → out; renewed after it had ended → reload into the full app
         loadStation().then((st) => {
           if (!st) leaveStationMode();
+          else if (wasExpired && !st.expired) window.location.reload();
         });
       }, 120_000);
       sb().rpc('station_ping');

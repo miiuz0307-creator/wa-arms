@@ -848,6 +848,54 @@ select testkit.check(json_array_length(public.support_ticket_get(:t_a) -> 'messa
   and (public.support_ticket_get(:t_a) ->> 'arm_name') is not null, 'v2 support: the ticket shows all messages and the arm');
 reset role;
 
+-- ---------- message footer (owner controls the line under every message) ----------
+reset role;
+set role authenticated; select testkit.as_owner();
+select testkit.check(public.owner_footer_set(null, '  🚕 BotiX – הפצה חכמה לתחנות  ') = (select count(*) from stations), 'v2 footer: the owner sets the footer for all stations at once');
+select testkit.check((select bool_and(footer_text = '🚕 BotiX – הפצה חכמה לתחנות' and enabled) from public.owner_footers()), 'v2 footer: all stations got the trimmed text, enabled');
+select testkit.check(public.owner_footer_set(array['0000000b-0000-0000-0000-000000000000']::uuid[], 'תחנה ב – 03-1234567') = 1, 'v2 footer: one station can get its own footer');
+select public.owner_footer_set(array['0000000c-0000-0000-0000-000000000000']::uuid[], 'x', false);
+do $$ begin perform public.owner_footer_set(null, repeat('א', 501)); perform testkit.check(false, 'v2 footer: over 500 characters refused');
+exception when others then perform testkit.check(true, 'v2 footer: over 500 characters refused', sqlerrm); end $$;
+reset role;
+set role anon; select testkit.as_station('tok-a');
+select testkit.check((public.station_footer()->>'footer_text') = '🚕 BotiX – הפצה חכמה לתחנות', 'v2 footer: a station sees its own footer');
+do $$ begin perform public.owner_footer_set(null, 'hack'); perform testkit.check(false, 'v2 footer: a station cannot change footers');
+exception when others then perform testkit.check(true, 'v2 footer: a station cannot change footers'); end $$;
+do $$ begin perform public.engine_station_footer('0000000a-0000-0000-0000-000000000000'); perform testkit.check(false, 'v2 footer: only the engine reads any station''s footer');
+exception when others then perform testkit.check(true, 'v2 footer: only the engine reads any station''s footer'); end $$;
+select testkit.as_engine();
+select testkit.check(public.engine_station_footer('0000000b-0000-0000-0000-000000000000') = 'תחנה ב – 03-1234567'
+  and public.engine_station_footer('0000000c-0000-0000-0000-000000000000') is null, 'v2 footer: the engine gets each station''s text, none when switched off');
+reset role;
+set role authenticated; select testkit.as_owner();
+select public.owner_footer_set(null, '');
+select testkit.check((select bool_and(not enabled) from public.owner_footers()), 'v2 footer: an empty text switches the footer off everywhere');
+reset role;
+
+-- ---------- v2b: an ended subscription keeps arms connected and can log in to pay ----------
+reset role;
+update stations set sub_end = current_date - 3, status = 'active' where id = '0000000a-0000-0000-0000-000000000000';
+delete from station_login_attempts;
+set role anon; select testkit.as_nobody('10.0.0.77');
+select (public.station_login('codeaaaa')) as v2b_login \gset
+select testkit.check((:'v2b_login'::json ->> 'token') is not null and (:'v2b_login'::json ->> 'expired')::boolean, 'v2b: a station whose subscription ended can still log in (marked expired)');
+select testkit.as_station(:'v2b_login'::json ->> 'token');
+select testkit.check(public.station_me() is null, 'v2b: an ended station gets no normal access (station_me empty)');
+select testkit.check((public.station_billing() ->> 'station_id') = '0000000a-0000-0000-0000-000000000000', 'v2b: an ended station reaches its billing to renew');
+select testkit.check((select count(*) from arms) = 0, 'v2b: an ended station sees no arms or data');
+select testkit.as_engine();
+select testkit.check((select allowed from public.engine_station_states() where id = '0000000a-0000-0000-0000-000000000000'), 'v2b: arms of an ended (not suspended) station keep running');
+select testkit.check(not public.engine_station_active('0000000a-0000-0000-0000-000000000000'), 'v2b: but the engine is told not to handle its rides');
+reset role;
+update stations set status = 'suspended' where id = '0000000a-0000-0000-0000-000000000000';
+set role anon; select testkit.as_engine();
+select testkit.check(not (select allowed from public.engine_station_states() where id = '0000000a-0000-0000-0000-000000000000'), 'v2b: a suspended station''s arms stop as before');
+select testkit.as_nobody('10.0.0.78');
+select testkit.check((public.station_login('codeaaaa') ->> 'token') is null, 'v2b: a suspended station cannot log in');
+reset role;
+update stations set status = 'active', sub_end = current_date + 30 where id = '0000000a-0000-0000-0000-000000000000';
+
 -- ---------- the migration itself: runs again through the update center, and its undo removes only what it added ----------
 reset role;
 \set mv2 `cat ../supabase/pending/20261013_v2.sql`
