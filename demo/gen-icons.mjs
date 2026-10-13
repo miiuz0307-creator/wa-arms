@@ -1,4 +1,4 @@
-// Builds demo/vendor/lucide.tsx (a lucide-react compatible module) from the lucide icon SVGs.
+// Builds demo/vendor/lucide.jsx (a lucide-react compatible module) from the lucide icon SVGs.
 import fs from 'fs'; import path from 'path';
 const dir = process.argv[2]; const out = process.argv[3];
 const pascal = (k) => k.split('-').map((p) => p[0].toUpperCase() + p.slice(1)).join('');
@@ -14,7 +14,7 @@ for (const f of fs.readdirSync(dir).filter((f) => f.endsWith('.svg')).sort()) {
   const names = [pascal(key)];
   try { const j = JSON.parse(fs.readFileSync(path.join(dir, key + '.json'), 'utf8')); for (const a of j.aliases || []) names.push(pascal(typeof a === 'string' ? a : a.name)); } catch {}
   const id = 'I_' + key.replace(/-/g, '_');
-  lines.push(`const ${id} = mk(${JSON.stringify(names[0])}, ${JSON.stringify(nodes)});`);
+  lines.push(`const ${id} = /* @__PURE__ */ mk(${JSON.stringify(names[0])}, ${JSON.stringify(nodes)});`);
   for (const n of names) for (const v of [n, n + 'Icon', 'Lucide' + n]) if (!seen.has(v)) { seen.add(v); lines.push(`export { ${id} as ${v} };`); }
 }
 fs.writeFileSync(out, lines.join('\n'));

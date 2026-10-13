@@ -18,6 +18,8 @@ export const ID = {
   moshe: '0b07a1f0-0000-4000-8000-0000000000a5',
 };
 export const SHARON_TOKEN = 'demo-station-token-sharon';
+export const SOUTH_TOKEN = 'demo-station-token-south';
+export const FOOTER = '🚕 הופץ באמצעות BotiX';
 export const STATION_CODES: Record<string, string> = { [ID.sharon]: 'SHARON26', [ID.castel]: 'CASTEL77', [ID.south]: 'SOUTH555', [ID.haifa]: 'HAIFA123' };
 
 export const NO_PERM_ERR = 'אין הרשאה לשלוח בקבוצה (רק מנהלים יכולים לשלוח הודעות)';
@@ -151,7 +153,7 @@ export function seedDemo(d: DBLike) {
 
   add('station_sessions', { token_hash: SHARON_TOKEN, station_id: ID.sharon, created_at: ago(5 * DAY), last_seen: ago(20 * MIN), revoked_at: null });
   add('station_sessions', { token_hash: 'demo-old-1', station_id: ID.castel, created_at: ago(9 * DAY), last_seen: ago(3 * HOUR), revoked_at: null });
-  add('station_sessions', { token_hash: 'demo-old-2', station_id: ID.south, created_at: ago(12 * DAY), last_seen: ago(4 * DAY), revoked_at: null });
+  add('station_sessions', { token_hash: SOUTH_TOKEN, station_id: ID.south, created_at: ago(12 * DAY), last_seen: ago(4 * DAY), revoked_at: null });
 
   // ---------------- per station operation data ----------------
   const plans: StationPlan[] = [
@@ -576,6 +578,9 @@ export function seedDemo(d: DBLike) {
   out('972532306885', `תזכורת: המנוי של קסטל מוניות ירושלים מסתיים ב-${addDays(today, 2).split('-').reverse().join('/')} (בעוד 2 ימים).\nטלפון התחנה: 0527654321`, 20 * 60);
   out('972532306885', `בקשת תשלום חדשה #${pending.id}\nתחנה: קסטל מוניות ירושלים\nסכום: 299 ₪ (ביט)\nחודשים: 1\nהערה: שילמתי בביט עכשיו, תודה\nלאישור או דחייה: https://web-production-e5de3.up.railway.app/pay?r=${pending.token}`, 40);
   out('972532306885', 'פנייה חדשה #4 מתחנה קסטל מוניות ירושלים: לא מצליח לסרוק QR לזרוע 4 (זרוע)\nhttps://web-production-e5de3.up.railway.app/support?t=4', 180);
+
+  // message footer ("חתימה בהודעות") on every station
+  for (const s of T.stations) add('message_footers', { station_id: s.id, footer_text: FOOTER, enabled: true, updated_at: ago(3 * DAY), updated_by: ID.meir });
 
   void addMonths;
 }

@@ -7,7 +7,7 @@ export type DB = { v: number; seededAt: string; seedDay: string; seq: Record<str
 
 export const DB_KEY = 'botix-demo-db';
 /** bump when the shape of the demo data changes: old saved demo data is thrown away and seeded again */
-export const DB_VERSION = 3;
+export const DB_VERSION = 4;
 
 type Meta = {
   /** primary key columns */
@@ -79,6 +79,7 @@ export const META: Record<string, Meta> = {
   login_otps: { pk: ['id'], id: 'int', closed: true },
   sub_alerts: { pk: ['station_id', 'sub_end', 'kind'], closed: true },
   engine_status: { pk: ['id'], closed: true },
+  message_footers: { pk: ['station_id'], closed: true, defaults: { footer_text: '', enabled: true } },
 };
 
 /** foreign keys [child table, column, parent table] – used for embedded selects and cascades */
@@ -105,7 +106,7 @@ export const FKS: [string, string, string, 'cascade' | 'null'][] = [
 ];
 // every station-owned table belongs to stations (on delete cascade)
 for (const [t, m] of Object.entries(META)) if (m.station) FKS.push([t, 'station_id', 'stations', 'cascade']);
-for (const t of ['station_sessions', 'station_payments', 'payment_requests', 'support_tickets', 'system_messages', 'arm_requests', 'login_otps', 'sub_alerts'])
+for (const t of ['station_sessions', 'station_payments', 'payment_requests', 'support_tickets', 'system_messages', 'arm_requests', 'login_otps', 'sub_alerts', 'message_footers'])
   FKS.push([t, 'station_id', 'stations', 'cascade']);
 
 // ---------------------------------------------------------------------------------------------
