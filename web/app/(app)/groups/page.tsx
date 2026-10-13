@@ -44,6 +44,8 @@ function GroupsAndLists() {
   const [q, setQ] = useState('');
   const [armF, setArmF] = useState(ALL);
   const [listF, setListF] = useState(ALL);
+  // inside a list: 'in' = the groups already in it, 'add' = groups not in it yet (to add)
+  const [listMode, setListMode] = useState<'in' | 'add'>('in');
   const [statusF, setStatusF] = useState<'all' | 'ok' | 'bad'>('all');
   const [showUnavailable, setShowUnavailable] = useState(true);
   const [sel, setSel] = useState<Set<string>>(new Set());
@@ -137,13 +139,13 @@ function GroupsAndLists() {
       (r) =>
         (!t || r.name.toLowerCase().includes(t)) &&
         (!armF || r.armIds.includes(armF)) &&
-        (!listF || r.lists.includes(listF)) &&
+        (!listF || (listMode === 'in' ? r.lists.includes(listF) : !r.lists.includes(listF))) &&
         (statusF === 'all' || (statusF === 'ok' ? r.available : !r.available)) &&
-        (showUnavailable || r.available || (listF && r.lists.includes(listF))),
+        (showUnavailable || r.available || (listF && listMode === 'in' && r.lists.includes(listF))),
     );
-  }, [viewRows, q, armF, listF, statusF, showUnavailable]);
+  }, [viewRows, q, armF, listF, listMode, statusF, showUnavailable]);
 
-  useEffect(() => setSel(new Set()), [armF, listF]);
+  useEffect(() => setSel(new Set()), [armF, listF, listMode]);
 
   const countsFor = (listId: string) => {
     const pool = armsOfList(listId);
@@ -206,7 +208,10 @@ function GroupsAndLists() {
         {lists.map((l) => (
           <button
             key={l.id}
-            onClick={() => setListF(l.id)}
+            onClick={() => {
+              setListF(l.id);
+              setListMode('in');
+            }}
             className={cx(
               'flex shrink-0 items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium transition',
               listF === l.id ? 'border-indigo-200 bg-indigo-50 text-indigo-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50',
@@ -249,6 +254,28 @@ function GroupsAndLists() {
       )}
 
       <Card className="p-3 md:p-4">
+        {curList && (
+          <div className="mb-3 grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1" role="tablist">
+            {(['in', 'add'] as const).map((m) => {
+              const n = m === 'in' ? rows.filter((r) => r.lists.includes(listF)).length : rows.filter((r) => !r.lists.includes(listF)).length;
+              return (
+                <button
+                  key={m}
+                  type="button"
+                  role="tab"
+                  aria-selected={listMode === m}
+                  onClick={() => setListMode(m)}
+                  className={cx(
+                    'rounded-lg px-3 py-2 text-sm font-medium transition',
+                    listMode === m ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800',
+                  )}
+                >
+                  {m === 'in' ? 'הקבוצות ברשימה' : 'הוספת קבוצות לרשימה'} <span className="text-slate-400">{n}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
         {/* filters */}
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <div className="relative min-w-48 flex-1">
@@ -292,10 +319,12 @@ function GroupsAndLists() {
           />
           <span className="text-sm text-slate-500">נבחרו {sel.size}</span>
           <div className="ms-auto flex gap-2">
-            <Button size="sm" onClick={() => setAddOpen(true)} disabled={sel.size === 0}>
-              <ListPlus className="h-4 w-4" /> הוסף לרשימה
-            </Button>
-            {listF && (
+            {(!listF || listMode === 'add') && (
+              <Button size="sm" onClick={() => setAddOpen(true)} disabled={sel.size === 0}>
+                <ListPlus className="h-4 w-4" /> {listF ? `הוסף ל"${curList?.name || 'רשימה'}"` : 'הוסף לרשימה'}
+              </Button>
+            )}
+            {listF && listMode === 'in' && (
               <Button size="sm" variant="secondary" onClick={() => setRemoveOpen(true)} disabled={sel.size === 0}>
                 <ListMinus className="h-4 w-4" /> הסר מהרשימה
               </Button>
@@ -305,7 +334,7 @@ function GroupsAndLists() {
 
         {/* groups */}
         {filtered.length === 0 ? (
-          <Empty icon={<UsersRound className="h-7 w-7" />} title="לא נמצאו קבוצות" text={rows.length === 0 ? 'חבר זרוע והקבוצות שלה יופיעו כאן.' : 'נסה לשנות את החיפוש או הסינון.'} />
+          <Empty icon={<UsersRound className="h-7 w-7" />} title="לא נמצאו קבוצות" text={rows.length === 0 ? 'חבר זרוע והקבוצות שלה יופיעו כאן.' : listF && listMode === 'in' && !q ? 'הרשימה עדיין ריקה. עבור ל"הוספת קבוצות לרשימה" ובחר קבוצות.' : listF && listMode === 'add' && !q ? 'כל הקבוצות כבר ברשימה.' : 'נסה לשנות את החיפוש או הסינון.'} />
         ) : (
           <ul className="scroll-thin max-h-[65dvh] divide-y divide-slate-50 overflow-y-auto">
             {filtered.map((r) => {
@@ -391,7 +420,10 @@ function GroupsAndLists() {
         onClose={() => setListEdit(null)}
         onSaved={(id) => {
           load();
-          if (id) setListF(id);
+          if (id) {
+            setListF(id);
+            setListMode('add');
+          }
         }}
       />
       <ListArmsEditor list={armsEdit} arms={arms} listArms={listArms} onClose={() => setArmsEdit(null)} onSaved={load} />
