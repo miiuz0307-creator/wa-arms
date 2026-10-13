@@ -2,7 +2,8 @@
 import { Component, StrictMode, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AuthProvider } from '@/lib/auth';
-import { applyPersona, demoGo, currentPersona } from '@/lib/demo/client';
+import { applyPersona, demoGo, currentPersona, setPersona, resetDemo } from '@/lib/demo/client';
+import { sb } from '@/lib/supabase';
 import routes from 'demo-routes';
 import { useLoc, ParamsCtx, installDemoLocation, navigate } from './router';
 import { DemoRibbon } from './Ribbon';
@@ -10,6 +11,8 @@ import { DemoRibbon } from './Ribbon';
 type Route = { pattern: string; re: RegExp; keys: string[]; Page: any; layouts: any[] };
 
 installDemoLocation(demoGo);
+// for tests / curious owners in the console
+(window as any).__botixDemo = { sb, setPersona, resetDemo };
 
 // first visit: start logged in as the system owner, on the home screen
 try {

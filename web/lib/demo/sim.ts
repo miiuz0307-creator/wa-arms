@@ -126,7 +126,10 @@ function progressRides(now: number): boolean {
       k++;
       changed = true;
       t.attempts = (t.attempts || 0) + 1;
-      t.claimed_at = iso(now - rand().int(200, 2500));
+      // spread over the last tick, never before the ride started (the history screen measures from started_at)
+      const startMs = Date.parse(c.started_at || c.created_at) || now;
+      const at = Math.max(startMs + 50, now - rand().int(0, 2500));
+      t.claimed_at = iso(Math.max(startMs, at - rand().int(150, 600)));
       if (disabled.has(t.wa_group_id)) {
         Object.assign(t, { status: 'skipped', error: 'הקבוצה סומנה "לא לשלוח"' });
         continue;
@@ -146,7 +149,7 @@ function progressRides(now: number): boolean {
         Object.assign(t, { status: 'failed', error: rand().pick(SEND_ERRS), tried_arms: [...(t.tried_arms || []), arm.id] });
         continue;
       }
-      Object.assign(t, { status: 'sent', sent_at: iso(now - rand().int(0, 2500)), error: null });
+      Object.assign(t, { status: 'sent', sent_at: iso(at), error: null });
       arm.sent_today = (arm.sent_day === localDate() ? arm.sent_today || 0 : 0) + 1;
       arm.sent_day = localDate();
       arm.sent_total = (arm.sent_total || 0) + 1;
@@ -220,14 +223,14 @@ function newRide(): boolean {
 /** keep the saved demo small: drop the per-group rows of old rides (their totals stay) */
 function prune() {
   const ts = table('campaign_targets');
-  if (ts.length < 22_000) return;
+  if (ts.length < 18_000) return;
   const camps = table('campaigns')
     .filter((c) => c.status === 'completed' || c.status === 'cancelled')
     .sort((a, b) => (a.created_at < b.created_at ? -1 : 1));
   const drop = new Set<string>();
   let n = ts.length;
   for (const c of camps) {
-    if (n < 16_000) break;
+    if (n < 13_000) break;
     const k = ts.filter((t) => t.campaign_id === c.id).length;
     if (!k) continue;
     drop.add(c.id);

@@ -7,7 +7,7 @@ export type DB = { v: number; seededAt: string; seedDay: string; seq: Record<str
 
 export const DB_KEY = 'botix-demo-db';
 /** bump when the shape of the demo data changes: old saved demo data is thrown away and seeded again */
-export const DB_VERSION = 4;
+export const DB_VERSION = 5;
 
 type Meta = {
   /** primary key columns */
@@ -123,25 +123,69 @@ function ls(): Storage | null {
   }
 }
 
-/** columnar form: { cols, rows: [[...]] } – about half the size of plain JSON rows */
+/**
+ * Saved form (fits easily in localStorage): per table { c: columns, r: rows as arrays }; columns whose strings
+ * repeat (ids, group names, statuses) store an index into one shared string list, and ISO timestamps are
+ * stored as epoch milliseconds.
+ */
+const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 function pack(d: DB) {
-  const t: Record<string, { c: string[]; r: any[][] }> = {};
+  const strs: string[] = [];
+  const sidx = new Map<string, number>();
+  const intern = (v: string) => {
+    let i = sidx.get(v);
+    if (i === undefined) (i = strs.length), strs.push(v), sidx.set(v, i);
+    return i;
+  };
+  const t: Record<string, { c: string[]; r: any[][]; k: string[] }> = {};
   for (const [name, rows] of Object.entries(d.t)) {
     const cols: string[] = [];
     const idx = new Map<string, number>();
     for (const r of rows) for (const k of Object.keys(r)) if (!idx.has(k)) (idx.set(k, cols.length), cols.push(k));
-    t[name] = { c: cols, r: rows.map((r) => cols.map((c) => (r[c] === undefined ? null : r[c]))) };
+    // column kind: 's' interned strings, 't' timestamps, '' as is
+    const kinds = cols.map((c) => {
+      let n = 0;
+      let allIso = true;
+      let allStr = true;
+      const uniq = new Set<string>();
+      for (const r of rows) {
+        const v = r[c];
+        if (v === null || v === undefined) continue;
+        n++;
+        if (typeof v !== 'string') return '';
+        if (allIso && !ISO_RE.test(v)) allIso = false;
+        if (uniq.size < 4000) uniq.add(v);
+      }
+      if (!n || !allStr) return '';
+      if (allIso) return 't';
+      return uniq.size < n * 0.7 ? 's' : '';
+    });
+    t[name] = {
+      c: cols,
+      k: kinds,
+      r: rows.map((r) =>
+        cols.map((c, i) => {
+          const v = r[c];
+          if (v === undefined || v === null) return null;
+          return kinds[i] === 's' ? intern(v) : kinds[i] === 't' ? Date.parse(v) : v;
+        }),
+      ),
+    };
   }
-  return JSON.stringify({ v: d.v, seededAt: d.seededAt, seedDay: d.seedDay, seq: d.seq, t });
+  return JSON.stringify({ v: d.v, seededAt: d.seededAt, seedDay: d.seedDay, seq: d.seq, s: strs, t });
 }
 function unpack(s: string): DB | null {
   const o = JSON.parse(s);
   if (!o || o.v !== DB_VERSION) return null;
+  const strs: string[] = o.s || [];
   const t: Record<string, Row[]> = {};
-  for (const [name, { c, r }] of Object.entries<any>(o.t)) {
+  for (const [name, { c, r, k }] of Object.entries<any>(o.t)) {
     t[name] = r.map((vals: any[]) => {
       const row: Row = {};
-      c.forEach((k: string, i: number) => (row[k] = vals[i]));
+      c.forEach((col: string, i: number) => {
+        const v = vals[i];
+        row[col] = v === null ? null : k?.[i] === 's' ? strs[v] : k?.[i] === 't' ? new Date(v).toISOString() : v;
+      });
       return row;
     });
   }
@@ -217,6 +261,13 @@ export function onChange(f: () => void) {
   return () => {
     listeners.delete(f);
   };
+}
+
+// a reload / closing the tab must not lose the last changes (saving is otherwise debounced)
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', () => saveNow());
+  window.addEventListener('beforeunload', () => saveNow());
+  document.addEventListener('visibilitychange', () => document.visibilityState === 'hidden' && saveNow());
 }
 
 export function resetDemoDB() {

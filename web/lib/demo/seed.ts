@@ -243,7 +243,7 @@ export function seedDemo(d: DBLike) {
         id: r.uuid(), name: a.name, phone: a.status === 'pending' || a.status === 'qr' ? null : phone(r), status: a.status,
         last_connected_at: online ? ago(r.int(2, 40) * HOUR) : ago(r.int(30, 80) * HOUR),
         last_seen_at: online ? ago(r.int(5, 50) * 1000) : a.status === 'pending' || a.status === 'qr' ? null : ago(r.int(3, 30) * HOUR),
-        last_error: a.error ?? null, daily_limit: i === 3 ? 800 : 500, sent_today: 0, sent_total: r.int(2000, 60000),
+        last_error: a.error ?? null, daily_limit: i === 3 ? 2500 : 2000, sent_today: 0, sent_total: r.int(2000, 60000),
         is_active: true, created_by: null, created_at: iso(created), sent_day: today, linked_at: a.status === 'pending' || a.status === 'qr' ? null : iso(created + HOUR),
         station_id: sid,
       });
@@ -281,9 +281,18 @@ export function seedDemo(d: DBLike) {
       let members: typeof groups;
       if (l.only !== undefined) members = groups.slice(0, l.size);
       else {
-        // overlapping lists: take from a sliding window over the shuffled groups
+        // overlapping lists: a sliding window over the shuffled groups that the list's arms are in,
+        // plus a few groups none of its arms is in (they show as "not available" for that list)
+        const reach = free.filter((g) => g.arms.some((ai) => l.arms.includes(ai)));
+        const miss = free.filter((g) => !g.arms.some((ai) => l.arms.includes(ai)));
+        const want = Math.min(l.size, reach.length);
+        const seen = new Set<string>();
         members = [];
-        for (let k = 0; k < l.size; k++) members.push(free[(cursor + k) % free.length]);
+        for (let k = 0; k < want; k++) {
+          const g = reach[(cursor + k) % reach.length];
+          if (!seen.has(g.wa)) (seen.add(g.wa), members.push(g));
+        }
+        for (const g of miss.slice(0, Math.max(1, Math.round(l.size * 0.015)))) members.push(g);
         cursor += Math.floor(l.size * 0.6);
       }
       // a few groups that no arm has any more (left the group)
@@ -364,7 +373,7 @@ export function seedDemo(d: DBLike) {
     };
     const ride = (createdMs: number, opts: { withTargets: boolean; status?: string }) => {
       const kind = r.chance(0.6) ? 'quote' : r.chance(0.75) ? 'help' : 'manual';
-      const wl = lists.filter((l) => l.size <= 240);
+      const wl = lists.filter((l) => l.size <= 240 && (l.only === undefined || r.chance(0.04)));
       const list = kind === 'help' ? lists[0] : r.pick(wl.length ? wl : lists);
       const from = r.pick(p.cities);
       let to = r.pick(p.cities);

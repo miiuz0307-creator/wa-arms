@@ -2,7 +2,7 @@
 import { Query } from './query';
 import { callRpc } from './rpc';
 import { startSim } from './sim';
-import { table, nextId, touch, resetDemoDB, getDB } from './store';
+import { table, nextId, touch, resetDemoDB, getDB, saveNow } from './store';
 import { AUTH_KEY } from './ctx';
 import { homeStation } from './ctx';
 import { iso, newUuid } from './util';
@@ -24,6 +24,7 @@ function ls(k: string, v?: string | null) {
 /** go to an app path (e.g. "/stations") with a fresh start, like a full page load in the real app */
 export function demoGo(path: string) {
   const p = path.startsWith('/') ? path : '/' + path;
+  saveNow();
   try {
     window.location.hash = '#' + p;
   } catch {}
