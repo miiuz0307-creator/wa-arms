@@ -17,11 +17,14 @@ import {
   Wallet,
   AlertTriangle,
   Search,
+  Image as ImageIcon,
 } from 'lucide-react';
 import { sb, actAsStation } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
 import { fmtTime } from '@/lib/format';
-import { Badge, Button, Card, Empty, Field, Input, Modal, PageHeader, Select, Spinner, Stat, Textarea, cx, toast } from '@/components/ui';
+import { Badge, Button, Card, Empty, Field, Input, Modal, PageHeader, Select, Skeleton, Spinner, Stat, Textarea, ask, cx, toast } from '@/components/ui';
+import { StationLogo } from '@/components/Brand';
+import { LogoEditor } from '@/components/PayKit';
 
 type Row = {
   id: string;
@@ -56,7 +59,7 @@ const fmtDate = (d: string | null) => (d ? new Date(d + 'T12:00:00').toLocaleDat
 const money = (n: number) => `${Math.round(n).toLocaleString('he-IL')} ₪`;
 
 function subState(r: Row): { label: string; tone: any } {
-  if (r.status === 'suspended') return { label: 'מושעית', tone: 'red' };
+  if (r.status === 'suspended') return { label: 'מושהית', tone: 'slate' };
   const d = daysLeft(r.sub_end);
   if (d === null) return { label: 'ללא הגבלה', tone: 'slate' };
   if (d < 0) return { label: 'המנוי הסתיים', tone: 'red' };
@@ -79,17 +82,28 @@ function Stations() {
   const [shownCode, setShownCode] = useState<{ name: string; code: string } | null>(null);
   const [extendFor, setExtendFor] = useState<Row | null>(null);
   const [delFor, setDelFor] = useState<Row | null>(null);
+  const [logos, setLogos] = useState<Record<string, string>>({});
+  const [logoFor, setLogoFor] = useState<Row | null>(null);
 
   const load = useCallback(async () => {
     const { data, error } = await sb().rpc('stations_overview');
     if (error) toast(error.message, 'error');
     setRows((data as Row[]) || []);
   }, []);
+  const loadLogos = useCallback(async () => {
+    // rows: bounded – one row per station that has a logo
+    const { data, error } = await sb().rpc('owner_station_logos');
+    if (error) return; // older database without logos – keep the default mark
+    const m: Record<string, string> = {};
+    for (const x of (data as { station_id: string; logo_data: string }[]) || []) m[x.station_id] = x.logo_data;
+    setLogos(m);
+  }, []);
   useEffect(() => {
     load();
+    loadLogos();
     const iv = setInterval(load, 15000);
     return () => clearInterval(iv);
-  }, [load]);
+  }, [load, loadLogos]);
 
   const stats = useMemo(() => {
     const r = rows || [];
@@ -109,10 +123,14 @@ function Stations() {
   });
 
   async function setStatus(r: Row, status: 'active' | 'suspended') {
-    if (status === 'suspended' && !confirm(`להשעות את "${r.name}"? הגישה נחסמת מיד והזרועות שלה מפסיקות לשלוח.`)) return;
+    if (
+      status === 'suspended' &&
+      !(await ask({ title: `להשהות את "${r.name}"?`, text: 'הגישה של התחנה נחסמת מיד והזרועות שלה מפסיקות לשלוח. החיבורים לוואטסאפ נשארים, ואפשר להפעיל אותה מחדש בכל רגע.', ok: 'השהיית התחנה', danger: true }))
+    )
+      return;
     const { error } = await sb().rpc('station_save', { p: { ...r, status } });
     if (error) return toast(error.message, 'error');
-    toast(status === 'active' ? 'התחנה הופעלה' : 'התחנה הושעתה');
+    toast(status === 'active' ? 'התחנה הופעלה' : 'התחנה הושהתה');
     load();
   }
 
@@ -132,12 +150,16 @@ function Stations() {
       <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label="תחנות פעילות" value={`${stats.active}/${stats.total}`} icon={<Building2 className="h-5 w-5" />} tone="violet" />
         <Stat label="מנוי מסתיים השבוע" value={stats.expiring} icon={<CalendarPlus className="h-5 w-5" />} tone="amber" />
-        <Stat label="מושעות / מנוי הסתיים" value={stats.blocked} icon={<AlertTriangle className="h-5 w-5" />} tone="red" />
+        <Stat label="מושהות / מנוי הסתיים" value={stats.blocked} icon={<AlertTriangle className="h-5 w-5" />} tone="red" />
         <Stat label="הכנסה חודשית (פעילות)" value={money(stats.revenue)} icon={<Wallet className="h-5 w-5" />} tone="green" />
       </div>
 
       {!rows ? (
-        <Spinner />
+        <Card className="space-y-3 p-5">
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="h-20" />
+          ))}
+        </Card>
       ) : rows.length === 0 ? (
         <Card>
           <Empty
@@ -154,8 +176,11 @@ function Stations() {
         </Card>
       ) : (
         <Card>
-          <div className="border-b border-slate-100 p-3">
-            <div className="relative max-w-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-3">
+            <h2 className="text-[15px] font-semibold text-slate-900">
+              כל התחנות <span className="font-normal tabular-nums text-slate-400">{rows.length}</span>
+            </h2>
+            <div className="relative w-full max-w-sm">
               <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <Input placeholder="חיפוש לפי שם, מנהל או טלפון" value={q} onChange={(e) => setQ(e.target.value)} className="pr-9" />
             </div>
@@ -165,11 +190,24 @@ function Stations() {
               const sub = subState(r);
               const blocked = r.status === 'suspended' || (daysLeft(r.sub_end) ?? 1) < 0;
               return (
-                <li key={r.id} className={cx('p-4 md:px-5', blocked && 'bg-rose-50/40')}>
+                <li key={r.id} className={cx('px-5 py-4', blocked && 'bg-rose-50/40')}>
                   <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
+                    <div className="flex min-w-0 flex-1 items-start gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setLogoFor(r)}
+                        className="group relative shrink-0 rounded-2xl focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-indigo-500/20"
+                        title={logos[r.id] ? 'החלפת הלוגו' : 'העלאת לוגו'}
+                        aria-label={`הלוגו של ${r.name}`}
+                      >
+                        <StationLogo logo={logos[r.id]} name={r.name} size={44} className="rounded-xl" />
+                        <span className="absolute -bottom-1 -left-1 grid h-5 w-5 place-items-center rounded-full bg-white text-slate-500 shadow ring-1 ring-slate-200 group-hover:text-indigo-600">
+                          <ImageIcon className="h-3 w-3" />
+                        </span>
+                      </button>
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-base font-semibold">{r.name}</span>
+                        <span className="text-base font-semibold text-slate-900">{r.name}</span>
                         <Badge tone={sub.tone} dot={!blocked}>
                           {sub.label}
                         </Badge>
@@ -184,6 +222,7 @@ function Stations() {
                         <span>כניסה אחרונה: {r.last_login ? fmtTime(r.last_login) : 'עדיין לא'}</span>
                       </div>
                     </div>
+                    </div>
 
                     <div className="grid grid-cols-3 gap-2 text-center lg:w-72">
                       <Metric icon={<Smartphone className="h-3.5 w-3.5" />} label="מכשירים" value={`${r.arms_online}/${r.arms_total}`} hint={r.max_arms ? `מקסימום ${r.max_arms}` : ''} ok={r.arms_total > 0 && r.arms_online === r.arms_total} />
@@ -196,25 +235,25 @@ function Stations() {
                         <LogIn className="h-4 w-4" />
                         כניסה
                       </Button>
-                      <Button size="sm" variant="secondary" onClick={() => setEdit(r)} title="עריכת תחנה">
+                      <Button size="sm" variant="secondary" onClick={() => setEdit(r)} title="עריכת תחנה" aria-label="עריכת תחנה">
                         <Pencil className="h-4 w-4" />
                       </Button>
-                      <Button size="sm" variant="secondary" onClick={() => setCodeFor(r)} title="שינוי קוד כניסה">
+                      <Button size="sm" variant="secondary" onClick={() => setCodeFor(r)} title="שינוי קוד כניסה" aria-label="שינוי קוד כניסה">
                         <KeyRound className="h-4 w-4" />
                       </Button>
-                      <Button size="sm" variant="secondary" onClick={() => setExtendFor(r)} title="הארכת מנוי">
+                      <Button size="sm" variant="secondary" onClick={() => setExtendFor(r)} title="הארכת מנוי" aria-label="הארכת מנוי">
                         <CalendarPlus className="h-4 w-4" />
                       </Button>
                       {r.status === 'active' ? (
-                        <Button size="sm" variant="secondary" onClick={() => setStatus(r, 'suspended')} title="השעיית תחנה">
+                        <Button size="sm" variant="secondary" onClick={() => setStatus(r, 'suspended')} title="השהיית התחנה" aria-label="השהיית התחנה">
                           <PauseCircle className="h-4 w-4 text-amber-600" />
                         </Button>
                       ) : (
-                        <Button size="sm" variant="success" onClick={() => setStatus(r, 'active')} title="הפעלת התחנה מחדש">
+                        <Button size="sm" variant="success" onClick={() => setStatus(r, 'active')} title="הפעלת התחנה מחדש" aria-label="הפעלת התחנה מחדש">
                           <PlayCircle className="h-4 w-4" />
                         </Button>
                       )}
-                      <Button size="sm" variant="danger" onClick={() => setDelFor(r)} title="מחיקת תחנה">
+                      <Button size="sm" variant="danger" onClick={() => setDelFor(r)} title="מחיקת תחנה" aria-label="מחיקת תחנה">
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>
@@ -249,6 +288,28 @@ function Stations() {
       <ShowCode value={shownCode} onClose={() => setShownCode(null)} />
       <Extend station={extendFor} onClose={() => setExtendFor(null)} onDone={load} />
       <Delete station={delFor} onClose={() => setDelFor(null)} onDone={load} />
+      <Modal open={!!logoFor} onClose={() => setLogoFor(null)} title={`לוגו – ${logoFor?.name || ''}`}>
+        {logoFor && (
+          <div className="space-y-4">
+            <LogoEditor
+              stationId={logoFor.id}
+              logo={logos[logoFor.id]}
+              name={logoFor.name}
+              onChanged={(v) => {
+                setLogos((m) => {
+                  const n = { ...m };
+                  if (v) n[logoFor.id] = v;
+                  else delete n[logoFor.id];
+                  return n;
+                });
+              }}
+            />
+            <p className="text-sm leading-relaxed text-slate-500">
+              הלוגו מוצג לתחנה בראש האפליקציה במקום הסמל של BotiX. התמונה מוקטנת לריבוע 256×256; תמונה מרובעת עם רקע שקוף נראית הכי טוב.
+            </p>
+          </div>
+        )}
+      </Modal>
     </>
   );
 }
@@ -336,7 +397,7 @@ function StationForm({ value, onClose, onSaved }: { value: Partial<Row> | null; 
         <Field label="סטטוס תחנה">
           <Select value={f.status || 'active'} onChange={set('status')}>
             <option value="active">פעילה</option>
-            <option value="suspended">מושעית</option>
+            <option value="suspended">מושהית</option>
           </Select>
         </Field>
         <div className="md:col-span-2">
@@ -376,7 +437,7 @@ function ShowCode({ value, onClose }: { value: { name: string; code: string } | 
     >
       <div className="text-center">
         <div className="text-sm text-slate-500">{value?.name}</div>
-        <div dir="ltr" className="my-4 select-all rounded-2xl bg-slate-900 py-5 font-mono text-3xl font-bold tracking-[0.35em] text-white">
+        <div dir="ltr" className="my-4 select-all rounded-2xl bg-[#151920] py-5 font-mono text-3xl font-bold tracking-[0.35em] text-white">
           {value?.code}
         </div>
         <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">
@@ -444,7 +505,7 @@ function Extend({ station, onClose, onDone }: { station: Row | null; onClose: ()
   return (
     <Modal open={!!station} onClose={onClose} title={`הארכת מנוי – ${station?.name}`}>
       <p className="mb-4 text-sm text-slate-600">
-        המנוי הנוכחי: <b>{station?.sub_end ? fmtDate(station.sub_end) : 'ללא הגבלה'}</b>. הארכה מפעילה מחדש תחנה מושעית.
+        המנוי הנוכחי: <b>{station?.sub_end ? fmtDate(station.sub_end) : 'ללא הגבלה'}</b>. הארכה מפעילה מחדש תחנה מושהית.
       </p>
       <div className="grid grid-cols-2 gap-2">
         {[1, 3, 6, 12].map((m) => (
@@ -452,9 +513,9 @@ function Extend({ station, onClose, onDone }: { station: Row | null; onClose: ()
             key={m}
             onClick={() => go(m)}
             disabled={busy !== null}
-            className="rounded-2xl border border-slate-200 p-4 text-right transition hover:border-indigo-300 hover:bg-indigo-50 disabled:opacity-50"
+            className="min-h-[76px] rounded-2xl border border-slate-200 p-4 text-right transition hover:border-indigo-300 hover:bg-indigo-50 disabled:opacity-50"
           >
-            <div className="font-semibold">{m === 1 ? 'חודש' : m === 12 ? 'שנה' : `${m} חודשים`}</div>
+            <div className="font-semibold text-slate-900">{m === 1 ? 'חודש' : m === 12 ? 'שנה' : `${m} חודשים`}</div>
             <div className="text-xs text-slate-500">עד {fmtDate(addMonths(base, m))}</div>
             {station?.price != null && <div className="mt-1 text-xs text-indigo-700">{money(Number(station.price) * m)}</div>}
           </button>
@@ -470,7 +531,7 @@ function Delete({ station, onClose, onDone }: { station: Row | null; onClose: ()
   useEffect(() => setTyped(''), [station]);
   async function go() {
     setBusy(true);
-    const { error } = await sb().from('stations').delete().eq('id', station!.id);
+    const { error } = await sb().rpc('station_delete', { p_id: station!.id });
     setBusy(false);
     if (error) return toast(error.message, 'error');
     toast('התחנה נמחקה');
