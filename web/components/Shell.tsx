@@ -236,10 +236,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
             </button>
           </div>
         )}
-        {isStation && !inbox && daysLeft !== null && daysLeft <= 7 && (
+        {isStation && !inbox && daysLeft !== null && daysLeft <= 7 && !station?.expired && (
           <div className="mx-auto mb-4 flex max-w-6xl items-center gap-2 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-900 ring-1 ring-amber-200">
             <CalendarClock className="h-4 w-4 shrink-0" />
-            {daysLeft <= 0 ? 'המנוי מסתיים היום.' : `המנוי מסתיים בעוד ${daysLeft} ימים.`}
+            {daysLeft < 0 ? 'המנוי הסתיים.' : daysLeft === 0 ? 'המנוי מסתיים היום.' : `המנוי מסתיים בעוד ${daysLeft} ימים.`}
             <Link href="/subscription" className="font-semibold underline underline-offset-2">
               לחידוש המנוי
             </Link>

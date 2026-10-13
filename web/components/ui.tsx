@@ -258,14 +258,22 @@ export function Stat({
   tone?: Tone;
   href?: string;
 }) {
+  const long = (typeof value === 'string' || typeof value === 'number') && String(value).length > 6;
   const body = (
     <div className="flex items-start justify-between gap-3">
       <div className="min-w-0">
         <div className="text-[13px] font-medium text-slate-500">{label}</div>
-        <div className="mt-1.5 text-[28px] font-semibold leading-none tabular-nums tracking-tight text-slate-900 md:text-[32px]">{value}</div>
+        <div
+          className={cx(
+            'mt-1.5 font-semibold leading-none tabular-nums tracking-tight text-slate-900',
+            long ? 'text-[22px] md:text-[28px]' : 'text-[28px] md:text-[32px]',
+          )}
+        >
+          {value}
+        </div>
         {sub && <div className="mt-2 text-xs leading-snug text-slate-500">{sub}</div>}
       </div>
-      {icon && <div className={cx('grid h-9 w-9 shrink-0 place-items-center rounded-xl', STAT_TONE[tone])}>{icon}</div>}
+      {icon && <div className={cx('h-9 w-9 shrink-0 place-items-center rounded-xl', long ? 'hidden md:grid' : 'grid', STAT_TONE[tone])}>{icon}</div>}
     </div>
   );
   return (

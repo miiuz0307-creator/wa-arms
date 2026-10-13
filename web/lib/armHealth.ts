@@ -67,6 +67,9 @@ export function limitReached(a: ArmLike) {
 }
 
 /** What an arm's state means for a station owner, and what to do about it. */
+/** failed sends through one arm (recent window) before the arm is shown as having a sending problem */
+export const FAIL_WARN_AT = 5;
+
 export function armHealth(a: ArmLike, x: ArmExtras = {}): ArmHealth {
   const raw = a.last_error?.trim() || null;
   const fe = friendlyError(raw);
@@ -94,7 +97,8 @@ export function armHealth(a: ArmLike, x: ArmExtras = {}): ArmHealth {
         `הגבלת השליחה היומית הושגה (${a.sent_today}/${a.daily_limit}) – הזרוע לא שולחת עד חצות, והזרועות האחרות ממשיכות.`,
         'ההגבלה תתאפס בחצות. אפשר להעלות אותה בעריכת הזרוע.',
       );
-    if ((x.failedRecent || 0) > 0)
+    // a single failed send is normal noise (a group closed, a member left); warn only when it repeats
+    if ((x.failedRecent || 0) >= FAIL_WARN_AT)
       return mk(
         'warn',
         'מחוברת אך יש בעיית שליחה',
