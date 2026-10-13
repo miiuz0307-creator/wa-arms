@@ -205,14 +205,17 @@ export function Segmented<T extends string>({
   onChange,
   options,
   className,
+  full,
 }: {
   value: T;
   onChange: (v: T) => void;
   options: { value: T; label: React.ReactNode; count?: number }[];
   className?: string;
+  /** stretch to the full width, options share it equally (labels may wrap) */
+  full?: boolean;
 }) {
   return (
-    <div className={cx('inline-flex rounded-xl bg-slate-100 p-1', className)} role="tablist">
+    <div className={cx(full ? 'flex w-full' : 'inline-flex', 'rounded-xl bg-slate-100 p-1', className)} role="tablist">
       {options.map((o) => (
         <button
           key={o.value}
@@ -221,7 +224,8 @@ export function Segmented<T extends string>({
           aria-selected={value === o.value}
           onClick={() => onChange(o.value)}
           className={cx(
-            'flex items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-[13px] font-medium transition',
+            'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium transition',
+            full ? 'flex-1 justify-center text-center leading-tight' : 'whitespace-nowrap',
             value === o.value ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800',
           )}
         >

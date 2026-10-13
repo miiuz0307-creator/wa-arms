@@ -72,6 +72,11 @@ function GroupsAndLists() {
   const [armF, setArmF] = useState(ALL);
   const [listF, setListF] = useState(ALL);
   const [statusF, setStatusF] = useState<StatusF>('all');
+  // inside a list: 'in' = groups already in it, 'add' = groups worth adding (one of its active sending arms is in them)
+  const [listMode, setListMode] = useState<'in' | 'add'>('in');
+  const [addOthers, setAddOthers] = useState(false);
+  // outside a list: all groups / not in any list / already in lists
+  const [assignF, setAssignF] = useState<'all' | 'none' | 'assigned'>('all');
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [limit, setLimit] = useState(PAGE);
 
@@ -167,11 +172,38 @@ function GroupsAndLists() {
     });
   }, [rows, listF, armsOfList, armById, problems]);
 
+  const activeArms = useMemo(() => new Set((arms || []).filter((a) => a.is_active).map((a) => a.id as string)), [arms]);
+  // a group worth adding to the open list: not in it yet, and one of the list's ACTIVE sending arms is in it
+  // (no sending arms chosen = every active arm). With "other arms" on: any active arm (that arm then joins the list).
+  const addable = useCallback(
+    (r: Row) => {
+      if (!listF || r.lists.includes(listF)) return false;
+      const chosen = armsOfList(listF);
+      const pool = (chosen.length ? chosen : [...activeArms]).filter((id) => activeArms.has(id));
+      return r.armIds.some((id) => (addOthers ? activeArms.has(id) : pool.includes(id)));
+    },
+    [listF, armsOfList, activeArms, addOthers],
+  );
+  const viaListArms = (r: Row) => {
+    if (!listF) return true;
+    const chosen = armsOfList(listF);
+    return !chosen.length || r.armIds.some((id) => chosen.includes(id));
+  };
+
   // search / arm / list filters (status is applied after, so the status tabs can show counts)
   const base = useMemo(() => {
     const t = q.trim().toLowerCase();
-    return viewRows.filter((r) => (!t || r.name.toLowerCase().includes(t)) && (!armF || r.armIds.includes(armF)) && (!listF || r.lists.includes(listF)));
-  }, [viewRows, q, armF, listF]);
+    return viewRows.filter(
+      (r) =>
+        (!t || r.name.toLowerCase().includes(t)) &&
+        (!armF || r.armIds.includes(armF)) &&
+        (listF
+          ? listMode === 'in'
+            ? r.lists.includes(listF)
+            : addable(r)
+          : assignF === 'all' || (assignF === 'none' ? r.lists.length === 0 : r.lists.length > 0)),
+    );
+  }, [viewRows, q, armF, listF, listMode, addable, assignF]);
   const counts = useMemo(
     () => ({
       all: base.length,
@@ -186,8 +218,8 @@ function GroupsAndLists() {
     [base, statusF],
   );
 
-  useEffect(() => setSel(new Set()), [armF, listF]);
-  useEffect(() => setLimit(PAGE), [q, armF, listF, statusF]);
+  useEffect(() => setSel(new Set()), [armF, listF, listMode, addOthers]);
+  useEffect(() => setLimit(PAGE), [q, armF, listF, statusF, listMode, assignF, addOthers]);
 
   // per list: how many groups will get rides, how many will not, and those not marked "include anyway"
   const listStats = useMemo(() => {
@@ -322,7 +354,10 @@ function GroupsAndLists() {
             <ListCard
               key={l.id}
               active={listF === l.id}
-              onClick={() => setListF(l.id)}
+              onClick={() => {
+                setListF(l.id);
+                setListMode('in');
+              }}
               title={l.name}
               total={s.total}
               ok={s.ok}
@@ -400,6 +435,38 @@ function GroupsAndLists() {
 
       {/* filters + bulk actions – stay on screen while scrolling */}
       <div className="sticky top-[55px] z-20 -mx-4 mb-3 border-b border-slate-200/70 bg-[var(--bg)]/95 px-4 pb-3 pt-2 backdrop-blur-md md:top-0 md:mx-0 md:rounded-b-2xl md:px-0">
+        {curList ? (
+          <Segmented<'in' | 'add'>
+            full
+            className="mb-2"
+            value={listMode}
+            onChange={setListMode}
+            options={[
+              { value: 'in', label: 'הקבוצות ברשימה', count: rows.filter((r) => r.lists.includes(listF)).length },
+              { value: 'add', label: 'קבוצות זמינות לצירוף', count: rows.filter(addable).length },
+            ]}
+          />
+        ) : (
+          <Segmented<'all' | 'none' | 'assigned'>
+            full
+            className="mb-2"
+            value={assignF}
+            onChange={setAssignF}
+            options={[
+              { value: 'all', label: 'כל הקבוצות', count: rows.length },
+              { value: 'none', label: 'לא באף רשימה', count: rows.filter((r) => r.lists.length === 0).length },
+              { value: 'assigned', label: 'כבר ברשימות', count: rows.filter((r) => r.lists.length > 0).length },
+            ]}
+          />
+        )}
+        {curList && listMode === 'add' && armsOfList(listF).length > 0 && (
+          <label className="mb-2 flex cursor-pointer items-start gap-2.5 rounded-xl bg-amber-50 p-3 text-sm text-amber-900 ring-1 ring-inset ring-amber-600/20">
+            <input type="checkbox" checked={addOthers} onChange={(e) => setAddOthers(e.target.checked)} className="mt-0.5 h-4 w-4 shrink-0 accent-indigo-600" />
+            <span>
+              <b>הצג גם קבוצות של זרועות אחרות</b> – קבוצה שאין בה זרוע של הרשימה תתווסף יחד עם הזרוע שנמצאת בה, והזרוע הזו תצטרף לזרועות השולחות של הרשימה.
+            </span>
+          </label>
+        )}
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative min-w-0 flex-1 basis-56">
             <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -449,10 +516,12 @@ function GroupsAndLists() {
         </div>
         {sel.size > 0 && (
           <div className="mt-2 flex flex-wrap gap-1.5">
-            <Button size="sm" onClick={() => setAddOpen(true)}>
-              <ListPlus className="h-4 w-4" /> הוספה לרשימה
-            </Button>
-            {listF && (
+            {(!listF || listMode === 'add') && (
+              <Button size="sm" onClick={() => setAddOpen(true)}>
+                <ListPlus className="h-4 w-4" /> {curList ? `הוספה ל"${curList.name}"` : 'הוספה לרשימה'}
+              </Button>
+            )}
+            {listF && listMode === 'in' && (
               <Button size="sm" variant="secondary" onClick={() => setRemoveRows(selRows.filter((r) => r.lists.includes(listF)))}>
                 <ListMinus className="h-4 w-4" /> הסרה מהרשימה
               </Button>
@@ -485,9 +554,13 @@ function GroupsAndLists() {
             text={
               rows.length === 0
                 ? 'חבר זרוע, והקבוצות שהמספר שלה חבר בהן יופיעו כאן תוך דקה.'
-                : statusF === 'bad'
-                  ? 'אין כאן קבוצות לא זמינות – כל הקבוצות יכולות לקבל נסיעות.'
-                  : 'נסה לשנות את החיפוש או הסינון.'
+                : listF && listMode === 'in' && !q
+                  ? 'הרשימה עדיין ריקה. עבור ל"קבוצות זמינות לצירוף" ובחר קבוצות.'
+                  : listF && listMode === 'add' && !q
+                    ? 'אין קבוצות נוספות שהזרועות של הרשימה נמצאות בהן. צרף את הזרוע לעוד קבוצות בוואטסאפ, או הוסף לרשימה עוד זרועות שולחות.'
+                    : statusF === 'bad'
+                      ? 'אין כאן קבוצות לא זמינות – כל הקבוצות יכולות לקבל נסיעות.'
+                      : 'נסה לשנות את החיפוש או הסינון.'
             }
             action={
               rows.length === 0 ? (
@@ -508,6 +581,8 @@ function GroupsAndLists() {
                 on={sel.has(r.id)}
                 armById={armById}
                 listById={listById}
+                listId={listF}
+                otherArm={!!listF && listMode === 'add' && !viaListArms(r)}
                 onToggle={() => {
                   const s = new Set(sel);
                   s.has(r.id) ? s.delete(r.id) : s.add(r.id);
@@ -646,6 +721,8 @@ function GroupRow({
   on,
   armById,
   listById,
+  listId,
+  otherArm,
   onToggle,
   onMenu,
 }: {
@@ -653,6 +730,8 @@ function GroupRow({
   on: boolean;
   armById: Record<string, any>;
   listById: Record<string, any>;
+  listId?: string;
+  otherArm?: boolean;
   onToggle: () => void;
   onMenu: () => void;
 }) {
@@ -669,18 +748,36 @@ function GroupRow({
               נכלל בכל זאת
             </Badge>
           )}
+          {!listId && r.lists.length === 0 && (
+            <Badge tone="amber" className="shrink-0">
+              לא באף רשימה
+            </Badge>
+          )}
+          {otherArm && (
+            <Badge tone="amber" className="shrink-0">
+              דרך זרוע אחרת
+            </Badge>
+          )}
         </div>
         <div className={cx('mt-0.5 text-xs', r.disabled ? 'text-slate-500' : r.available ? 'text-emerald-700' : 'text-rose-700')}>
           {r.available ? 'זמינה – מקבלת נסיעות' : GROUP_REASON[r.reason || 'unknown']}
         </div>
         <div className="mt-1.5 flex flex-wrap items-center gap-1">
-          {r.armIds.length ? r.armIds.map((id) => <ArmChip key={id} arm={armById[id]} />) : null}
-          {r.lists.map((id) => (
-            <span key={id} className="rounded-md bg-indigo-50 px-1.5 py-0.5 text-[11px] text-indigo-700">
-              {listById[id]?.name || '—'}
-            </span>
-          ))}
+          <span className="text-[11px] text-slate-400">זרועות בקבוצה:</span>
+          {r.armIds.length ? r.armIds.map((id) => <ArmChip key={id} arm={armById[id]} />) : <span className="text-[11px] text-slate-400">אין</span>}
         </div>
+        {r.lists.filter((id) => id !== listId).length > 0 && (
+          <div className="mt-1 flex flex-wrap items-center gap-1">
+            <span className="text-[11px] font-medium text-indigo-700">{listId ? 'נמצאת גם ברשימות:' : 'ברשימות:'}</span>
+            {r.lists
+              .filter((id) => id !== listId)
+              .map((id) => (
+                <span key={id} className="rounded-md bg-indigo-50 px-1.5 py-0.5 text-[11px] font-medium text-indigo-700 ring-1 ring-inset ring-indigo-600/20">
+                  {listById[id]?.name || '—'}
+                </span>
+              ))}
+          </div>
+        )}
       </button>
       <div className="flex shrink-0 flex-col items-end gap-1">
         <button type="button" onClick={onMenu} aria-label={`פעולות עבור ${r.name}`} className="grid h-9 w-9 place-items-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800">
@@ -807,6 +904,7 @@ function AddToList({
     setListId(defaultList || lists[0]?.id || 'new');
     setName('');
     setAddArms(true);
+    setShare(true);
     // only when the window opens – the screen refreshes every few seconds and must not reset the choice
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -817,6 +915,11 @@ function AddToList({
   const chosenArms = listId === 'new' ? [] : listArms.filter((x) => x.list_id === listId).map((x) => x.arm_id);
   const unreachable = chosenArms.length ? groups.filter((g) => g.armIds.length && !g.armIds.some((a) => chosenArms.includes(a))) : [];
   const missingArms = [...new Set(unreachable.map((g) => g.armIds.find((a) => armById[a]?.is_active) || g.armIds[0]).filter(Boolean))] as string[];
+  // other active arms that are in the chosen groups but don't send for this list: adding them shares the rides between all arms
+  const otherArms = chosenArms.length
+    ? ([...new Set(groups.flatMap((g) => g.armIds))].filter((a) => armById[a]?.is_active && !chosenArms.includes(a) && !missingArms.includes(a)) as string[])
+    : [];
+  const [share, setShare] = useState(true);
 
   async function save() {
     setBusy(true);
@@ -832,13 +935,14 @@ function AddToList({
         const { error } = await sb().from('list_groups').upsert(rowsToAdd.slice(i, i + 500), { onConflict: 'list_id,wa_group_id' });
         if (error) throw error;
       }
-      if (addArms && missingArms.length) {
+      const armsToAdd = [...(addArms ? missingArms : []), ...(share ? otherArms : [])];
+      if (armsToAdd.length) {
         const { error } = await sb()
           .from('list_arms')
-          .upsert(missingArms.map((arm_id) => ({ list_id: id, arm_id })), { onConflict: 'list_id,arm_id' });
+          .upsert(armsToAdd.map((arm_id) => ({ list_id: id, arm_id })), { onConflict: 'list_id,arm_id' });
         if (error) throw error;
       }
-      await logAct('list_saved', 'list', id, { added: groups.length, arms_added: addArms ? missingArms.length : 0 });
+      await logAct('list_saved', 'list', id, { added: groups.length, arms_added: armsToAdd.length });
       toast(`${groups.length} קבוצות שויכו לרשימה`);
       onDone();
       onClose();
@@ -889,6 +993,18 @@ function AddToList({
             <li>קבוצה שנמצאת בכמה רשימות מקבלת כל נסיעה פעם אחת בלבד</li>
           </ul>
         </div>
+        {otherArms.length > 0 && (
+          <Checkbox
+            checked={share}
+            onChange={setShare}
+            label={
+              <span className="text-sm leading-relaxed">
+                <b>חלוקת עבודה בין הזרועות:</b> בקבוצות שבחרת נמצאות גם {otherArms.map((a) => armById[a]?.name).join(', ')}. הוספה שלהן לזרועות השולחות של הרשימה מחלקת את
+                הנסיעות בין כולן (כל קבוצה עדיין מקבלת כל נסיעה פעם אחת).
+              </span>
+            }
+          />
+        )}
         {missingArms.length > 0 && (
           <Checkbox
             checked={addArms}

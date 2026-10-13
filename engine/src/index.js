@@ -4,6 +4,8 @@ const { Arm } = require('./arm');
 const help = require('./help');
 const quote = require('./quote');
 const backup = require('./backup');
+const outbox = require('./outbox');
+const gates = require('./gates');
 const { randomBetween, sleep } = require('./util');
 
 const arms = new Map(); // arm id -> Arm
@@ -14,17 +16,60 @@ const settingsByStation = new Map();
 const settingsFor = (arm) => settingsByStation.get(arm.stationId) || { min_delay_sec: 8, max_delay_sec: 20 };
 let shuttingDown = false;
 
-// Keep running arms in line with the arms table
-async function reconcileArms() {
+// ---------- arms sync: keep running arms in line with the arms table ----------
+// Rules (11 Oct: one blocked number froze this sync for hours – new arms didn't start, warm-up and
+// on/off changes weren't picked up):
+//  1. The sync never waits for an arm. Stopping / removing an arm runs in the background with a time
+//     limit; the sync goes on at once.
+//  2. An arm that is still stopping is not started again until that stop is over (or its time limit
+//     passed) – never two connections of the same number.
+//  3. A pass that does not finish within SYNC_STUCK_MS is abandoned (it can no longer change anything)
+//     and a fresh pass starts – the engine recovers without a restart.
+//  4. Health: when the last good pass was and how long it took are reported to the database.
+const stopLimitMs = () => Number(process.env.ENGINE_STOP_LIMIT_MS) || 10_000;
+const syncStuckMs = () => Number(process.env.ENGINE_SYNC_STUCK_MS) || 60_000;
+const stopping = new Map(); // arm id -> { done: Promise, since }
+
+function stopInBackground(id, arm, how, what) {
+  const since = Date.now();
+  const work = Promise.resolve()
+    .then(() => (how === 'destroy' ? arm.destroy() : arm.stop()))
+    .catch((e) => log.warn({ what, err: e?.message }, 'stop failed'));
+  const limit = new Promise((r) => {
+    const t = setTimeout(() => {
+      log.warn({ what }, 'stop took too long – the sync went on without it');
+      // make sure the old connection is really closed before the number can be started again
+      try {
+        arm.stopped = true;
+        arm.sock?.end?.(undefined);
+      } catch {}
+      r();
+    }, stopLimitMs());
+    t.unref?.();
+  });
+  const done = Promise.race([work, limit]).finally(() => {
+    if (stopping.get(id)?.since === since) stopping.delete(id);
+  });
+  stopping.set(id, { done, since });
+  return done;
+}
+
+let syncGen = 0; // bumped when a pass is abandoned – the abandoned pass then changes nothing
+const syncState = { running: null, okAt: 0, ms: 0, stuck: 0, errors: 0, nextAt: 0 };
+
+async function reconcileArms(gen = syncGen) {
+  const live = () => gen === syncGen && !shuttingDown;
   const [{ data, error }, st] = await Promise.all([
     db.from('arms').select('id,name,is_active,status,station_id,linked_at'),
     db.rpc('engine_station_states'),
   ]);
   if (error) throw new Error('load arms failed: ' + error.message);
   if (st.error) throw new Error('load station states failed: ' + st.error.message);
+  if (!live()) return;
   // stations that are suspended or whose subscription ended: their arms stop
   const blocked = new Set((st.data || []).filter((s) => !s.allowed).map((s) => s.id));
   const ids = new Set(data.map((a) => a.id));
+  const writes = []; // database updates of this pass – sent together, never one arm waiting on another
 
   for (const row of data) {
     let arm = arms.get(row.id);
@@ -35,23 +80,28 @@ async function reconcileArms() {
     }
     const shouldRun = row.is_active && !blocked.has(row.station_id);
     if (row.is_active && blocked.has(row.station_id) && !arm && row.status !== 'paused') {
-      await db.from('arms').update({ status: 'paused', last_error: 'התחנה מושעית או שהמנוי הסתיים' }).eq('id', row.id);
+      writes.push(db.from('arms').update({ status: 'paused', last_error: 'התחנה מושעית או שהמנוי הסתיים' }).eq('id', row.id));
     }
     if (shouldRun && !arm) {
+      if (stopping.has(row.id)) continue; // the previous connection of this number is still closing
       arm = new Arm(row, help.onMessage);
       arms.set(row.id, arm);
       arm.start();
     } else if (!shouldRun && arm) {
       arms.delete(row.id);
-      await arm.stop();
-      await db.from('arm_qr').delete().eq('arm_id', row.id);
-      await db.from('arms').update({
-        status: 'paused',
-        ...(row.is_active ? { last_error: 'התחנה מושעית או שהמנוי הסתיים' } : {}),
-      }).eq('id', row.id);
+      stopInBackground(row.id, arm, 'stop', `stop ${row.name}`);
+      writes.push(db.from('arm_qr').delete().eq('arm_id', row.id));
+      writes.push(
+        db.from('arms').update({
+          status: 'paused',
+          ...(row.is_active ? { last_error: 'התחנה מושעית או שהמנוי הסתיים' } : {}),
+        }).eq('id', row.id),
+      );
       log.info({ arm: row.name }, 'arm paused');
     }
   }
+  await Promise.all(writes.map((w) => Promise.resolve(w).catch(() => {})));
+  if (!live()) return;
   // An arm missing from the list is logged out of WhatsApp only when it was really deleted:
   // an empty/partial answer from the database (overload, permissions hiccup) must never
   // log out every number. Require: the list is not empty, the arm is missing on two checks
@@ -72,17 +122,52 @@ async function reconcileArms() {
     }
     if (Date.now() - since < 30_000) continue;
     const { data: row, error: e2 } = await db.from('arms').select('id').eq('id', id).maybeSingle();
+    if (!live()) return;
     if (e2 || row) {
       missingSince.delete(id);
       continue;
     }
     missingSince.delete(id);
     arms.delete(id);
-    await arm.destroy();
+    stopInBackground(id, arm, 'destroy', `destroy ${arm.name}`);
     log.info({ arm: arm.name }, 'arm removed (deleted in the app)');
   }
 }
 const missingSince = new Map();
+
+// One pass at a time; a pass stuck longer than syncStuckMs() is abandoned and a fresh one starts.
+async function syncArms() {
+  const now = Date.now();
+  if (syncState.running) {
+    if (now - syncState.running.startedAt < syncStuckMs()) return syncState.running.promise;
+    syncGen += 1;
+    syncState.stuck += 1;
+    log.error({ stuckSec: Math.round((now - syncState.running.startedAt) / 1000), times: syncState.stuck }, 'arms sync stuck – abandoning that pass and starting a fresh one');
+    syncState.running = null;
+  }
+  if (now < syncState.nextAt) return;
+  const gen = syncGen;
+  const startedAt = now;
+  const promise = reconcileArms(gen)
+    .then(() => {
+      if (gen !== syncGen) return;
+      syncState.okAt = Date.now();
+      syncState.ms = Date.now() - startedAt;
+      syncState.errors = 0;
+    })
+    .catch((e) => {
+      if (gen !== syncGen) return;
+      syncState.errors += 1;
+      // a failing database is left alone for a while (5s, 10s, 20s … up to a minute)
+      syncState.nextAt = Date.now() + Math.min(60_000, 5_000 * 2 ** Math.min(syncState.errors - 1, 4));
+      log.error({ loop: 'arms', err: String(e.message).slice(0, 120) }, 'loop error');
+    })
+    .finally(() => {
+      if (syncState.running?.gen === gen) syncState.running = null;
+    });
+  syncState.running = { gen, startedAt, promise };
+  return promise;
+}
 
 async function processCommands() {
   const { data, error } = await db
@@ -101,7 +186,7 @@ async function processCommands() {
       if (!arm && (cmd.command === 'reset' || cmd.command === 'connect')) {
         // re-activate a paused arm
         await db.from('arms').update({ is_active: true }).eq('id', cmd.arm_id);
-        await reconcileArms();
+        await syncArms();
         arm = arms.get(cmd.arm_id);
       }
       if (!arm) throw new Error('הזרוע לא פעילה');
@@ -110,7 +195,7 @@ async function processCommands() {
       else if (cmd.command === 'refresh_groups') await arm.syncGroups();
       else if (cmd.command === 'disconnect') {
         await db.from('arms').update({ is_active: false }).eq('id', cmd.arm_id);
-        await reconcileArms();
+        await syncArms();
       }
     } catch (e) {
       status = 'failed';
@@ -206,9 +291,11 @@ async function sendOne(arm) {
   let errText = null;
   let uncertain = false;
   const messageId = msgIdFor(job.target_id, arm.id);
+  // the owner's footer line under every message of this station (cached; on any doubt the text goes as is)
+  const text = gates.withFooter(job.final_text, await gates.stationFooter(arm.stationId).catch(() => ''));
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      await arm.send(job.wa_group_id, job.final_text, messageId);
+      await arm.send(job.wa_group_id, text, messageId);
       ok = true;
       break;
     } catch (e) {
@@ -351,39 +438,23 @@ async function sendTick(arm) {
   }
 }
 
-// Per arm, per minute: members who could not decrypt our messages, repairs, re-sends, losses.
-async function saveDelivery() {
-  const rows = [];
-  for (const a of arms.values()) {
-    const d = a.takeDelivery?.();
-    if (!d) continue;
-    const lost = (d.resendExpired || 0) + (d.resendGaveUp || 0) + (d.resendDropped || 0);
-    const row = {
-      arm_id: a.id,
-      sent: d.sent || 0,
-      retry_receipts: d.retryReceipts || 0,
-      failing_devices: d.failingDevices || 0,
-      resent: d.resent || 0,
-      resend_failed: d.resendFailed || 0,
-      resend_lost: lost,
-      sessions_learned: d.sessionsLearned || 0,
-      undecrypted_in: d.undecryptedIn || 0,
-      detail: d,
-    };
-    rows.push(row);
-    if (row.retry_receipts || row.undecrypted_in) log.info({ arm: a.name, ...row, detail: undefined, queue: a.resendQueue?.length || 0 }, 'delivery (last minute)');
-  }
-  if (!rows.length) return;
-  // monitoring must never slow the other loops (they share the database back-off): log and move on
-  const { error } = await db.rpc('engine_delivery_stats', { p_rows: rows });
-  if (error) log.warn({ err: String(error.message).slice(0, 120) }, 'delivery stats not saved');
-}
-
 async function heartbeat() {
   const online = [...arms.values()].filter((a) => a.online).map((a) => a.id);
   if (online.length) {
     await db.from('arms').update({ last_seen_at: new Date().toISOString() }).in('id', online);
   }
+  // engine health for the control center and the update checks
+  await db.rpc('engine_status_report', {
+    p: {
+      sync_ok_at: syncState.okAt ? new Date(syncState.okAt).toISOString() : null,
+      sync_ms: syncState.ms,
+      sync_stuck_count: syncState.stuck,
+      arms_running: arms.size,
+      arms_online: online.length,
+      arms_stopping: stopping.size,
+      rss_mb: Math.round(process.memoryUsage().rss / 1048576),
+    },
+  }).then(() => {}, () => {});
 }
 
 // While the database is failing, back off (up to a minute) instead of hammering it –
@@ -393,18 +464,56 @@ function every(ms, fn, name) {
   const run = async () => {
     if (shuttingDown) return;
     let failed = false;
+    const slow = setTimeout(() => log.warn({ loop: name }, 'loop still running after 3 minutes'), 180_000);
+    slow.unref?.();
     try {
       await fn();
     } catch (e) {
       failed = true;
       log.error({ loop: name, err: String(e.message).slice(0, 120) }, 'loop error');
     }
+    clearTimeout(slow);
     if (failed) dbFailStreak = Math.min(dbFailStreak + 1, 20);
     else if (dbFailStreak) dbFailStreak = Math.max(0, dbFailStreak - 1);
     const wait = dbFailStreak > 2 ? Math.min(60_000, ms * 2 ** Math.min(dbFailStreak - 2, 6)) : ms;
     setTimeout(run, wait);
   };
   run();
+}
+
+// Disk picture once an hour: how much the WhatsApp keys of each arm and the backups take on the server
+// disk, and folders of arms that no longer exist (left for the owner to decide – nothing is deleted here).
+// `du` runs as a separate process, so the engine is not slowed down while it counts.
+async function diskReport() {
+  const { execFile } = require('child_process');
+  const fsp = require('fs/promises');
+  const pathM = require('path');
+  const AUTH = process.env.AUTH_DIR || '/data/auth';
+  const BACK = process.env.BACKUP_DIR || '/data/backups';
+  const du = (dirs) =>
+    new Promise((res) =>
+      execFile('du', ['-sk', '--', ...dirs], { timeout: 120_000, maxBuffer: 1 << 20 }, (err, out) =>
+        res(String(out || '').trim().split('\n').filter(Boolean).map((l) => {
+          const [kb, ...p] = l.split('\t');
+          return { kb: Number(kb), dir: p.join('\t') };
+        })),
+      ),
+    );
+  const ids = await fsp.readdir(AUTH).catch(() => []);
+  const rows = ids.length ? await du(ids.map((i) => pathM.join(AUTH, i))) : [];
+  const [backups] = await du([BACK]);
+  const { data: known } = await db.from('arms').select('id,name,is_active');
+  const byId = new Map((known || []).map((a) => [a.id, a]));
+  const mb = (kb) => Math.round((kb / 1024) * 10) / 10;
+  const per = rows
+    .map((r) => {
+      const id = pathM.basename(r.dir);
+      const a = byId.get(id);
+      return { arm: a ? a.name : `(לא קיימת) ${id.slice(0, 8)}`, active: !!a?.is_active, mb: mb(r.kb) };
+    })
+    .sort((x, y) => y.mb - x.mb);
+  const authMb = per.reduce((t, r) => t + r.mb, 0);
+  log.info({ authMb: Math.round(authMb), backupsMb: mb(backups?.kb || 0), arms: per }, 'disk');
 }
 
 const INSTANCE = require('crypto').randomUUID();
@@ -440,7 +549,10 @@ async function main() {
   await refreshSettings();
   await help.refreshConfig();
 
-  every(5_000, reconcileArms, 'arms');
+  // arms sync every 5s; never two passes at once; a stuck pass is replaced (see syncArms)
+  const syncTimer = setInterval(() => !shuttingDown && syncArms(), 5_000);
+  syncTimer.unref?.();
+  syncArms();
   every(3_000, processCommands, 'commands');
   every(10_000, async () => {
     await refreshSettings();
@@ -456,8 +568,8 @@ async function main() {
     if (error) throw error;
   }, 'finalize');
   every(30_000, heartbeat, 'heartbeat');
-  // delivery monitoring: once a minute, per arm (see arm.count / arm_delivery_stats)
-  every(60_000, saveDelivery, 'delivery');
+  // disk picture every hour (first one 2 minutes after start)
+  setTimeout(() => every(60 * 60_000, diskReport, 'disk'), 120_000);
   // memory picture every 5 minutes (to size servers by measurement, not guesses)
   every(5 * 60_000, async () => {
     const m = process.memoryUsage();
@@ -471,9 +583,12 @@ async function main() {
   every(10 * 60_000, () => backup.maybeBackup(), 'backup');
   every(5_000, () => quote.notifyFinished(arms), 'quote-notify');
   every(5_000, () => help.reactFinished(arms), 'help-react');
+  // system messages to private numbers (login codes, payments, support, subscription alerts) via a home-station arm
+  every(4_000, () => outbox.tick(arms, () => shuttingDown), 'outbox');
+  // each arm sends on its own: one slow or stuck send never delays the other arms
   every(250, async () => {
     await checkWork();
-    await Promise.all([...arms.values()].map(sendTick));
+    for (const a of arms.values()) sendTick(a).catch((e) => log.error({ arm: a.name, err: e.message }, 'send tick failed'));
   }, 'send');
 }
 
@@ -483,7 +598,7 @@ async function shutdown(signal) {
   log.info({ signal }, 'shutting down');
   // no new sends start now (loops stop on shuttingDown); let sends already on the way finish and be recorded
   const t0 = Date.now();
-  while (Date.now() - t0 < 12_000 && [...arms.values()].some((a) => a.inFlight > 0 || a.busy)) await sleep(200);
+  while (Date.now() - t0 < 12_000 && (outbox.state.busy || [...arms.values()].some((a) => a.inFlight > 0 || a.busy))) await sleep(200);
   await Promise.race([
     Promise.all([...arms.values()].map((a) => a.stop())),
     sleep(8000),
@@ -509,4 +624,4 @@ if (require.main === module) {
 }
 
 // for the automated tests
-module.exports = { reconcileArms, sendOne, arms, msgIdFor };
+module.exports = { reconcileArms, syncArms, syncState, stopping, sendOne, sendTick, arms, msgIdFor };
