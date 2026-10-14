@@ -170,6 +170,10 @@ async function onMessage(arm, m) {
     return;
   }
 
+  // ⏳ right away – before the slower phone lookup and campaign creation (react only uses remoteJid/id/participant)
+  const quickKey = { remoteJid: groupJid, id: m.key.id, fromMe: false, ...(m.key.participant ? { participant: m.key.participant } : {}) };
+  await arm.react(quickKey, '⏳');
+
   const requester = await resolveRequester(arm, m);
   const pnDigits = requester.phone ? requester.phone.replace(/\D/g, '').replace(/^0/, '972') : null;
   const triggerKey = {
@@ -214,8 +218,6 @@ async function onMessage(arm, m) {
     .select()
     .single();
   if (error) throw error;
-
-  await arm.react(triggerKey, '⏳');
 
   if (armIds.length) {
     await db.from('campaign_arms').insert(armIds.map((arm_id) => ({ campaign_id: campaign.id, arm_id })));
