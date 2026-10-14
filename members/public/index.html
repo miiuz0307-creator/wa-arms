@@ -3,180 +3,338 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0f172a">
+<meta name="theme-color" content="#0d2b25">
 <title>ניהול חברים בקבוצות</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@500;600;700;800&family=Assistant:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <style>
+/* Layout: dark control band on top, the number card floats over its edge, the group list below, a sticky action bar at the bottom. */
 :root{
-  --bg:#f4f5f7;--card:#fff;--ink:#14161a;--muted:#6b7280;--line:#e5e7eb;--soft:#f0f1f4;
-  --brand:#0f172a;--red:#d92d20;--red-soft:#fdecea;--green:#0f8a4b;--green-soft:#e6f6ee;
-  --amber:#b45309;--amber-soft:#fef3e2;--accent:#2563eb;
+  --bg:#eef2f0; --card:#ffffff; --ink:#0f1f1b; --muted:#5f716b; --line:#dfe6e3; --soft:#f3f6f5;
+  --band:#0d2b25; --band-ink:#e8f3ef; --band-muted:#8fb3a7; --band-line:rgba(255,255,255,.1);
+  --accent:#12a37a; --accent-ink:#ffffff;
+  --rm:#e0453a; --rm-soft:#fdeceb; --rm-ink:#b4271d;
+  --ad:#12a37a; --ad-soft:#e3f6ee; --ad-ink:#0b7a5a;
+  --warn:#b26a00; --warn-soft:#fff2dc;
+  --shadow:0 1px 2px rgba(13,43,37,.06),0 8px 24px rgba(13,43,37,.08);
+  --f-display:"Rubik",system-ui,sans-serif; --f-body:"Assistant",system-ui,sans-serif;
 }
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]){
-    --bg:#0c0e12;--card:#161a20;--ink:#eef0f3;--muted:#9aa3af;--line:#262c35;--soft:#1d222a;
-    --brand:#eef0f3;--red:#f97066;--red-soft:#2a1715;--green:#3ccb7f;--green-soft:#11241a;
-    --amber:#f5b041;--amber-soft:#2a2112;--accent:#6ea0ff;color-scheme:dark;
+    --bg:#0a1412; --card:#111d1a; --ink:#e7f0ed; --muted:#8ea39c; --line:#1f2f2b; --soft:#15231f;
+    --band:#07110f; --band-ink:#e7f0ed; --band-muted:#7e9a91; --band-line:rgba(255,255,255,.08);
+    --accent:#2cc595; --accent-ink:#04140f;
+    --rm:#ff6b5f; --rm-soft:#2a1513; --rm-ink:#ff8a80;
+    --ad:#2cc595; --ad-soft:#0f2a20; --ad-ink:#5fe0b5;
+    --warn:#f2b250; --warn-soft:#2a2010;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);
+    color-scheme:dark;
   }
 }
 :root[data-theme="dark"]{
-  --bg:#0c0e12;--card:#161a20;--ink:#eef0f3;--muted:#9aa3af;--line:#262c35;--soft:#1d222a;
-  --brand:#eef0f3;--red:#f97066;--red-soft:#2a1715;--green:#3ccb7f;--green-soft:#11241a;
-  --amber:#f5b041;--amber-soft:#2a2112;--accent:#6ea0ff;color-scheme:dark;
+  --bg:#0a1412; --card:#111d1a; --ink:#e7f0ed; --muted:#8ea39c; --line:#1f2f2b; --soft:#15231f;
+  --band:#07110f; --band-ink:#e7f0ed; --band-muted:#7e9a91; --band-line:rgba(255,255,255,.08);
+  --accent:#2cc595; --accent-ink:#04140f;
+  --rm:#ff6b5f; --rm-soft:#2a1513; --rm-ink:#ff8a80;
+  --ad:#2cc595; --ad-soft:#0f2a20; --ad-ink:#5fe0b5;
+  --warn:#f2b250; --warn-soft:#2a2010;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);
+  color-scheme:dark;
 }
 *{box-sizing:border-box}
-html,body{margin:0;background:var(--bg);color:var(--ink);font-family:Assistant,system-ui,sans-serif;font-size:16px;-webkit-text-size-adjust:100%}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:16px;-webkit-text-size-adjust:100%}
 button,input{font:inherit;color:inherit}
-.wrap{max-width:720px;margin:0 auto;padding-block:12px 120px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
-header{display:flex;align-items:center;gap:10px;padding:14px 0 10px}
-header h1{font-size:20px;font-weight:800;margin:0;flex:1;letter-spacing:-.2px}
-.pill{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;font-size:13px;font-weight:600;background:var(--soft);white-space:nowrap}
-.dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
-.on .dot{background:var(--green)} .warn .dot{background:var(--amber)} .off .dot{background:var(--red)}
-.icon-btn{border:1px solid var(--line);background:var(--card);border-radius:10px;width:38px;height:38px;display:grid;place-items:center;cursor:pointer}
-.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin:12px 0}
-.row{display:flex;gap:8px;align-items:center}
-.num{flex:1;min-width:0;height:50px;border:1.5px solid var(--line);border-radius:12px;padding:0 14px;font-size:20px;font-weight:700;background:var(--card);direction:ltr;text-align:right;letter-spacing:.5px}
-.num:focus,.search:focus{outline:none;border-color:var(--accent)}
-.btn{height:50px;padding:0 18px;border-radius:12px;border:0;font-weight:700;cursor:pointer;background:var(--brand);color:var(--bg)}
-.btn:disabled{opacity:.45;cursor:default}
-.btn.red{background:var(--red);color:#fff}.btn.green{background:var(--green);color:#fff}
-.btn.ghost{background:var(--soft);color:var(--ink)}
-.small{font-size:13px;color:var(--muted)}
-.summary{display:flex;gap:8px;margin:4px 0 0}
-.tabs{display:grid;grid-template-columns:1fr 1fr;gap:6px;background:var(--soft);padding:4px;border-radius:12px;margin:14px 0 10px}
-.tab{border:0;background:transparent;border-radius:9px;padding:10px 6px;font-weight:700;cursor:pointer;color:var(--muted)}
-.tab.active{background:var(--card);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08)}
-.tab b{font-variant-numeric:tabular-nums}
-.tab.t-remove.active{color:var(--red)} .tab.t-add.active{color:var(--green)}
-.search{width:100%;height:44px;border:1.5px solid var(--line);border-radius:10px;padding:0 12px;background:var(--card)}
-.listhead{display:flex;align-items:center;justify-content:space-between;margin:10px 2px 6px;font-size:14px}
-.listhead label{display:flex;align-items:center;gap:8px;font-weight:600;cursor:pointer}
-.list{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--card)}
-.item{display:flex;align-items:center;gap:12px;padding:12px 14px;border-top:1px solid var(--line);cursor:pointer}
-.item:first-child{border-top:0}
-.item.dis{cursor:default;opacity:.55}
-.item .name{flex:1;min-width:0;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.item .meta{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
-.tag{font-size:11px;font-weight:700;padding:2px 7px;border-radius:6px;background:var(--amber-soft);color:var(--amber);white-space:nowrap}
-input[type=checkbox]{width:22px;height:22px;accent-color:var(--accent);flex:none;margin:0}
-.empty{padding:28px 14px;text-align:center;color:var(--muted)}
-.bar{position:fixed;inset:auto 0 0 0;background:var(--card);border-top:1px solid var(--line);padding-block:12px calc(12px + env(safe-area-inset-bottom,0px));padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
-.bar .inner{max-width:720px;margin:0 auto;display:flex;gap:10px;align-items:center}
-.bar .btn{flex:1}
-.job{border-radius:12px;padding:14px;background:var(--soft)}
-.prog{height:8px;border-radius:99px;background:var(--line);overflow:hidden;margin:10px 0}
-.prog i{display:block;height:100%;background:var(--accent);transition:width .3s}
-.res{display:flex;gap:8px;align-items:flex-start;padding:7px 0;border-top:1px solid var(--line);font-size:14px}
-.res:first-of-type{border-top:0}
-.res .s{flex:none;width:20px;text-align:center}
-.res .why{color:var(--muted);font-size:12px}
-.qrbox{display:grid;place-items:center;padding:12px;background:#fff;border-radius:12px;margin:12px auto;width:fit-content}
-.hist .h{padding:10px 0;border-top:1px solid var(--line);font-size:14px}
-.hist .h:first-child{border-top:0}
-dialog{border:0;border-radius:16px;padding:0;max-width:420px;width:calc(100% - 32px);background:var(--card);color:var(--ink)}
-dialog::backdrop{background:rgba(0,0,0,.45)}
-dialog .in{padding:20px}
-dialog h3{margin:0 0 8px;font-size:18px}
-dialog .acts{display:flex;gap:8px;margin-top:16px}
-dialog .acts .btn{flex:1;height:46px}
-.field{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:10px 0}
-.field input{width:80px;height:40px;border:1.5px solid var(--line);border-radius:10px;text-align:center;background:var(--card)}
-.err{color:var(--red);font-size:14px;margin-top:8px;min-height:1em}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.gut{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.max{max-width:720px;margin:0 auto}
 .hidden{display:none!important}
-.login{max-width:360px;margin:12vh auto 0;text-align:center}
-.login .num{text-align:center;letter-spacing:6px;width:100%;margin:16px 0 10px}
-.login .btn{width:100%}
-.demo{background:var(--amber-soft);color:var(--amber);font-weight:700;font-size:13px;text-align:center;padding:6px;border-radius:8px}
+.num-font{font-variant-numeric:tabular-nums}
+
+/* ---------- band ---------- */
+.band{background:var(--band);color:var(--band-ink);padding-block:18px 64px;position:relative;overflow:hidden}
+.band::after{content:"";position:absolute;inset:auto -20% -60% auto;width:420px;height:420px;border-radius:50%;
+  background:radial-gradient(closest-side,color-mix(in srgb,var(--accent) 35%,transparent),transparent);pointer-events:none}
+.top{display:flex;align-items:center;gap:12px;position:relative;z-index:1}
+.logo{width:40px;height:40px;border-radius:12px;background:color-mix(in srgb,var(--accent) 22%,transparent);display:grid;place-items:center;flex:none}
+.logo svg{width:22px;height:22px;stroke:var(--accent)}
+.top h1{font-family:var(--f-display);font-weight:700;font-size:19px;margin:0;flex:1;line-height:1.15;text-wrap:balance}
+.top h1 small{display:block;font-family:var(--f-body);font-weight:500;font-size:13px;color:var(--band-muted)}
+.iconbtn{width:40px;height:40px;border-radius:12px;border:1px solid var(--band-line);background:rgba(255,255,255,.04);color:var(--band-ink);display:grid;place-items:center;flex:none}
+.iconbtn svg{width:20px;height:20px}
+.stats{display:flex;gap:10px;margin-top:18px;position:relative;z-index:1;flex-wrap:wrap}
+.stat{flex:1;min-width:92px;padding:10px 12px;border-radius:14px;background:rgba(255,255,255,.05);border:1px solid var(--band-line)}
+.stat b{display:block;font-family:var(--f-display);font-size:22px;font-weight:700;line-height:1.1}
+.stat span{font-size:12px;color:var(--band-muted)}
+.chip{display:inline-flex;align-items:center;gap:7px;padding:6px 11px;border-radius:999px;font-size:13px;font-weight:600;background:rgba(255,255,255,.06);border:1px solid var(--band-line);white-space:nowrap}
+.chip .d{width:8px;height:8px;border-radius:50%;background:var(--band-muted)}
+.chip.on .d{background:var(--accent);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 25%,transparent)}
+.chip.wait .d{background:var(--warn)} .chip.off .d{background:var(--rm)}
+.demo{position:relative;z-index:1;margin-bottom:12px;font-size:12.5px;font-weight:600;color:var(--warn);background:color-mix(in srgb,var(--warn) 14%,transparent);padding:6px 10px;border-radius:8px;text-align:center}
+
+/* ---------- main ---------- */
+main{margin-top:-44px;position:relative;z-index:2;padding-block:0 140px}
+.card{background:var(--card);border-radius:20px;box-shadow:var(--shadow);border:1px solid var(--line)}
+.lookup{padding:16px}
+.lookup label{display:block;font-size:13px;font-weight:600;color:var(--muted);margin:0 4px 8px}
+.field{display:flex;align-items:stretch;border:1.5px solid var(--line);border-radius:16px;background:var(--soft);overflow:hidden;transition:border-color .15s}
+.field:focus-within{border-color:var(--accent);background:var(--card)}
+.field input{flex:1;min-width:0;border:0;background:transparent;height:58px;padding:0 16px;font-family:var(--f-display);font-size:24px;font-weight:600;letter-spacing:.5px;direction:ltr;text-align:right;outline:none}
+.field input::placeholder{color:color-mix(in srgb,var(--muted) 55%,transparent)}
+.go{border:0;margin:6px;border-radius:12px;padding:0 20px;background:var(--accent);color:var(--accent-ink);font-weight:700;font-size:16px;display:flex;align-items:center;gap:6px}
+.go:disabled{opacity:.4;cursor:default}
+.go svg{width:18px;height:18px}
+.err{color:var(--rm-ink);font-size:14px;margin:8px 4px 0;min-height:0}
+.err:empty{display:none}
+
+/* connect */
+.connect{padding:20px;margin-top:14px;text-align:center}
+.connect h2{font-family:var(--f-display);font-size:18px;margin:0 0 6px}
+.connect p{margin:0 auto;color:var(--muted);font-size:14.5px;max-width:34ch;line-height:1.5}
+.qr{background:#fff;padding:14px;border-radius:16px;width:fit-content;margin:16px auto 4px;border:1px solid var(--line)}
+.steps{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;margin-top:12px;font-size:13px;color:var(--muted)}
+.steps span{background:var(--soft);padding:4px 10px;border-radius:999px}
+
+/* person */
+.person{display:flex;align-items:center;gap:14px;padding:18px 4px 4px}
+.ava{width:52px;height:52px;border-radius:16px;display:grid;place-items:center;flex:none;background:var(--soft);border:1px solid var(--line)}
+.ava svg{width:26px;height:26px;stroke:var(--muted)}
+.person .who{flex:1;min-width:0}
+.person .who b{font-family:var(--f-display);font-size:22px;font-weight:700;direction:ltr;display:inline-block}
+.person .who div{color:var(--muted);font-size:14px;margin-top:2px}
+.ratio{height:6px;border-radius:99px;background:var(--line);overflow:hidden;margin-top:8px;display:flex}
+.ratio i{background:var(--rm);height:100%}
+.bad{color:var(--rm-ink);font-weight:600}
+
+/* segmented */
+.seg{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:5px;margin:16px 0 12px;border-radius:16px;background:var(--card);border:1px solid var(--line)}
+.seg button{border:0;background:transparent;border-radius:12px;padding:11px 8px;font-weight:700;font-size:15.5px;color:var(--muted);display:flex;align-items:center;justify-content:center;gap:8px}
+.seg button .n{font-family:var(--f-display);font-size:13px;min-width:24px;padding:1px 7px;border-radius:999px;background:var(--soft)}
+.seg button.active.rm{background:var(--rm-soft);color:var(--rm-ink)} .seg button.active.rm .n{background:var(--rm);color:#fff}
+.seg button.active.ad{background:var(--ad-soft);color:var(--ad-ink)} .seg button.active.ad .n{background:var(--ad);color:#fff}
+.hint{font-size:13.5px;color:var(--muted);margin:0 4px 10px}
+
+.tools{display:flex;gap:8px;align-items:center}
+.search{flex:1;min-width:0;position:relative}
+.search svg{position:absolute;right:13px;top:50%;width:18px;height:18px;transform:translateY(-50%);stroke:var(--muted)}
+.search input{width:100%;height:46px;border-radius:14px;border:1px solid var(--line);background:var(--card);padding:0 40px 0 12px;font-size:15.5px}
+.search input:focus{outline:none;border-color:var(--accent)}
+.all{height:46px;border-radius:14px;border:1px solid var(--line);background:var(--card);padding:0 14px;font-weight:600;font-size:14.5px;white-space:nowrap}
+.all.on{border-color:currentColor}
+.mode-rm .all.on{color:var(--rm-ink)} .mode-ad .all.on{color:var(--ad-ink)}
+
+.list{margin-top:10px;overflow:hidden}
+.g{display:flex;align-items:center;gap:12px;padding:12px 14px;border-top:1px solid var(--line);cursor:pointer;transition:background .12s;user-select:none}
+.g:first-child{border-top:0}
+.g:hover{background:var(--soft)}
+.g.sel{background:var(--soft)}
+.mode-rm .g.sel{background:var(--rm-soft)} .mode-ad .g.sel{background:var(--ad-soft)}
+.g.dis{cursor:default;opacity:.55}
+.gav{width:42px;height:42px;border-radius:13px;display:grid;place-items:center;flex:none;font-family:var(--f-display);font-weight:700;font-size:15px;color:#fff}
+.gt{flex:1;min-width:0}
+.gt .nm{font-weight:700;font-size:15.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gt .sub{font-size:12.5px;color:var(--muted);display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:2px}
+.tag{font-size:11.5px;font-weight:700;padding:1px 7px;border-radius:6px;background:var(--warn-soft);color:var(--warn)}
+.tick{width:26px;height:26px;border-radius:50%;border:2px solid var(--line);flex:none;display:grid;place-items:center;transition:all .12s}
+.tick svg{width:15px;height:15px;stroke:#fff;opacity:0}
+.mode-rm .g.sel .tick{background:var(--rm);border-color:var(--rm)}
+.mode-ad .g.sel .tick{background:var(--ad);border-color:var(--ad)}
+.g.sel .tick svg{opacity:1}
+.empty{padding:36px 16px;text-align:center;color:var(--muted);font-size:15px}
+
+/* bar */
+.bar{position:fixed;left:0;right:0;bottom:0;z-index:5;padding-block:12px calc(12px + env(safe-area-inset-bottom,0px));
+  background:linear-gradient(to top,var(--bg) 70%,transparent);transform:translateY(120%);transition:transform .22s ease}
+.bar.show{transform:none}
+.act{width:100%;height:58px;border:0;border-radius:18px;font-weight:700;font-size:17px;color:#fff;display:flex;align-items:center;justify-content:space-between;padding:0 20px;box-shadow:var(--shadow)}
+.act.rm{background:var(--rm)} .act.ad{background:var(--ad);color:#fff}
+.act:disabled{opacity:.5}
+.act small{font-weight:500;font-size:13px;opacity:.85}
+
+/* job */
+.sec{font-family:var(--f-display);font-size:16px;font-weight:700;margin:26px 4px 10px;display:flex;align-items:center;justify-content:space-between}
+.job{padding:16px}
+.job .hd{display:flex;align-items:center;gap:10px}
+.job .hd b{flex:1;font-size:15.5px}
+.badge{font-size:12px;font-weight:700;padding:3px 9px;border-radius:999px}
+.badge.rm{background:var(--rm-soft);color:var(--rm-ink)} .badge.ad{background:var(--ad-soft);color:var(--ad-ink)}
+.stop{border:1px solid var(--line);background:var(--card);border-radius:10px;padding:6px 12px;font-weight:600;font-size:14px}
+.prog{height:10px;border-radius:99px;background:var(--line);overflow:hidden;margin:14px 0 8px;display:flex}
+.prog .ok{background:var(--ad);transition:width .3s} .prog .bad{background:var(--rm);transition:width .3s}
+.pmeta{font-size:13px;color:var(--muted)}
+.rs{margin-top:10px;max-height:300px;overflow:auto}
+.r{display:flex;gap:10px;padding:8px 0;border-top:1px solid var(--line);font-size:14.5px;align-items:flex-start}
+.r:first-child{border-top:0}
+.ri{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;flex:none;font-size:12px;font-weight:700;margin-top:1px}
+.ri.ok{background:var(--ad-soft);color:var(--ad-ink)} .ri.fail{background:var(--rm-soft);color:var(--rm-ink)}
+.ri.pending,.ri.skipped{background:var(--soft);color:var(--muted)}
+.ri.running{background:var(--soft);border:2px solid var(--accent);border-top-color:transparent;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.ri.running{animation:none}.bar{transition:none}}
+.r .why{color:var(--rm-ink);font-size:12.5px}
+
+.hist{padding:4px 16px}
+.h{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid var(--line);font-size:14.5px}
+.h:first-child{border-top:0}
+.hi{width:34px;height:34px;border-radius:11px;display:grid;place-items:center;flex:none;font-weight:800;font-family:var(--f-display)}
+.hi.rm{background:var(--rm-soft);color:var(--rm-ink)} .hi.ad{background:var(--ad-soft);color:var(--ad-ink)}
+.h .t{flex:1;min-width:0}
+.h .t b{direction:ltr;display:inline-block}
+.h .t div{font-size:12.5px;color:var(--muted)}
+.h .c{font-family:var(--f-display);font-weight:600;font-size:14px}
+
+/* sheets */
+.scrim{position:fixed;inset:0;background:rgba(5,15,12,.5);z-index:10;display:flex;align-items:flex-end;justify-content:center;opacity:0;pointer-events:none;transition:opacity .18s}
+.scrim.open{opacity:1;pointer-events:auto}
+.sheet{width:100%;max-width:520px;background:var(--card);border-radius:24px 24px 0 0;padding:22px max(20px,env(safe-area-inset-right,0px)) calc(20px + env(safe-area-inset-bottom,0px)) max(20px,env(safe-area-inset-left,0px));transform:translateY(30px);transition:transform .2s}
+.scrim.open .sheet{transform:none}
+@media (min-width:600px){.scrim{align-items:center}.sheet{border-radius:24px}}
+.sheet h3{font-family:var(--f-display);font-size:19px;margin:0 0 6px;text-wrap:balance}
+.sheet .sub{color:var(--muted);font-size:14.5px;line-height:1.5}
+.sheet .gl{margin:14px 0;padding:10px 14px;background:var(--soft);border-radius:14px;max-height:200px;overflow:auto;font-size:14.5px;line-height:1.8}
+.btns{display:flex;gap:10px;margin-top:18px}
+.btns button{flex:1;height:52px;border-radius:14px;border:0;font-weight:700;font-size:16px}
+.b-ghost{background:var(--soft)}
+.b-rm{background:var(--rm);color:#fff} .b-ad{background:var(--ad);color:#fff} .b-main{background:var(--accent);color:var(--accent-ink)}
+.row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid var(--line)}
+.row:first-of-type{border-top:0}
+.row .lbl{font-weight:600}.row .lbl div{font-weight:400;font-size:13px;color:var(--muted)}
+.stepper{display:flex;align-items:center;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.stepper button{width:40px;height:40px;border:0;background:var(--soft);font-size:20px;font-weight:600}
+.stepper input{width:52px;height:40px;border:0;text-align:center;background:var(--card);font-family:var(--f-display);font-weight:600;font-size:16px}
+.linkbtn{border:1px solid var(--line);background:var(--card);border-radius:12px;padding:9px 14px;font-weight:600;font-size:14px}
+.linkbtn.danger{color:var(--rm-ink)}
+
+/* login */
+.login{min-height:100vh;display:grid;place-items:center;background:var(--band);color:var(--band-ink);padding-block:24px}
+.login .box{width:100%;max-width:340px;text-align:center}
+.login .logo{margin:0 auto 16px;width:56px;height:56px;border-radius:18px}
+.login .logo svg{width:28px;height:28px}
+.login h1{font-family:var(--f-display);font-size:24px;margin:0}
+.login p{color:var(--band-muted);margin:6px 0 22px}
+.login input{width:100%;height:60px;border-radius:16px;border:1px solid var(--band-line);background:rgba(255,255,255,.06);color:var(--band-ink);text-align:center;font-family:var(--f-display);font-size:26px;letter-spacing:10px;outline:none}
+.login input:focus{border-color:var(--accent)}
+.login button{width:100%;height:56px;margin-top:12px;border:0;border-radius:16px;background:var(--accent);color:var(--accent-ink);font-weight:700;font-size:17px}
+.login .err{color:#ff9b93}
+
+.toast{position:fixed;left:50%;bottom:calc(90px + env(safe-area-inset-bottom,0px));transform:translate(-50%,20px);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:12px;font-weight:600;font-size:14.5px;opacity:0;transition:all .2s;z-index:20;pointer-events:none;max-width:calc(100% - 32px)}
+.toast.show{opacity:1;transform:translate(-50%,0)}
 </style>
 </head>
 <body>
-<div class="wrap">
 
-  <!-- login -->
-  <section id="login" class="login hidden">
-    <h1 style="font-size:24px;margin:0">ניהול חברים בקבוצות</h1>
-    <p class="small">הכנס קוד גישה</p>
-    <input id="code" class="num" type="password" inputmode="numeric" autocomplete="current-password">
-    <button id="loginBtn" class="btn">כניסה</button>
+<section id="login" class="login gut hidden">
+  <div class="box">
+    <div class="logo"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><path d="M17 8.5h5M19.5 6v5"/></svg></div>
+    <h1>ניהול חברים בקבוצות</h1>
+    <p>הכנס קוד גישה</p>
+    <input id="code" type="password" inputmode="numeric" autocomplete="current-password" aria-label="קוד גישה">
+    <button id="loginBtn">כניסה</button>
     <div id="loginErr" class="err"></div>
-  </section>
-
-  <section id="app" class="hidden">
-    <div id="demoNote" class="demo hidden">גרסת ניסיון – קבוצות לדוגמה, בלי וואטסאפ אמיתי</div>
-    <header>
-      <h1>ניהול חברים בקבוצות</h1>
-      <span id="armPill" class="pill"><span class="dot"></span><span id="armText">…</span></span>
-      <button class="icon-btn" id="openSettings" aria-label="הגדרות">⚙︎</button>
-    </header>
-
-    <!-- arm not connected -->
-    <div id="connectCard" class="card hidden">
-      <b id="connectTitle">מחבר את הזרוע…</b>
-      <p class="small" id="connectText">בוואטסאפ של הזרוע: הגדרות ← מכשירים מקושרים ← קישור מכשיר, וסרוק את הקוד.</p>
-      <div id="qr" class="qrbox hidden"></div>
-    </div>
-
-    <!-- lookup -->
-    <div class="card" id="lookupCard">
-      <div class="row">
-        <input id="number" class="num" type="tel" inputmode="tel" placeholder="050-0000000" autocomplete="off">
-        <button id="lookupBtn" class="btn">בדוק</button>
-      </div>
-      <div id="lookupErr" class="err"></div>
-      <div id="armInfo" class="small"></div>
-    </div>
-
-    <!-- results -->
-    <div id="results" class="hidden">
-      <div class="small" id="resTitle"></div>
-      <div class="tabs">
-        <button class="tab t-remove active" data-tab="remove">להסרה · <b id="cntIn">0</b></button>
-        <button class="tab t-add" data-tab="add">לצירוף · <b id="cntOut">0</b></button>
-      </div>
-      <input id="search" class="search" type="search" placeholder="חיפוש קבוצה…">
-      <div class="listhead">
-        <label><input type="checkbox" id="selAll"> בחר הכל<span id="selAllNote" class="small"></span></label>
-        <span class="small" id="selCount"></span>
-      </div>
-      <div id="list" class="list"></div>
-    </div>
-
-    <!-- running / last job -->
-    <div id="jobCard" class="card hidden"></div>
-
-    <!-- history -->
-    <div class="card">
-      <b>פעולות אחרונות</b>
-      <div id="hist" class="hist"></div>
-    </div>
-  </section>
-</div>
-
-<div id="bar" class="bar hidden">
-  <div class="inner">
-    <button id="actBtn" class="btn red">הסר</button>
   </div>
+</section>
+
+<div id="app" class="hidden">
+  <div class="band gut">
+    <div class="max">
+      <div id="demoNote" class="demo hidden">גרסת ניסיון: קבוצות לדוגמה, בלי וואטסאפ אמיתי</div>
+      <div class="top">
+        <div class="logo"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><path d="M17 8.5h5M19.5 6v5"/></svg></div>
+        <h1>ניהול חברים<small>הסרה וצירוף לקבוצות</small></h1>
+        <span id="armChip" class="chip"><span class="d"></span><span id="armText" class="num-font">…</span></span>
+        <button class="iconbtn" id="openSettings" aria-label="הגדרות"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></button>
+      </div>
+      <div class="stats">
+        <div class="stat"><b id="stGroups" class="num-font">–</b><span>קבוצות של הזרוע</span></div>
+        <div class="stat"><b id="stAdmin" class="num-font">–</b><span>הזרוע מנהלת</span></div>
+        <div class="stat"><b id="stAt" class="num-font">–</b><span>עדכון אחרון</span></div>
+      </div>
+    </div>
+  </div>
+
+  <main class="gut">
+    <div class="max">
+      <div class="card lookup">
+        <label for="number">מספר טלפון</label>
+        <div class="field">
+          <input id="number" type="tel" inputmode="tel" placeholder="050-0000000" autocomplete="off">
+          <button id="lookupBtn" class="go"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4-4"/></svg>בדוק</button>
+        </div>
+        <div id="lookupErr" class="err"></div>
+      </div>
+
+      <div id="connectCard" class="card connect hidden">
+        <h2 id="connectTitle">מחבר את הזרוע…</h2>
+        <p id="connectText">פתח את וואטסאפ במספר שיהיה הזרוע וסרוק את הקוד.</p>
+        <div id="qr" class="qr hidden"></div>
+        <div class="steps"><span>הגדרות</span><span>מכשירים מקושרים</span><span>קישור מכשיר</span></div>
+      </div>
+
+      <div id="results" class="hidden">
+        <div class="person">
+          <div class="ava"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg></div>
+          <div class="who">
+            <b id="pNum" class="num-font"></b>
+            <div id="pLine"></div>
+            <div class="ratio"><i id="pRatio"></i></div>
+          </div>
+        </div>
+
+        <div class="seg" role="tablist">
+          <button class="rm active" data-tab="remove" role="tab">הסרה <span class="n num-font" id="cntIn">0</span></button>
+          <button class="ad" data-tab="add" role="tab">צירוף <span class="n num-font" id="cntOut">0</span></button>
+        </div>
+        <div class="hint" id="hint"></div>
+
+        <div id="pick" class="mode-rm">
+          <div class="tools">
+            <div class="search">
+              <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4-4"/></svg>
+              <input id="search" type="search" placeholder="חיפוש קבוצה" aria-label="חיפוש קבוצה">
+            </div>
+            <button id="selAll" class="all">בחר הכל</button>
+          </div>
+          <div id="list" class="card list"></div>
+        </div>
+      </div>
+
+      <div id="jobWrap" class="hidden">
+        <div class="sec">פעולה נוכחית</div>
+        <div id="jobCard" class="card job"></div>
+      </div>
+
+      <div class="sec">פעולות אחרונות</div>
+      <div id="hist" class="card hist"></div>
+    </div>
+  </main>
 </div>
 
-<dialog id="confirm"><div class="in">
-  <h3 id="cfTitle"></h3>
-  <div id="cfText" class="small"></div>
-  <div class="acts"><button class="btn ghost" value="no" id="cfNo">ביטול</button><button class="btn red" id="cfYes">אישור</button></div>
-</div></dialog>
+<div id="bar" class="bar gut"><div class="max"><button id="actBtn" class="act rm"><span id="actText">הסר</span><small id="actTime"></small></button></div></div>
 
-<dialog id="settings"><div class="in">
-  <h3>הגדרות</h3>
-  <p class="small">השהיה בין פעולה לפעולה (שניות). השהיה ארוכה יותר מורידה את הסיכון שהמספר ייחסם.</p>
-  <div class="field"><span>מינימום</span><input id="dMin" type="number" min="1" max="120"></div>
-  <div class="field"><span>מקסימום</span><input id="dMax" type="number" min="1" max="300"></div>
-  <div class="field"><span>רשימת הקבוצות</span><button class="btn ghost" id="refreshBtn" style="height:40px">רענן עכשיו</button></div>
-  <div class="field"><span>החלפת מספר הזרוע</span><button class="btn ghost" id="armLogout" style="height:40px;color:var(--red)">נתק זרוע</button></div>
-  <div class="err" id="setErr"></div>
-  <div class="acts"><button class="btn ghost" id="setClose">סגור</button><button class="btn" id="setSave">שמור</button></div>
-</div></dialog>
+<div id="confirm" class="scrim" aria-hidden="true"><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="cfTitle">
+  <h3 id="cfTitle"></h3>
+  <div id="cfSub" class="sub"></div>
+  <div id="cfList" class="gl"></div>
+  <div class="btns"><button class="b-ghost" id="cfNo">ביטול</button><button id="cfYes">אישור</button></div>
+</div></div>
+
+<div id="settings" class="scrim" aria-hidden="true"><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="setTitle">
+  <h3 id="setTitle">הגדרות</h3>
+  <div class="sub">השהיה ארוכה יותר בין פעולות מורידה את הסיכון שהמספר ייחסם.</div>
+  <div style="margin-top:10px">
+    <div class="row"><div class="lbl">השהיה מינימלית<div>שניות בין פעולה לפעולה</div></div>
+      <div class="stepper"><button data-step="dMin:-1">−</button><input id="dMin" type="number" min="1" max="120"><button data-step="dMin:1">+</button></div></div>
+    <div class="row"><div class="lbl">השהיה מקסימלית</div>
+      <div class="stepper"><button data-step="dMax:-1">−</button><input id="dMax" type="number" min="1" max="300"><button data-step="dMax:1">+</button></div></div>
+    <div class="row"><div class="lbl">רשימת הקבוצות<div>טעינה מחדש מוואטסאפ</div></div><button class="linkbtn" id="refreshBtn">רענן</button></div>
+    <div class="row"><div class="lbl">החלפת מספר הזרוע<div>אחרי ניתוק צריך לסרוק QR מחדש</div></div><button class="linkbtn danger" id="armLogout">נתק</button></div>
+  </div>
+  <div id="setErr" class="err"></div>
+  <div class="btns"><button class="b-ghost" id="setClose">סגור</button><button class="b-main" id="setSave">שמור</button></div>
+</div></div>
+
+<div id="toast" class="toast"></div>
 
 <script>
 const $ = (id) => document.getElementById(id);
@@ -191,11 +349,24 @@ const api = async (path, body) => {
 };
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const pretty = (d) => { d = String(d || ''); return d.startsWith('972') && d.length === 12 ? '0' + d.slice(3, 5) + '-' + d.slice(5) : d ? '+' + d : ''; };
-const timeOf = (iso) => iso ? new Date(iso).toLocaleString('he-IL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+const ago = (iso) => {
+  if (!iso) return '–'; const m = Math.round((Date.now() - new Date(iso)) / 60000);
+  return m < 1 ? 'עכשיו' : m < 60 ? `${m} דק׳` : m < 1440 ? `${Math.round(m / 60)} שע׳` : new Date(iso).toLocaleDateString('he-IL');
+};
+const when = (iso) => iso ? new Date(iso).toLocaleString('he-IL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+const HUES = [160, 200, 25, 280, 340, 45, 120, 230];
+const avaColor = (s) => { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) >>> 0; return `hsl(${HUES[h % HUES.length]} 52% 44%)`; };
+const initials = (n) => { const w = String(n).replace(/["'״׳]/g, '').trim().split(/\s+/).filter((x) => !/^\d+$/.test(x)); return ((w[0] || '?')[0] + (w[1] ? w[1][0] : '')).toUpperCase(); };
+const CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>';
 
 let S = { status: null, result: null, tab: 'remove', sel: { remove: new Set(), add: new Set() }, q: '', jobs: [] };
 
-function showLogin() { $('login').classList.remove('hidden'); $('app').classList.add('hidden'); $('bar').classList.add('hidden'); }
+function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), 2600); }
+function openSheet(id) { $(id).classList.add('open'); $(id).setAttribute('aria-hidden', 'false'); }
+function closeSheet(id) { $(id).classList.remove('open'); $(id).setAttribute('aria-hidden', 'true'); }
+document.querySelectorAll('.scrim').forEach((s) => s.addEventListener('click', (e) => { if (e.target === s) closeSheet(s.id); }));
+
+function showLogin() { $('login').classList.remove('hidden'); $('app').classList.add('hidden'); $('bar').classList.remove('show'); }
 $('loginBtn').onclick = async () => {
   $('loginErr').textContent = '';
   try { await api('/login', { code: $('code').value.trim() }); $('login').classList.add('hidden'); boot(); }
@@ -208,32 +379,33 @@ let qrShown = null;
 function renderStatus() {
   const s = S.status; if (!s) return;
   $('demoNote').classList.toggle('hidden', !s.demo);
-  const pill = $('armPill');
-  pill.className = 'pill ' + (s.state === 'online' ? 'on' : s.state === 'qr' || s.state === 'connecting' ? 'warn' : 'off');
-  $('armText').textContent = s.state === 'online' ? pretty(s.phone) : s.state === 'qr' ? 'ממתין לסריקה' : s.state === 'connecting' ? 'מתחבר…' : 'מנותק';
   const online = s.state === 'online';
+  $('armChip').className = 'chip ' + (online ? 'on' : s.state === 'qr' || s.state === 'connecting' ? 'wait' : 'off');
+  $('armText').textContent = online ? pretty(s.phone) : s.state === 'qr' ? 'ממתין לסריקה' : s.state === 'connecting' ? 'מתחבר…' : 'מנותק';
+  $('stGroups').textContent = online ? s.groups : '–';
+  $('stAdmin').textContent = online ? s.adminOf : '–';
+  $('stAt').textContent = online ? ago(s.groupsAt) : '–';
   $('connectCard').classList.toggle('hidden', online);
   $('lookupBtn').disabled = !online;
   if (!online) {
     $('connectTitle').textContent = s.state === 'qr' ? 'סרוק כדי לחבר את הזרוע' : 'מחבר את הזרוע…';
     $('qr').classList.toggle('hidden', !s.qr);
     if (s.qr && s.qr !== qrShown && window.QRCode) {
-      $('qr').innerHTML = ''; new QRCode($('qr'), { text: s.qr, width: 240, height: 240, correctLevel: QRCode.CorrectLevel.L }); qrShown = s.qr;
+      $('qr').innerHTML = ''; new QRCode($('qr'), { text: s.qr, width: 220, height: 220, correctLevel: QRCode.CorrectLevel.L }); qrShown = s.qr;
     }
   }
-  $('armInfo').textContent = online ? `הזרוע ב-${s.groups} קבוצות, מנהלת ב-${s.adminOf}` + (s.groupsAt ? ` · עודכן ${timeOf(s.groupsAt)}` : '') : '';
 }
 
 // ---- lookup ----
 $('lookupBtn').onclick = async () => {
-  $('lookupErr').textContent = ''; $('lookupBtn').disabled = true; $('lookupBtn').textContent = '…';
+  $('lookupErr').textContent = ''; $('lookupBtn').disabled = true;
   try {
     S.result = await api('/lookup', { number: $('number').value });
     S.sel.remove.clear(); S.sel.add.clear(); S.q = ''; $('search').value = '';
     S.tab = S.result.inGroups.length || !S.result.notIn.length ? 'remove' : 'add';
     renderResults();
   } catch (e) { $('lookupErr').textContent = e.message; }
-  finally { $('lookupBtn').disabled = S.status?.state !== 'online'; $('lookupBtn').textContent = 'בדוק'; }
+  finally { $('lookupBtn').disabled = S.status?.state !== 'online'; }
 };
 $('number').onkeydown = (e) => { if (e.key === 'Enter') $('lookupBtn').click(); };
 
@@ -243,45 +415,54 @@ function rows() {
   const q = S.q.trim().toLowerCase();
   return q ? all.filter((g) => g.name.toLowerCase().includes(q)) : all;
 }
+const estimate = (n) => { const st = S.status?.settings || { delayMin: 3, delayMax: 7 }; const s = Math.round(n * (st.delayMin + st.delayMax) / 2); return s < 60 ? `כ-${s} שניות` : `כ-${Math.ceil(s / 60)} דקות`; };
 
 function renderResults() {
   const r = S.result;
   $('results').classList.toggle('hidden', !r);
-  if (!r) { $('bar').classList.add('hidden'); return; }
-  $('resTitle').innerHTML = `<b>${esc(pretty(r.number))}</b> נמצא ב-<b>${r.inGroups.length}</b> קבוצות` + (r.onWhatsApp === false ? ' · <span style="color:var(--red)">המספר לא רשום בוואטסאפ</span>' : '');
+  if (!r) { $('bar').classList.remove('show'); return; }
+  const total = r.inGroups.length + r.notIn.length;
+  $('pNum').textContent = pretty(r.number);
+  $('pLine').innerHTML = r.onWhatsApp === false ? '<span class="bad">המספר לא רשום בוואטסאפ</span>' : `נמצא ב-<b>${r.inGroups.length}</b> מתוך ${total} קבוצות`;
+  $('pRatio').style.width = total ? (r.inGroups.length / total) * 100 + '%' : '0';
   $('cntIn').textContent = r.inGroups.length; $('cntOut').textContent = r.notIn.length;
-  document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === S.tab));
+  document.querySelectorAll('.seg button').forEach((b) => b.classList.toggle('active', b.dataset.tab === S.tab));
+  const rm = S.tab === 'remove';
+  $('pick').className = rm ? 'mode-rm' : 'mode-ad';
+  $('hint').textContent = rm ? 'הקבוצות שהמספר נמצא בהן. סמן מאיפה להסיר.' : 'הקבוצות שהמספר לא נמצא בהן. סמן לאן לצרף.';
   const sel = S.sel[S.tab];
   const list = rows();
   const can = list.filter((g) => g.iAmAdmin);
   $('list').innerHTML = list.length ? list.map((g) => `
-    <label class="item ${g.iAmAdmin ? '' : 'dis'}">
-      <input type="checkbox" data-id="${esc(g.id)}" ${sel.has(g.id) ? 'checked' : ''} ${g.iAmAdmin ? '' : 'disabled'}>
-      <span class="name">${esc(g.name)}</span>
-      ${g.memberAdmin ? '<span class="tag">מנהל בקבוצה</span>' : ''}
-      ${g.iAmAdmin ? '' : '<span class="tag">הזרוע לא מנהלת</span>'}
-      <span class="meta">${g.size}</span>
-    </label>`).join('') : `<div class="empty">${S.q ? 'אין קבוצה בשם הזה' : S.tab === 'remove' ? 'המספר לא נמצא באף קבוצה של הזרוע' : 'המספר כבר בכל הקבוצות'}</div>`;
+    <div class="g ${g.iAmAdmin ? '' : 'dis'} ${sel.has(g.id) ? 'sel' : ''}" data-id="${esc(g.id)}" role="checkbox" aria-checked="${sel.has(g.id)}" tabindex="${g.iAmAdmin ? 0 : -1}">
+      <div class="gav" style="background:${avaColor(g.name)}">${esc(initials(g.name))}</div>
+      <div class="gt"><div class="nm">${esc(g.name)}</div>
+        <div class="sub"><span class="num-font">${g.size} חברים</span>${g.memberAdmin ? '<span class="tag">המספר מנהל כאן</span>' : ''}${g.iAmAdmin ? '' : '<span class="tag">הזרוע לא מנהלת</span>'}</div></div>
+      ${g.iAmAdmin ? `<div class="tick">${CHECK}</div>` : ''}
+    </div>`).join('') : `<div class="empty">${S.q ? 'אין קבוצה בשם הזה' : rm ? 'המספר לא נמצא באף קבוצה של הזרוע' : 'המספר כבר נמצא בכל הקבוצות'}</div>`;
   const allSel = can.length > 0 && can.every((g) => sel.has(g.id));
-  $('selAll').checked = allSel; $('selAll').disabled = !can.length;
-  $('selAllNote').textContent = S.q ? ' (מהתוצאות)' : '';
-  $('selCount').textContent = sel.size ? `נבחרו ${sel.size}` : '';
-  const btn = $('actBtn');
-  $('bar').classList.toggle('hidden', !sel.size);
-  btn.className = 'btn ' + (S.tab === 'remove' ? 'red' : 'green');
-  btn.textContent = S.tab === 'remove' ? `הסר מ-${sel.size} קבוצות` : `צרף ל-${sel.size} קבוצות`;
-  btn.disabled = !!S.status?.running;
+  $('selAll').classList.toggle('on', allSel); $('selAll').disabled = !can.length;
+  $('selAll').textContent = allSel ? 'נקה בחירה' : S.q ? 'בחר את התוצאות' : 'בחר הכל';
+  const busy = !!S.status?.running;
+  $('bar').classList.toggle('show', sel.size > 0);
+  $('actBtn').className = 'act ' + (rm ? 'rm' : 'ad');
+  $('actBtn').disabled = busy;
+  $('actText').textContent = busy ? 'יש פעולה שרצה עכשיו' : rm ? `הסר מ-${sel.size} קבוצות` : `צרף ל-${sel.size} קבוצות`;
+  $('actTime').textContent = busy ? '' : estimate(sel.size);
 }
 
-document.querySelectorAll('.tab').forEach((t) => t.onclick = () => { S.tab = t.dataset.tab; renderResults(); });
+document.querySelectorAll('.seg button').forEach((t) => t.onclick = () => { S.tab = t.dataset.tab; renderResults(); });
 $('search').oninput = (e) => { S.q = e.target.value; renderResults(); };
-$('list').onchange = (e) => {
-  const id = e.target.dataset?.id; if (!id) return;
-  const sel = S.sel[S.tab]; e.target.checked ? sel.add(id) : sel.delete(id); renderResults();
-};
-$('selAll').onchange = (e) => {
-  const sel = S.sel[S.tab];
-  for (const g of rows()) if (g.iAmAdmin) e.target.checked ? sel.add(g.id) : sel.delete(g.id);
+function toggle(el) {
+  if (!el || el.classList.contains('dis')) return;
+  const sel = S.sel[S.tab]; const id = el.dataset.id; sel.has(id) ? sel.delete(id) : sel.add(id); renderResults();
+}
+$('list').onclick = (e) => toggle(e.target.closest('.g'));
+$('list').onkeydown = (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggle(e.target.closest('.g')); } };
+$('selAll').onclick = () => {
+  const sel = S.sel[S.tab]; const can = rows().filter((g) => g.iAmAdmin);
+  const all = can.every((g) => sel.has(g.id));
+  for (const g of can) all ? sel.delete(g.id) : sel.add(g.id);
   renderResults();
 };
 
@@ -291,42 +472,45 @@ $('actBtn').onclick = () => {
   const src = action === 'remove' ? S.result.inGroups : S.result.notIn;
   const groups = src.filter((g) => ids.has(g.id)).map((g) => ({ id: g.id, name: g.name }));
   $('cfTitle').textContent = action === 'remove' ? `להסיר את ${pretty(S.result.number)} מ-${groups.length} קבוצות?` : `לצרף את ${pretty(S.result.number)} ל-${groups.length} קבוצות?`;
-  const est = Math.round(groups.length * ((S.status.settings.delayMin + S.status.settings.delayMax) / 2));
-  $('cfText').innerHTML = groups.slice(0, 8).map((g) => '• ' + esc(g.name)).join('<br>') + (groups.length > 8 ? `<br>ועוד ${groups.length - 8}…` : '') + `<br><br>זמן משוער: כ-${est < 60 ? est + ' שניות' : Math.ceil(est / 60) + ' דקות'}`;
-  $('cfYes').className = 'btn ' + (action === 'remove' ? 'red' : 'green');
+  $('cfSub').textContent = `זה ייקח ${estimate(groups.length)}. אפשר לעצור באמצע.`;
+  $('cfList').innerHTML = groups.map((g) => esc(g.name)).join('<br>');
+  $('cfYes').className = action === 'remove' ? 'b-rm' : 'b-ad';
+  $('cfYes').textContent = action === 'remove' ? 'הסר' : 'צרף';
   $('cfYes').onclick = async () => {
-    $('confirm').close();
-    try {
-      await api('/jobs', { action, number: S.result.number, groups });
-      ids.clear(); renderResults(); await tick();
-    } catch (e) { alert(e.message); }
+    closeSheet('confirm');
+    try { await api('/jobs', { action, number: S.result.number, groups }); ids.clear(); renderResults(); await tick(); toast(action === 'remove' ? 'ההסרה התחילה' : 'הצירוף התחיל'); }
+    catch (e) { toast(e.message); }
   };
-  $('confirm').showModal();
+  openSheet('confirm');
 };
-$('cfNo').onclick = () => $('confirm').close();
+$('cfNo').onclick = () => closeSheet('confirm');
 
-const ICON = { ok: '✅', fail: '❌', pending: '⏳', running: '🔄', skipped: '⏹' };
+const RI = { ok: '✓', fail: '!', pending: '', running: '', skipped: '–' };
 function renderJobs() {
   const live = S.jobs.find((j) => !j.finishedAt) || (S.jobs[0] && Date.now() - new Date(S.jobs[0].finishedAt) < 10 * 60_000 ? S.jobs[0] : null);
-  const card = $('jobCard');
-  card.classList.toggle('hidden', !live);
+  $('jobWrap').classList.toggle('hidden', !live);
   if (live) {
-    const done = live.items.filter((i) => i.status !== 'pending' && i.status !== 'running').length;
+    const n = live.items.length;
     const ok = live.items.filter((i) => i.status === 'ok').length;
     const fail = live.items.filter((i) => i.status === 'fail').length;
-    card.innerHTML = `
-      <div class="row" style="justify-content:space-between">
-        <b>${live.action === 'remove' ? 'הסרת' : 'צירוף'} ${esc(pretty(live.number))}</b>
-        ${live.finishedAt ? `<span class="small">${live.stopped ? 'נעצר' : 'הסתיים'}</span>` : `<button class="btn ghost" style="height:36px" id="stopJob">עצור</button>`}
+    const done = live.items.filter((i) => !['pending', 'running'].includes(i.status)).length;
+    const rm = live.action === 'remove';
+    $('jobCard').innerHTML = `
+      <div class="hd">
+        <span class="badge ${rm ? 'rm' : 'ad'}">${rm ? 'הסרה' : 'צירוף'}</span>
+        <b class="num-font" style="direction:ltr;text-align:right">${esc(pretty(live.number))}</b>
+        ${live.finishedAt ? `<span class="pmeta">${live.stopped ? 'נעצר' : 'הסתיים'}</span>` : '<button class="stop" id="stopJob">עצור</button>'}
       </div>
-      <div class="prog"><i style="width:${(done / live.items.length) * 100}%"></i></div>
-      <div class="small">${done}/${live.items.length} · הצליחו ${ok}${fail ? ` · נכשלו <b style="color:var(--red)">${fail}</b>` : ''}</div>
-      <div style="margin-top:8px">${live.items.map((i) => `<div class="res"><span class="s">${ICON[i.status] || ''}</span><div><div>${esc(i.name)}</div>${i.message && i.status !== 'ok' ? `<div class="why">${esc(i.message)}</div>` : ''}</div></div>`).join('')}</div>`;
+      <div class="prog"><i class="ok" style="width:${ok / n * 100}%"></i><i class="bad" style="width:${fail / n * 100}%"></i></div>
+      <div class="pmeta num-font">${done} מתוך ${n} · ${ok} הצליחו${fail ? ` · ${fail} נכשלו` : ''}</div>
+      <div class="rs">${live.items.map((i) => `<div class="r"><span class="ri ${i.status}">${RI[i.status] ?? ''}</span><div><div>${esc(i.name)}</div>${i.status === 'fail' || i.status === 'skipped' ? `<div class="why">${esc(i.message)}</div>` : ''}</div></div>`).join('')}</div>`;
     const stop = $('stopJob'); if (stop) stop.onclick = async () => { await api(`/jobs/${live.id}/stop`, {}); tick(); };
   }
   $('hist').innerHTML = S.jobs.length ? S.jobs.slice(0, 15).map((j) => {
-    const ok = j.items.filter((i) => i.status === 'ok').length;
-    return `<div class="h">${j.action === 'remove' ? '➖ הוסר' : '➕ צורף'} <b>${esc(pretty(j.number))}</b> · ${ok}/${j.items.length} קבוצות <span class="small">· ${timeOf(j.createdAt)}${j.finishedAt ? '' : ' · רץ עכשיו'}</span></div>`;
+    const ok = j.items.filter((i) => i.status === 'ok').length; const rm = j.action === 'remove';
+    return `<div class="h"><div class="hi ${rm ? 'rm' : 'ad'}">${rm ? '−' : '+'}</div>
+      <div class="t">${rm ? 'הוסר' : 'צורף'} <b class="num-font">${esc(pretty(j.number))}</b><div>${when(j.createdAt)}${j.finishedAt ? '' : ' · רץ עכשיו'}</div></div>
+      <div class="c num-font">${ok}/${j.items.length}</div></div>`;
   }).join('') : '<div class="empty">עדיין לא בוצעו פעולות</div>';
 }
 
@@ -336,20 +520,23 @@ async function tick() {
     const [st, jb] = await Promise.all([api('/status'), api('/jobs')]);
     S.status = st; S.jobs = jb.jobs;
     renderStatus(); renderJobs();
-    if (wasRunning && !st.running && S.result) { // job finished: refresh the tables
-      S.result = await api('/lookup', { number: S.result.number }).catch(() => S.result);
-    }
+    if (wasRunning && !st.running && S.result) S.result = await api('/lookup', { number: S.result.number }).catch(() => S.result);
     wasRunning = st.running;
     renderResults();
   } catch {}
 }
 
 // ---- settings ----
-$('openSettings').onclick = () => { $('dMin').value = S.status?.settings.delayMin; $('dMax').value = S.status?.settings.delayMax; $('setErr').textContent = ''; $('settings').showModal(); };
-$('setClose').onclick = () => $('settings').close();
-$('setSave').onclick = async () => { try { await api('/settings', { delayMin: +$('dMin').value, delayMax: +$('dMax').value }); $('settings').close(); tick(); } catch (e) { $('setErr').textContent = e.message; } };
-$('refreshBtn').onclick = async () => { $('refreshBtn').textContent = '…'; try { await api('/refresh', {}); await tick(); } catch (e) { $('setErr').textContent = e.message; } $('refreshBtn').textContent = 'רענן עכשיו'; };
-$('armLogout').onclick = async () => { if (!confirm('לנתק את הזרוע? אחרי זה תצטרך לסרוק QR מחדש.')) return; await api('/arm/logout', {}); $('settings').close(); tick(); };
+$('openSettings').onclick = () => { $('dMin').value = S.status?.settings.delayMin; $('dMax').value = S.status?.settings.delayMax; $('setErr').textContent = ''; $('armLogout').textContent = 'נתק'; openSheet('settings'); };
+document.querySelectorAll('[data-step]').forEach((b) => b.onclick = () => { const [id, d] = b.dataset.step.split(':'); const el = $(id); el.value = Math.max(1, (+el.value || 0) + +d); });
+$('setClose').onclick = () => closeSheet('settings');
+$('setSave').onclick = async () => { try { await api('/settings', { delayMin: +$('dMin').value, delayMax: +$('dMax').value }); closeSheet('settings'); toast('נשמר'); tick(); } catch (e) { $('setErr').textContent = e.message; } };
+$('refreshBtn').onclick = async () => { $('refreshBtn').textContent = '…'; try { await api('/refresh', {}); await tick(); toast('רשימת הקבוצות עודכנה'); } catch (e) { $('setErr').textContent = e.message; } $('refreshBtn').textContent = 'רענן'; };
+$('armLogout').onclick = async () => {
+  const b = $('armLogout');
+  if (b.textContent !== 'בטוח? לחץ שוב') { b.textContent = 'בטוח? לחץ שוב'; return; }
+  await api('/arm/logout', {}); closeSheet('settings'); toast('הזרוע נותקה'); tick();
+};
 
 let timer = null;
 async function boot() {
