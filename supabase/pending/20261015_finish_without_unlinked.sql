@@ -2,7 +2,7 @@
 -- but not marked as failed – 'pending' (waiting to be linked, e.g. אריה הפצה) or 'offline' for minutes.
 -- The ride waited for it. Now such an arm counts as not available: its groups are closed as
 -- 'אין זרוע פנויה' right away (as for blocked arms) and the ride finishes when everything else is sent.
--- An arm that dropped for a moment (offline, seen in the last 3 minutes) is still waited for.
+-- An arm disconnected only a moment ago (offline, seen in the last 3 minutes) is still waited for.
 CREATE OR REPLACE FUNCTION public.finalize_campaigns()
  RETURNS void
  LANGUAGE plpgsql
