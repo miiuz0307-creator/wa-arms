@@ -1,10 +1,10 @@
 -- BotiX 2.0 – registers 3 updates in "ניהול עדכונים" as WAITING FOR APPROVAL (nothing runs now).
 -- Order matters and the runner keeps it (lowest number first): 2.0.1 database, 2.0.2 WhatsApp server, 2.0.3 website.
--- Code: branch botix-v2, commit e1f66f640f34e9acc442b0191f8eeb456f947131
+-- Code: branch botix-v2, commit fe2a5513a1445f6733067b14e5da3c1b9385bc5d
 -- Tests: database 232/232 (local), engine 36/36, demo 400+ screen visits without errors.
 insert into public.releases (version, title, changes, components, affects_arms, disconnect_risk, restart_engine, risk_notes, commit_sha, migration_sql, rollback_sql, status)
 values ('2.0.1', 'BotiX 2 – מסד נתונים (תוספות בלבד)', array['לוגו ומסלול לכל תחנה', 'סטטוס קבוצות: השבתה זמנית ו"כלול בכל זאת", זיהוי סיבת אי-זמינות', 'בקשות תשלום עם אסמכתה ואישור/דחייה מקישור בוואטסאפ (מניעת אישור כפול)', 'הגדרות ביט/פייבוקס ומספר לאישורים', 'פניות תמיכה', 'התראות על מנוי שמסתיים (לבעל המערכת ולתחנה) – כל יום ב-10:07', 'חתימה בהודעות שבעל המערכת שולט בה (לכל התחנות או לתחנה)'], '{db}', false, 'none', false,
-  'רק טבלאות, עמודות ופונקציות חדשות – שום נתון קיים לא משתנה או נמחק. לא נוגע בזרועות. הביטול מסיר רק את מה שנוסף.', 'e1f66f640f34e9acc442b0191f8eeb456f947131',
+  'רק טבלאות, עמודות ופונקציות חדשות – שום נתון קיים לא משתנה או נמחק. לא נוגע בזרועות. הביטול מסיר רק את מה שנוסף.', 'fe2a5513a1445f6733067b14e5da3c1b9385bc5d',
   $r2$-- BotiX v2 (DB side): station logo, group status flags, subscription payments with owner approval,
 -- support tickets, subscription alerts and engine helpers.
 --
@@ -841,7 +841,7 @@ alter table public.stations drop column if exists logo_data;
 $r2$, 'pending');
 insert into public.releases (version, title, changes, components, affects_arms, disconnect_risk, restart_engine, risk_notes, commit_sha, migration_sql, rollback_sql, status)
 values ('2.0.2', 'BotiX 2 – שרת הוואטסאפ', array['שליחת הודעות מערכת בוואטסאפ: קודי כניסה, בקשות תשלום, תשובות לפניות, התראות מנוי (היום לא נשלחות בכלל)', 'החתימה מתווספת מתחת לכל הודעה של התחנה', 'מנוי שהסתיים: הבוט לא מטפל בהודעות התחנה, הזרועות נשארות מחוברות (בלי QR בחידוש), והתחנה יכולה להיכנס רק כדי לשלם', 'קבוצות מושבתות לא מקבלות נסיעות', 'קבוצות שאין בהן זרוע מחוברת של הרשימה לא נספרות ככישלון'], '{engine,db}', true, 'short', true,
-  'הפעלה מחדש של השרת: הזרועות מתנתקות לכ-30 שניות וחוזרות לבד, בלי QR. העדכון מחכה אוטומטית לרגע בלי הפצה פעילה. אם הזרועות לא חוזרות – חזרה אוטומטית לגרסה הקודמת. חייב לעלות אחרי 2.0.1.', 'e1f66f640f34e9acc442b0191f8eeb456f947131',
+  'הפעלה מחדש של השרת: הזרועות מתנתקות לכ-30 שניות וחוזרות לבד, בלי QR. העדכון מחכה אוטומטית לרגע בלי הפצה פעילה. אם הזרועות לא חוזרות – חזרה אוטומטית לגרסה הקודמת. חייב לעלות אחרי 2.0.1.', 'fe2a5513a1445f6733067b14e5da3c1b9385bc5d',
   $r2$-- BotiX v2b – a station whose subscription ended keeps its WhatsApp arms connected (no QR on renewal) and can
 -- still log in with its code, but only to pay and renew. The engine (branch engine-v2) stops handling that
 -- station's rides via engine_station_active().
@@ -937,7 +937,7 @@ end $function$;
 $r2$, 'pending');
 insert into public.releases (version, title, changes, components, affects_arms, disconnect_risk, restart_engine, risk_notes, commit_sha, migration_sql, rollback_sql, status)
 values ('2.0.3', 'BotiX 2 – האתר החדש', array['עיצוב חדש לכל המסכים, מצב כהה, התאמה מלאה לטלפון', 'מסך בית חדש עם מצב התחנה', 'ניהול קבוצות והפצה משופר', 'מסכי מנוי ותשלומים, אישור תשלום, תמיכה טכנית, חתימה בהודעות', 'לוגו לכל תחנה'], '{web}', false, 'none', false,
-  'שינוי באתר בלבד – הזרועות וההפצות לא מושפעות. חייב לעלות אחרי 2.0.1.', 'e1f66f640f34e9acc442b0191f8eeb456f947131',
+  'שינוי באתר בלבד – הזרועות וההפצות לא מושפעות. חייב לעלות אחרי 2.0.1.', 'fe2a5513a1445f6733067b14e5da3c1b9385bc5d',
   null, null, 'pending');
 
 select id, version, title, status, components from public.releases where version like '2.0.%' order by id;
