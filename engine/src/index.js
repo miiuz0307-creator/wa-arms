@@ -183,14 +183,16 @@ async function processCommands() {
     let errText = null;
     try {
       let arm = arms.get(cmd.arm_id);
-      if (!arm && (cmd.command === 'reset' || cmd.command === 'connect')) {
+      const pairPhone = String(cmd.command || '').startsWith('pair:') ? cmd.command.slice(5) : null;
+      if (!arm && (cmd.command === 'reset' || cmd.command === 'connect' || pairPhone)) {
         // re-activate a paused arm
         await db.from('arms').update({ is_active: true }).eq('id', cmd.arm_id);
         await syncArms();
         arm = arms.get(cmd.arm_id);
       }
       if (!arm) throw new Error('הזרוע לא פעילה');
-      if (cmd.command === 'reset') await arm.reset();
+      if (pairPhone) await arm.pairWithCode(pairPhone);
+      else if (cmd.command === 'reset') await arm.reset();
       else if (cmd.command === 'connect') await arm.start();
       else if (cmd.command === 'refresh_groups') await arm.syncGroups();
       else if (cmd.command === 'disconnect') {

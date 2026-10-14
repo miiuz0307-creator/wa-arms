@@ -803,3 +803,53 @@ test('footer: read per station and cached; database error → last known footer,
   assert.equal(await gates.stationFooter('st'), '', 'old database without the function → no footer');
   assert.equal(await gates.stationFooter(null), '');
 });
+
+// ---------- link with a code instead of a QR ----------
+test('arm: pairing code – asked once, stored as PAIR:XXXX-XXXX, QR refreshes do not replace it', async () => {
+  const qrs = [];
+  const updates = [];
+  dbAnswer((op) => {
+    if (op.table === 'arm_qr' && op.action === 'upsert') qrs.push(op.payload.qr);
+    if (op.table === 'arms' && op.action === 'update') updates.push(op.payload);
+    return { data: [], error: null };
+  });
+  const arm = new Arm({ id: 'p1', name: 'p', station_id: 'st' }, () => {});
+  let asked = 0;
+  const sock = { requestPairingCode: async (phone) => { asked++; assert.equal(phone, '972501234567'); return 'ABCD1234'; } };
+  arm.sock = sock;
+  arm.stopped = false;
+  arm.pairPhone = '972501234567';
+  await arm.onConnectionUpdate(sock, { qr: 'qr-1' });
+  await arm.onConnectionUpdate(sock, { qr: 'qr-2' });
+  assert.equal(asked, 1, 'one code per login');
+  assert.deepEqual(qrs, ['PAIR:ABCD-1234']);
+  assert.equal(updates.at(-1).status, 'qr');
+});
+
+test('arm: pairWithCode normalises 05X numbers and starts a fresh login; bad number refused', async () => {
+  dbAnswer(() => ({ data: [], error: null }));
+  const arm = new Arm({ id: 'p2', name: 'p', station_id: 'st' }, () => {});
+  let resets = 0;
+  arm.reset = async () => { resets++; };
+  await arm.pairWithCode('050-123-4567');
+  assert.equal(arm.pairPhone, '972501234567');
+  assert.equal(resets, 1);
+  await assert.rejects(() => arm.pairWithCode('12'), /לא תקין/);
+});
+
+test('arm: pairing code request failing → back to waiting with a clear message', async () => {
+  const updates = [];
+  dbAnswer((op) => {
+    if (op.table === 'arms' && op.action === 'update') updates.push(op.payload);
+    return { data: [], error: null };
+  });
+  const arm = new Arm({ id: 'p3', name: 'p', station_id: 'st' }, () => {});
+  const sock = { requestPairingCode: async () => { throw new Error('bad request'); } };
+  arm.sock = sock;
+  arm.stopped = false;
+  arm.pairPhone = '972501234567';
+  await arm.onConnectionUpdate(sock, { qr: 'qr-1' });
+  assert.equal(updates.at(-1).status, 'pending');
+  assert.match(updates.at(-1).last_error, /קוד חיבור/);
+  assert.equal(arm.pairPhone, null);
+});
