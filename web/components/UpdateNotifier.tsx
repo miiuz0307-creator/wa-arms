@@ -35,8 +35,9 @@ export function UpdateNotifier() {
         fresh = sessionStorage.getItem('botix-reloaded-for') !== sha;
         if (fresh) sessionStorage.setItem('botix-reloaded-for', sha);
       } catch {}
-      if (fresh && (performance.now() < 15_000 || resumed)) window.location.reload();
+      const reloadNow = fresh && (performance.now() < 15_000 || resumed);
       resumed = false;
+      if (reloadNow) window.location.reload();
       else setReady(true);
     };
     check();
