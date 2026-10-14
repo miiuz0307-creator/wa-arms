@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Plus, QrCode, Power, PlugZap, RefreshCw, Trash2, Pencil, Smartphone, Loader2 } from 'lucide-react';
+import { Plus, QrCode, KeyRound, Power, PlugZap, RefreshCw, Trash2, Pencil, Smartphone, Loader2 } from 'lucide-react';
 import { sb, logAct } from '@/lib/supabase';
 import { useRealtime } from '@/lib/hooks';
 import { useAuth, myUid } from '@/lib/auth';
@@ -56,6 +56,18 @@ function Arms() {
     load();
   }, [load]);
   useRealtime(['arms', 'arm_qr', 'groups'], load);
+
+  // link with an 8-character code instead of scanning a QR
+  const [pairFor, setPairFor] = useState<any>(null);
+  const [pairPhone, setPairPhone] = useState('');
+  async function sendPair() {
+    const digits = pairPhone.replace(/\D/g, '');
+    if (!/^0?5\d{8}$/.test(digits) && !/^9725\d{8}$/.test(digits)) return toast('מספר טלפון לא תקין – לדוגמה 050-1234567', 'error');
+    const intl = digits.startsWith('972') ? digits : '972' + digits.replace(/^0/, '');
+    await command(pairFor, `pair:${intl}`, 'מבקש קוד חיבור…');
+    setPairFor(null);
+    setPairPhone('');
+  }
 
   async function command(arm: any, command: string, label: string) {
     const { error } = await sb().from('arm_commands').insert({ arm_id: arm.id, command, created_by: myUid(profile) });
@@ -143,7 +155,20 @@ function Arms() {
                   </Badge>
                 </div>
 
-                {a.status === 'qr' && qr[a.id] && (
+                {a.status === 'qr' && qr[a.id]?.startsWith('PAIR:') && (
+                  <div className="mx-5 mb-4 flex flex-col items-center rounded-2xl bg-slate-50 p-4">
+                    <div className="text-xs text-slate-500">קוד החיבור</div>
+                    <div dir="ltr" className="mt-1 select-all rounded-xl bg-white px-5 py-3 font-mono text-3xl font-bold tracking-[0.2em] text-slate-900 shadow-sm">
+                      {qr[a.id].slice(5)}
+                    </div>
+                    <p className="mt-3 text-center text-xs leading-relaxed text-slate-600">
+                      בטלפון: WhatsApp ← הגדרות ← מכשירים מקושרים ← קישור מכשיר ← &quot;קישור באמצעות מספר טלפון&quot;, והקלד את הקוד.
+                      <br />
+                      הקוד תקף כמה דקות.
+                    </p>
+                  </div>
+                )}
+                {a.status === 'qr' && qr[a.id] && !qr[a.id].startsWith('PAIR:') && (
                   <div className="mx-5 mb-4 flex flex-col items-center rounded-2xl bg-slate-50 p-4">
                     <div className="rounded-xl bg-white p-3 shadow-sm">
                       <QRCodeSVG value={qr[a.id]} size={200} />
@@ -201,6 +226,17 @@ function Arms() {
                         <QrCode className="h-4 w-4" />
                         QR חדש
                       </Button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => {
+                          setPairPhone(a.phone || '');
+                          setPairFor(a);
+                        }}
+                      >
+                        <KeyRound className="h-4 w-4" />
+                        חיבור עם קוד
+                      </Button>
                       {a.status === 'online' && (
                         <Button size="sm" variant="secondary" onClick={() => command(a, 'refresh_groups', 'מרענן קבוצות…')}>
                           <RefreshCw className="h-4 w-4" />
@@ -217,7 +253,31 @@ function Arms() {
                         <Power className="h-4 w-4" />
                         נתק
                       </Button>
-                    </>
+                      <Modal
+        open={!!pairFor}
+        onClose={() => setPairFor(null)}
+        title={`חיבור עם קוד – ${pairFor?.name || ''}`}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setPairFor(null)}>
+              ביטול
+            </Button>
+            <Button onClick={sendPair}>
+              <KeyRound className="h-4 w-4" /> קבלת קוד
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <Field label="מספר הטלפון של הוואטסאפ שמחברים">
+            <Input dir="ltr" inputMode="tel" placeholder="050-1234567" value={pairPhone} onChange={(e) => setPairPhone(e.target.value)} autoFocus />
+          </Field>
+          <p className="text-sm leading-relaxed text-slate-600">
+            תוך כמה שניות יופיע בכרטיס של הזרוע קוד של 8 תווים. בטלפון: WhatsApp ← הגדרות ← מכשירים מקושרים ← קישור מכשיר ← &quot;קישור באמצעות מספר טלפון&quot;. אם הזרוע כבר מחוברת, החיבור הקודם יוחלף.
+          </p>
+        </div>
+      </Modal>
+    </>
                   ) : (
                     <Button size="sm" variant="success" onClick={() => setActive(a, true)}>
                       <PlugZap className="h-4 w-4" />
