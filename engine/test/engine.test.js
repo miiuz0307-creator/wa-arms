@@ -853,3 +853,39 @@ test('arm: pairing code request failing → back to waiting with a clear message
   assert.match(updates.at(-1).last_error, /קוד חיבור/);
   assert.equal(arm.pairPhone, null);
 });
+
+// ---------- anti-block ----------
+test('anti-block: the same ride text within the window is recognised (spaces/newlines ignored); other text or cancelled rides are not', async () => {
+  const quote = require('../src/quote');
+  quote.setSettingsSource(() => ({ duplicate_window_min: 10 }));
+  dbAnswer((op) => {
+    if (op.table === 'campaigns') {
+      assert.ok(op.filters.some((f) => f[0] === 'neq' && f[1] === 'status' && f[2] === 'cancelled'), 'cancelled rides do not count');
+      return { data: [{ id: 'c1', status: 'running', final_text: 'ביתר שמש 180\nאולמי הגפן\nמיניק זמן' }], error: null };
+    }
+    return { data: [], error: null };
+  });
+  assert.equal(await quote.sameRideRecently('st', 'ביתר שמש 180\n\nאולמי הגפן  \nמיניק זמן'), true);
+  assert.equal(await quote.sameRideRecently('st', 'תל אביב 200'), false);
+  quote.setSettingsSource(() => ({ duplicate_window_min: 0 }));
+  assert.equal(await quote.sameRideRecently('st', 'ביתר שמש 180\nאולמי הגפן\nמיניק זמן'), false, '0 = feature off');
+  dbAnswer(() => ({ data: null, error: { message: 'db down' } }));
+  quote.setSettingsSource(() => ({ duplicate_window_min: 10 }));
+  assert.equal(await quote.sameRideRecently('st', 'x'), false, 'lookup problem never blocks a ride');
+});
+
+test('anti-block: 4 refusals in 5 minutes rest only that arm for 10 minutes; fewer refusals change nothing', async () => {
+  const arm = { name: 'a', online: true, nextSendAt: 0 };
+  for (let i = 0; i < 3; i++) engine.slowDown(arm);
+  assert.ok(!(arm.coolUntil > Date.now()), 'three refusals: keeps sending at full speed');
+  engine.slowDown(arm);
+  assert.ok(arm.coolUntil > Date.now() + 9 * 60_000, 'fourth: rests ~10 minutes');
+  assert.equal(arm.penalty, 1, 'speed setting untouched');
+  let claimed = 0;
+  dbAnswer((op) => {
+    if (op.rpc === 'claim_target_engine') claimed++;
+    return { data: [], error: null };
+  });
+  await engine.sendTick(arm);
+  assert.equal(claimed, 0, 'a resting arm takes no new groups');
+});

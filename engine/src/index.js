@@ -241,8 +241,23 @@ function adminOnlyBlocked(arm, jid) {
 // Adaptive speed per arm: every refusal doubles the pause, every 5 successes in a row ease it back
 // The owner chose the speed and accepts the risk: a refusal does NOT slow the arm down,
 // the group just goes back to the queue and is retried at the configured speed.
+// Anti-block: one refusal changes nothing, but WhatsApp refusing the same number again and again
+// ("rate-overlimit") comes right before a block. Then THAT number rests for a few minutes and the other
+// arms carry on with the ride – the station's speed setting is never changed.
+const COOL_REFUSALS = 4; // refusals …
+const COOL_WINDOW_MS = 5 * 60_000; // … within 5 minutes
+const COOL_MS = 10 * 60_000; // → this arm rests 10 minutes
 function slowDown(arm) {
   arm.penalty = 1;
+  const now = Date.now();
+  arm.refusals = (arm.refusals || []).filter((t) => now - t < COOL_WINDOW_MS);
+  arm.refusals.push(now);
+  if (arm.refusals.length >= COOL_REFUSALS && !(arm.coolUntil > now)) {
+    arm.coolUntil = now + COOL_MS;
+    arm.refusals = [];
+    log.warn({ arm: arm.name, until: new Date(arm.coolUntil).toISOString() }, 'anti-block: repeated refusals – this arm rests, the others continue');
+    return;
+  }
   log.warn({ arm: arm.name }, 'WhatsApp refused – group requeued, speed unchanged');
 }
 function speedUp(arm) {
@@ -388,6 +403,7 @@ async function checkWork() {
 
 async function sendTick(arm) {
   if (!hasWork || !arm.online || Date.now() < arm.nextSendAt) return;
+  if (arm.coolUntil > Date.now()) return; // anti-block rest (see slowDown)
   const settings = settingsFor(arm);
   // Warm-up: a number linked less than 24 hours ago sends slowly (at most WARMUP_RATE a minute, one at a time).
   // Every first message to a group hands our new encryption key to every member; done fast across hundreds
@@ -626,4 +642,4 @@ if (require.main === module) {
 }
 
 // for the automated tests
-module.exports = { reconcileArms, syncArms, syncState, stopping, sendOne, sendTick, arms, msgIdFor };
+module.exports = { reconcileArms, syncArms, syncState, stopping, sendOne, sendTick, arms, msgIdFor, slowDown };
