@@ -207,7 +207,22 @@ function GroupsAndLists() {
   const allShownSelected = filtered.length > 0 && filtered.every((r) => sel.has(r.id));
   const curList = listF ? listById[listF] : null;
   const curCounts = listF ? countsFor(listF) : null;
-  const curListArms = listF ? listArms.filter((x) => x.list_id === listF).map((x) => armById[x.arm_id]?.name).filter(Boolean) : [];
+  const curListArmRows: any[] = listF ? listArms.filter((x) => x.list_id === listF).map((x) => armById[x.arm_id]).filter(Boolean) : [];
+
+  // take one arm off the open list's sending arms (the groups stay in the list)
+  async function removeListArm(a: any) {
+    if (!listF) return;
+    const last = curListArmRows.length === 1;
+    const msg = last
+      ? `להסיר את "${a.name}"?\nזו הזרוע השולחת האחרונה ברשימה – אחרי ההסרה ישלחו לרשימה כל הזרועות הפעילות של התחנה.`
+      : `להסיר את "${a.name}" מהזרועות השולחות של הרשימה?\nהקבוצות נשארות ברשימה, ושאר הזרועות ממשיכות לשלוח אליהן.`;
+    if (!confirm(msg)) return;
+    const { error } = await sb().from('list_arms').delete().eq('list_id', listF).eq('arm_id', a.id);
+    if (error) return toast(error.message, 'error');
+    await logAct('list_saved', 'list', listF, { arm_removed: a.name });
+    toast(`${a.name} הוסרה מהזרועות השולחות`);
+    load();
+  }
 
   return (
     <>
@@ -258,11 +273,29 @@ function GroupsAndLists() {
               <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-600">
                 <span>{curCounts.total} קבוצות</span>
                 <span className="text-emerald-700">● {curCounts.ok} זמינות</span>
-                <span className="text-rose-700">● {curCounts.bad} לא יקבלו נסיעות</span>
-                <span className="flex items-center gap-1">
-                  <Smartphone className="h-4 w-4 text-pink-500" />
-                  {curListArms.length ? curListArms.join(' · ') : 'כל הזרועות הפעילות'}
-                </span>
+                <span className={curCounts.bad ? 'text-rose-700' : 'text-slate-400'}>● {curCounts.bad} לא יקבלו נסיעות</span>
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                <span className="text-xs text-slate-500">זרועות שולחות:</span>
+                {curListArmRows.length === 0 && <span className="text-xs text-slate-600">כל הזרועות הפעילות</span>}
+                {curListArmRows.map((a) => {
+                  const on = a.is_active && a.status === 'online';
+                  return (
+                    <span key={a.id} className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 py-1 pe-1 ps-2.5 text-xs font-medium text-slate-700">
+                      <span className={cx('h-2 w-2 rounded-full', on ? 'bg-emerald-500' : 'bg-rose-500')} title={on ? 'מחוברת' : 'לא מחוברת'} />
+                      {a.name}
+                      <button
+                        type="button"
+                        onClick={() => removeListArm(a)}
+                        aria-label={`הסרת ${a.name} מהזרועות השולחות`}
+                        title="הסרה מהרשימה"
+                        className="grid h-5 w-5 place-items-center rounded-full text-slate-400 hover:bg-rose-100 hover:text-rose-600"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  );
+                })}
               </div>
             </div>
             <div className="flex gap-1">
