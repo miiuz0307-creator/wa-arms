@@ -61,6 +61,29 @@ select campaign_id as c3 from public.claim_target_engine('00000000-0000-0000-000
 select testkit.check(:'c1' = :'r1' and :'c2' = :'r2' and :'c3' = :'r1', 'distribution: each arm keeps its own ride, the free ride gets the other arm');
 reset role;
 
+-- even sharing: a busy arm leaves a shared group to a much less busy arm for the first 45 seconds
+reset role;
+update campaigns set status = 'completed' where station_id = '0000000b-0000-0000-0000-000000000000';
+update arms set sent_today = 5000, sent_day = current_date where id = '00000000-0000-0000-0001-00000000000b';
+update arms set sent_today = 100, sent_day = current_date where id = '00000000-0000-0000-0002-00000000000b';
+set role anon; select testkit.as_station('tok-b');
+select public.create_manual_campaign('ride 3', null, array(select '0000000b-0000-0000-0000-000000000000-' || g || '@g.us' from generate_series(11, 13) g)) as r3 \gset
+select testkit.as_engine();
+select testkit.check((select count(*) from public.claim_target_engine('00000000-0000-0000-0001-00000000000b')) = 0, 'sharing: busy arm leaves a shared group to the less busy arm');
+select testkit.check((select count(*) from public.claim_target_engine('00000000-0000-0000-0002-00000000000b')) = 1, 'sharing: less busy arm takes it');
+reset role;
+update campaigns set started_at = now() - interval '2 minutes' where id = :'r3';
+set role anon; select testkit.as_engine();
+select testkit.check((select count(*) from public.claim_target_engine('00000000-0000-0000-0001-00000000000b')) = 1, 'sharing: after 45 seconds the busy arm takes it too (no ride waits)');
+reset role;
+update arms set status = 'offline' where id = '00000000-0000-0000-0002-00000000000b';
+update campaigns set started_at = now() where id = :'r3';
+set role anon; select testkit.as_engine();
+select testkit.check((select count(*) from public.claim_target_engine('00000000-0000-0000-0001-00000000000b')) = 1, 'sharing: other arm not connected – busy arm sends at once');
+reset role;
+update arms set status = 'online', sent_today = 0 where station_id = '0000000b-0000-0000-0000-000000000000';
+update campaigns set status = 'completed' where station_id = '0000000b-0000-0000-0000-000000000000';
+
 -- ========== 3. permissions of engine-only functions ==========
 set role anon;
 select testkit.as_station('tok-a');
