@@ -5,6 +5,8 @@ const { useDbAuthState } = require('./authState');
 const { jidUser, formatPhone, fetchAll } = require('./util');
 
 const makeWASocket = baileys.default || baileys.makeWASocket;
+// incoming messages older than this are confirmed without decrypting (see skipIncoming)
+const STALE_SEC = 15 * 60;
 
 // Who-has-which-devices cache. Baileys' default forgets it after 5 minutes, so every
 // distribution re-asked WhatsApp about hundreds of members per group (slow, and it stalls sends).
@@ -85,6 +87,12 @@ class Arm {
     const from = a.from || '';
     if (!a.id) return false;
     if (from === 'status@broadcast' || from.endsWith('@newsletter')) return true;
+    // Old messages replayed after a reconnect: rides and "עזרה" older than 10 minutes are ignored anyway
+    // (quote.js / help.js), so don't decrypt them. On 14 Oct two arms got ~1,000 undecryptable old
+    // messages on every reconnect; decrypting them froze the engine ~45s, every arm dropped (408), and
+    // the next reconnect brought the same backlog again. Key-sharing from the arm's own phone ('peer') still goes through.
+    const t = Number(a.t || 0);
+    if (t && a.category !== 'peer' && Date.now() / 1000 - t > STALE_SEC) return true;
     if (!from.endsWith('@g.us')) {
       // Private chats are never used (only source groups are read). A number that was away for hours can
       // get hundreds of private messages it cannot decrypt; Baileys then answers each one with new keys and

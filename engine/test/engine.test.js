@@ -386,6 +386,11 @@ test('messages: only source groups are decrypted; others are confirmed and dropp
   assert.equal(arm.skipIncoming(node('111:7@lid')), false, "the arm's own lid still goes through");
   assert.equal(arm.skipIncoming({ tag: 'message', attrs: { id: 'P', from: '972500000009@s.whatsapp.net', category: 'peer' } }), false, 'peer protocol messages go through');
   assert.equal(arm.skipIncoming(node('972500000009@broadcast')), false, 'other kinds untouched');
+  const old = Math.floor(Date.now() / 1000) - 20 * 60;
+  const fresh = Math.floor(Date.now() / 1000) - 60;
+  assert.equal(arm.skipIncoming({ tag: 'message', attrs: { id: 'O', from: 'src@g.us', participant: 'x@lid', t: String(old) } }), true, 'old replayed source message: not decrypted');
+  assert.equal(arm.skipIncoming({ tag: 'message', attrs: { id: 'F', from: 'src@g.us', participant: 'x@lid', t: String(fresh) } }), false, 'fresh source message read');
+  assert.equal(arm.skipIncoming({ tag: 'message', attrs: { id: 'Q', from: '972500000009@s.whatsapp.net', category: 'peer', t: String(old) } }), false, 'old peer message still goes through');
   assert.equal(arm.skipIncoming(node('status@broadcast', 'x@s.whatsapp.net')), true);
   // skipped messages are confirmed (receipt + ack) so WhatsApp does not send them again
   const sent = [];
