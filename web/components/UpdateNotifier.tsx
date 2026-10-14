@@ -21,16 +21,31 @@ export function UpdateNotifier() {
 
   useEffect(() => {
     let stop = false;
+    let resumed = false; // the app was just brought back to the screen
     const check = async () => {
       const sha = await liveSha();
       if (!sha || stop) return;
-      if (!mine.current) mine.current = sha;
-      else if (sha !== mine.current) setReady(true);
+      // the version this screen was BUILT from (not the first answer – a phone may open an old cached copy)
+      const built = process.env.NEXT_PUBLIC_BUILD_SHA;
+      if (!mine.current) mine.current = built && built !== 'dev' ? built : sha;
+      if (sha === mine.current) return;
+      // outdated right after opening: reload once at once (no stale screens), never in a loop
+      let fresh = false;
+      try {
+        fresh = sessionStorage.getItem('botix-reloaded-for') !== sha;
+        if (fresh) sessionStorage.setItem('botix-reloaded-for', sha);
+      } catch {}
+      if (fresh && (performance.now() < 15_000 || resumed)) window.location.reload();
+      resumed = false;
+      else setReady(true);
     };
     check();
     const t = setInterval(check, 60_000);
     const onVis = () => {
-      if (document.visibilityState === 'visible') check();
+      if (document.visibilityState === 'visible') {
+        resumed = true;
+        check();
+      }
     };
     document.addEventListener('visibilitychange', onVis);
     return () => {
