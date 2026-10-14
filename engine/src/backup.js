@@ -1,5 +1,7 @@
 // Daily backup of the whole database to the server disk (Railway volume), outside the database.
 // One gzip JSON file per day: { created_at, tables: { name: [rows...] } }. The last 14 days are kept.
+// Per-group delivery rows (campaign_targets) are left out: they are kept only 48h in the database and are
+// not needed to restore the system; they were most of the backup's size.
 // Restore: node scripts/restore-sql.js <file> > restore.sql  (then run it in the Supabase SQL editor).
 const fs = require('fs');
 const fsp = require('fs/promises');
@@ -13,7 +15,7 @@ const KEEP_DAYS = 14;
 const TABLES = [
   'stations', 'profiles', 'app_settings', 'templates', 'triggers', 'arms', 'groups',
   'distribution_lists', 'list_groups', 'list_arms', 'source_groups', 'dispatchers', 'wa_operators',
-  'campaigns', 'campaign_arms', 'campaign_targets', 'quote_sessions', 'activity_log', 'arm_auth',
+  'campaigns', 'campaign_arms', 'quote_sessions', 'activity_log', 'arm_auth',
 ];
 
 async function dumpTable(name) {

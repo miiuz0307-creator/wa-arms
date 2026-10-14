@@ -71,6 +71,35 @@ test('auth: damaged creds on disk are restored from the database backup, and nev
   for (const batch of upserts) for (const r of batch) assert.notEqual(r.value, good.slice(0, 20), 'damaged copy never sent to backup');
 });
 
+test('auth: disk lost completely – the arm comes back from the database identity only (no QR)', async () => {
+  // what the database holds after the clean-up: creds + app-state keys only
+  const saved = [];
+  dbAnswer((op) => {
+    if (op.table === 'arm_auth' && op.action === 'upsert') saved.push(...op.payload);
+    return { data: [], error: null };
+  });
+  const a = await useDbAuthState('arm-3', 'test-secret');
+  a.state.creds.me = { id: '972500000003@s.whatsapp.net' };
+  await a.saveCreds();
+  await a.state.keys.set({ 'app-state-sync-key': { K1: { keyData: 'x' } }, session: { 'u9.0': { s: 1 } }, 'sender-key': { 'g@g.us::u9': { k: 1 } } });
+  await a.flush();
+  const keys = saved.map((r) => r.key);
+  assert.ok(keys.includes('creds') && keys.includes('app-state-sync-key-K1'), 'identity is backed up to the database');
+  assert.ok(!keys.some((k) => k.startsWith('session-') || k.startsWith('sender-key-')), 'per-chat keys are not (disk only)');
+  // the server disk is gone
+  fs.rmSync(path.join(process.env.AUTH_DIR, 'arm-3'), { recursive: true, force: true });
+  const rows = saved.filter((r) => r.key === 'creds' || r.key.startsWith('app-state-'));
+  dbAnswer((op) => {
+    if (op.table === 'arm_auth' && op.action === 'select') return { data: rows.map((r) => ({ key: r.key, value: r.value })), error: null };
+    return { data: [], error: null };
+  });
+  const b = await useDbAuthState('arm-3', 'test-secret');
+  assert.equal(b.state.creds.me.id, '972500000003@s.whatsapp.net', 'same WhatsApp login – reconnects without a QR');
+  const sk = await b.state.keys.get('app-state-sync-key', ['K1']);
+  assert.ok(sk.K1, 'app-state key restored');
+  assert.ok(fs.existsSync(path.join(process.env.AUTH_DIR, 'arm-3', 'creds')), 'and written back to the new disk');
+});
+
 // ---------- arms list (ק1) ----------
 function fakeArm(id) {
   const arm = { id, name: id, stationId: 'st', destroyed: 0, stopped: 0, online: true };
@@ -92,6 +121,75 @@ test('arms: an empty or failed arms list never logs out any number', async () =>
   await assert.rejects(engine.reconcileArms());
   assert.equal(a1.destroyed + a2.destroyed, 0);
   assert.equal(engine.arms.size, 2);
+});
+
+test('arms: an arm that hangs while stopping does not freeze the arms loop', async () => {
+  engine.arms.clear();
+  process.env.ENGINE_STOP_LIMIT_MS = '200';
+  const stuck = fakeArm('stuck');
+  stuck.stop = () => new Promise(() => {}); // never finishes (blocked number, hung socket)
+  engine.arms.set('stuck', stuck);
+  const updates = [];
+  dbAnswer((op) => {
+    if (op.rpc === 'engine_station_states') return { data: [{ id: 'st', allowed: true }], error: null };
+    if (op.table === 'arms' && op.action === 'update') updates.push(op.payload);
+    if (op.table === 'arms') return { data: [{ id: 'stuck', name: 'stuck', is_active: false, status: 'error', station_id: 'st' }], error: null };
+    return { data: [], error: null };
+  });
+  const t0 = Date.now();
+  await engine.reconcileArms();
+  delete process.env.ENGINE_STOP_LIMIT_MS;
+  assert.ok(Date.now() - t0 < 2000, 'loop went on after the time limit');
+  assert.equal(engine.arms.has('stuck'), false, 'the switched-off arm left the running list');
+  assert.ok(updates.some((u) => u && u.status === 'paused'), 'its status was set to paused');
+});
+
+test('arms: a number still closing is not started twice; it can start again once closed', async () => {
+  engine.arms.clear();
+  process.env.ENGINE_STOP_LIMIT_MS = '150';
+  const slow = fakeArm('slow');
+  slow.stop = () => new Promise(() => {});
+  engine.arms.set('slow', slow);
+  let active = false;
+  dbAnswer((op) => {
+    if (op.rpc === 'engine_station_states') return { data: [{ id: 'st', allowed: true }], error: null };
+    if (op.table === 'arms' && op.action === 'select') return { data: [{ id: 'slow', name: 'slow', is_active: active, status: 'online', station_id: 'st' }], error: null };
+    return { data: [], error: null };
+  });
+  await engine.reconcileArms(); // switched off -> stopping in the background
+  assert.equal(engine.stopping.has('slow'), true);
+  active = true;
+  await engine.reconcileArms(); // switched on again at once
+  assert.equal(engine.arms.has('slow'), false, 'not started while the old connection is still closing');
+  await new Promise((r) => setTimeout(r, 250));
+  assert.equal(engine.stopping.has('slow'), false, 'the stop time limit released it');
+  assert.equal(slow.stopped, true, 'and the old connection was told to close');
+  delete process.env.ENGINE_STOP_LIMIT_MS;
+});
+
+test('arms: a stuck sync pass is replaced by a fresh one; settings are picked up without a restart', async () => {
+  engine.arms.clear();
+  process.env.ENGINE_SYNC_STUCK_MS = '100';
+  const a = fakeArm('w');
+  a.linkedAt = 123;
+  engine.arms.set('w', a);
+  let hang = true;
+  dbAnswer((op) => {
+    if (hang && op.table === 'arms' && op.action === 'select') return new Promise(() => {}); // database call that never returns
+    if (op.rpc === 'engine_station_states') return { data: [{ id: 'st', allowed: true }], error: null };
+    if (op.table === 'arms' && op.action === 'select') return { data: [{ id: 'w', name: 'w', is_active: true, status: 'online', station_id: 'st', linked_at: null }], error: null };
+    return { data: [], error: null };
+  });
+  const stuckBefore = engine.syncState.stuck;
+  engine.syncArms(); // hangs
+  await new Promise((r) => setTimeout(r, 150));
+  hang = false;
+  const t0 = Date.now();
+  await engine.syncArms(); // sees the stuck pass, abandons it, runs a fresh one
+  assert.equal(engine.syncState.stuck, stuckBefore + 1, 'stuck pass detected');
+  assert.equal(a.linkedAt, 0, 'warm-up switched off was picked up by the fresh pass');
+  assert.ok(Date.now() - engine.syncState.okAt < 1000 && Date.now() - t0 < 1000, 'healthy again within a second');
+  delete process.env.ENGINE_SYNC_STUCK_MS;
 });
 
 test('arms: an arm really deleted in the app is removed only after confirmation', async () => {
@@ -229,7 +327,11 @@ test('arm: repeated 440 (opened elsewhere) stops after 3 times in 10 minutes', a
 // ---------- backup (ח5) ----------
 test('backup: whole database written to disk, restore SQL rebuilds the same rows', async () => {
   const backup = require('../src/backup');
-  const rows = { stations: [{ id: 's1', name: 'תחנה' }], campaign_targets: Array.from({ length: 4500 }, (_, i) => ({ id: i + 1 })) };
+  const rows = {
+    stations: [{ id: 's1', name: 'תחנה' }],
+    groups: Array.from({ length: 4500 }, (_, i) => ({ id: i + 1 })),
+    campaign_targets: Array.from({ length: 10 }, (_, i) => ({ id: i + 1 })),
+  };
   dbAnswer((op) => {
     if (op.rpc === 'engine_backup_rows') {
       const all = rows[op.args.p_table] || [];
@@ -238,10 +340,11 @@ test('backup: whole database written to disk, restore SQL rebuilds the same rows
     return { data: [], error: null };
   });
   const { file, counts } = await backup.runBackup();
-  assert.equal(counts.campaign_targets, 4500, 'paging reads every row');
+  assert.equal(counts.groups, 4500, 'paging reads every row');
+  assert.equal(counts.campaign_targets, undefined, 'per-group delivery rows are not backed up (kept 48h only)');
   const out = require('child_process').execFileSync(process.execPath, [path.join(__dirname, '../scripts/restore-sql.js'), file, '--schema', 'restore_check'], { encoding: 'utf8' });
   assert.match(out, /insert into "restore_check"\."stations" overriding system value/);
-  assert.equal((out.match(/"campaign_targets" overriding/g) || []).length, 5, '1000 rows per statement');
+  assert.equal((out.match(/"groups" overriding/g) || []).length, 5, '1000 rows per statement');
   assert.match(out, /on conflict do nothing/, 'restore never overwrites existing rows');
 });
 
@@ -319,126 +422,29 @@ test('groups: member lists kept only for source and target groups; the full list
   assert.deepEqual(Object.keys(upserts[0]).sort(), ['arm_id', 'name', 'participants', 'updated_at', 'wa_group_id']);
 });
 
-test('resend: batches with one session refresh, one worker, bounded rate', async () => {
-  const saved = { gap: Arm.RESEND_GAP_MS, first: Arm.RESEND_FIRST_MS, item: Arm.RESEND_ITEM_MS, batch: Arm.RESEND_BATCH };
-  Object.assign(Arm, { RESEND_GAP_MS: 300, RESEND_FIRST_MS: 10, RESEND_ITEM_MS: 1, RESEND_BATCH: 5 });
+test('resend: one at a time, never a flood (at most one every 2 seconds)', async () => {
   const arm = new Arm({ id: 'rs', name: 'r', station_id: 'st' }, () => {});
   let inFlight = 0;
   let maxInFlight = 0;
-  let relays = 0;
-  const asserted = [];
+  let calls = 0;
   const sock = {
-    assertSessions: async (jids, force) => asserted.push({ n: jids.length, force }),
+    assertSessions: async () => {},
     relayMessage: async () => {
-      relays++;
+      calls++;
       inFlight++;
       maxInFlight = Math.max(maxInFlight, inFlight);
-      await new Promise((r) => setTimeout(r, 5));
+      await new Promise((r) => setTimeout(r, 2500)); // slower than the 2s gap – used to start a second chain
       inFlight--;
     },
   };
   arm.sock = sock;
   arm.online = true;
   arm.sentStore = new Map([['ID1', { message: { conversation: 'x' }, at: Date.now() }]]);
-  for (let i = 0; i < 12; i++) arm.queueResend(sock, 'g@g.us', 'ID1', `p${i}@lid`, 1);
-  arm.queueResend(sock, 'g@g.us', 'ID1', 'p0@lid', 1); // same device + message: only once
-  await new Promise((r) => setTimeout(r, 120));
-  assert.equal(relays, 5, 'first batch only – the next waits for the gap');
-  await new Promise((r) => setTimeout(r, 900));
-  assert.equal(relays, 12);
+  for (let i = 0; i < 20; i++) arm.queueResend(sock, 'g@g.us', 'ID1', `p${i}@lid`, 1);
+  await new Promise((r) => setTimeout(r, 9000));
   assert.equal(maxInFlight, 1);
-  assert.deepEqual(asserted.map((a) => a.n), [5, 5, 2], 'one session refresh per batch');
-  assert.ok(asserted.every((a) => a.force));
-  const d = arm.takeDelivery();
-  assert.equal(d.resent, 12);
-  assert.equal(d.failingDevices, 12);
-  Object.assign(Arm, { RESEND_GAP_MS: saved.gap, RESEND_FIRST_MS: saved.first, RESEND_ITEM_MS: saved.item, RESEND_BATCH: saved.batch });
-});
-
-test('resend: rate-overlimit pauses the queue instead of hammering WhatsApp', async () => {
-  const saved = { gap: Arm.RESEND_GAP_MS, first: Arm.RESEND_FIRST_MS, item: Arm.RESEND_ITEM_MS };
-  Object.assign(Arm, { RESEND_GAP_MS: 10, RESEND_FIRST_MS: 5, RESEND_ITEM_MS: 1 });
-  const arm = new Arm({ id: 'rl', name: 'r', station_id: 'st' }, () => {});
-  let relays = 0;
-  const sock = {
-    assertSessions: async () => {},
-    relayMessage: async () => {
-      relays++;
-      if (relays === 2) throw new Error('rate-overlimit');
-    },
-  };
-  arm.sock = sock;
-  arm.online = true;
-  arm.sentStore = new Map([['ID1', { message: { conversation: 'x' }, at: Date.now() }]]);
-  for (let i = 0; i < 6; i++) arm.queueResend(sock, 'g@g.us', 'ID1', `q${i}@lid`, 1);
-  await new Promise((r) => setTimeout(r, 300));
-  assert.equal(relays, 2, 'stopped after rate-overlimit');
-  assert.equal(arm.resendQueue.length, 4, 'the rest kept for later');
-  clearTimeout(arm.resendTimer);
+  assert.ok(calls <= 3, `only ~2 per 9s, got ${calls}`);
   arm.resendQueue = [];
-  Object.assign(Arm, { RESEND_GAP_MS: saved.gap, RESEND_FIRST_MS: saved.first, RESEND_ITEM_MS: saved.item });
-});
-
-test('resend: too old / gave up / no copy are counted as lost, not silently ignored', () => {
-  const arm = new Arm({ id: 'lost', name: 'r', station_id: 'st' }, () => {});
-  arm.sentStore = new Map([['OLD', { message: {}, at: Date.now() - 11 * 60_000 }], ['NEW', { message: {}, at: Date.now() }]]);
-  arm.queueResend({}, 'g@g.us', 'OLD', 'a@lid', 1);
-  arm.queueResend({}, 'g@g.us', 'NEW', 'b@lid', 3);
-  arm.queueResend({}, 'g@g.us', 'MISSING', 'c@lid', 1);
-  const d = arm.takeDelivery();
-  assert.equal(d.resendExpired, 2);
-  assert.equal(d.resendGaveUp, 1);
-  assert.equal(d.failingDevices, 3);
-  assert.equal(arm.takeDelivery(), null, 'counters reset each minute');
-});
-
-test('incoming: a group message carrying a new session (pkmsg) is decrypted even in an unused group', () => {
-  Arm.setRelevance({ sourcesReady: true, targetsReady: true, isSource: () => false, isTarget: () => false });
-  const arm = new Arm({ id: 'pk', name: 'r', station_id: 'st' }, () => {});
-  const node = (types) => ({ attrs: { id: 'M1', from: 'x@g.us', participant: '111@lid' }, content: types.map((t) => ({ tag: 'enc', attrs: { type: t } })) });
-  assert.equal(arm.skipIncoming(node(['skmsg'])), true, 'ordinary traffic in an unused group: skipped');
-  assert.equal(arm.skipIncoming(node(['pkmsg', 'skmsg'])), false, 'new session: processed');
-  assert.equal(arm.takeDelivery().sessionsLearned, 1);
-  assert.ok(arm.learnOnly.has('M1'), 'its content is not handed to the help / quote handlers');
-});
-
-test('incoming: private new sessions (pkmsg) are learned, within a per-minute budget', () => {
-  const arm = new Arm({ id: 'pp', name: 'r', station_id: 'st' }, () => {});
-  const node = (id, types) => ({ attrs: { id, from: '972500000009@s.whatsapp.net' }, content: types.map((t) => ({ tag: 'enc', attrs: { type: t } })) });
-  assert.equal(arm.skipIncoming(node('A', ['msg'])), true, 'ordinary private message from a stranger: skipped');
-  assert.equal(arm.skipIncoming(node('B', ['pkmsg'])), false, 'new session: learned');
-  for (let i = 0; i < 70; i++) arm.skipIncoming(node('C' + i, ['pkmsg']));
-  assert.equal(arm.takeDelivery().sessionsLearned, 60, 'at most 60 a minute – a backlog cannot freeze the engine');
-});
-
-test('retry: only the failing device loses "has our key"; its device list is fetched again', async () => {
-  const arm = new Arm({ id: 'sk', name: 'r', station_id: 'st' }, () => {});
-  let mem = { 'g@g.us': { '111:2@lid': true, '111@lid': true, '222@lid': true } };
-  arm.signalKeys = {
-    get: async (type, ids) => Object.fromEntries(ids.map((id) => [id, mem[id]])),
-    set: async (data) => Object.assign(mem, data['sender-key-memory']),
-  };
-  await arm.forgetDeviceKey('g@g.us', '111:2@lid');
-  assert.deepEqual(Object.keys(mem['g@g.us']).sort(), ['111@lid', '222@lid']);
-  await arm.forgetDeviceKey('g@g.us', '333:5@lid'); // unknown device of an unknown member: nothing else touched
-  assert.deepEqual(Object.keys(mem['g@g.us']).sort(), ['111@lid', '222@lid']);
-  await arm.forgetDeviceKey('g@g.us', '222:7@lid'); // new device of a known member: all that member's devices
-  assert.deepEqual(Object.keys(mem['g@g.us']), ['111@lid']);
-  const dropped = [];
-  arm.devCache = { del: (k) => dropped.push(...k) };
-  arm.forgetDevices('111:2@lid');
-  assert.deepEqual(dropped, ['111', '111@lid']);
-});
-
-test('members joining/leaving update the kept member list at once', () => {
-  const arm = new Arm({ id: 'gp', name: 'r', station_id: 'st' }, () => {});
-  arm.groupMeta = new Map([['g@g.us', { id: 'g@g.us', subject: 'g', participants: [{ id: 'a@lid' }, { id: 'b@lid' }] }]]);
-  arm.applyParticipants({ id: 'g@g.us', action: 'add', participants: ['c@lid', 'a@lid'] });
-  assert.deepEqual(arm.groupMeta.get('g@g.us').participants.map((p) => p.id), ['a@lid', 'b@lid', 'c@lid']);
-  arm.applyParticipants({ id: 'g@g.us', action: 'remove', participants: [{ id: 'a@lid' }] });
-  assert.deepEqual(arm.groupMeta.get('g@g.us').participants.map((p) => p.id), ['b@lid', 'c@lid']);
-  arm.applyParticipants({ id: 'other@g.us', action: 'add', participants: ['z@lid'] }); // not kept: ignored
-  assert.equal(arm.groupMeta.has('other@g.us'), false);
 });
 
 test('device cache: a big cache stays fast (no full scan on every write)', () => {
@@ -456,4 +462,154 @@ test('device cache: a big cache stays fast (no full scan on every write)', () =>
     for (let i = 0; i < 60_000; i++) c.set('u' + i, [i]);
     assert.ok(Date.now() - t0 < 3000, 'took ' + (Date.now() - t0) + 'ms');
   }
+});
+
+// ---------- more than 1,000 rows (the database API cuts one request at 1,000) ----------
+function cappedTable(rows) {
+  // answers like the real API: honours .range(), never more than 1,000 rows per request
+  return (op) => {
+    const r = op.mods.find((m) => m[0] === 'range');
+    const from = r ? r[1] : 0;
+    const to = r ? Math.min(r[2], from + 999) : 999;
+    return { data: rows.slice(from, to + 1), error: null };
+  };
+}
+
+test('row cap: fetchAll reads every row in pages, also exactly 1,000 and 2,500', async () => {
+  const { fetchAll } = require('../src/util');
+  for (const n of [0, 999, 1000, 1001, 2500]) {
+    const rows = Array.from({ length: n }, (_, i) => ({ i }));
+    dbAnswer(cappedTable(rows));
+    const { data, error } = await fetchAll(() => require('../src/config').db.from('x').select('*').order('i'));
+    assert.equal(error, null);
+    assert.equal(data.length, n, `${n} rows`);
+  }
+});
+
+test('row cap: a ride to lists with 2,500 groups gets all 2,500 (not the first 1,000), each once', async () => {
+  const quote = require('../src/quote');
+  const rows = Array.from({ length: 2500 }, (_, i) => ({ wa_group_id: `g${i % 2400}@g.us`, group_name: `g${i}` })); // 100 in two lists
+  dbAnswer(cappedTable(rows));
+  const groups = await quote.selectedGroups(['l1', 'l2'], 'g5@g.us');
+  assert.equal(groups.length, 2399, 'every group once, the source group excluded');
+});
+
+test('row cap guard: no read of a big table without paging (engine and website)', () => {
+  // Tables that can pass 1,000 rows for one station or one ride. A read must page (fetchAll / allRows / allGroups /
+  // .range) or be bounded (.limit(n<=1000), .single(), head count, one id).
+  const BIG = ['groups', 'list_groups', 'campaign_targets', 'campaigns', 'activity_log', 'processed_messages', 'arm_auth', 'quote_sessions', 'campaign_arms'];
+  const root = path.join(__dirname, '..', '..');
+  const files = [];
+  const walk = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      if (e.name === 'node_modules' || e.name === '.next' || e.name === 'test') continue;
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (/\.(js|ts|tsx)$/.test(e.name)) files.push(p);
+    }
+  };
+  for (const d of ['engine/src', 'web/app', 'web/components', 'web/lib']) if (fs.existsSync(path.join(root, d))) walk(path.join(root, d));
+  const bad = [];
+  for (const f of files) {
+    const lines = fs.readFileSync(f, 'utf8').split('\n');
+    lines.forEach((line, i) => {
+      const m = line.match(/\.from\('([a-z_]+)'\)/);
+      if (!m || !BIG.includes(m[1])) return;
+      // the statement: from the line before (fetchAll(() => … ) wrappers) to the first ';' after .from(
+      const before = lines[i - 1] || '';
+      const rest = lines.slice(i, i + 14).join(' ');
+      const s = before.split(';').pop() + ' ' + rest.split(';')[0];
+      if (!/\.select\(/.test(s)) return; // writes are fine
+      // bounded by design: mark the line with  // rows: bounded – <why>
+      const ok = /fetchAll|allGroups|allRows|\.range\(|\.single\(|\.maybeSingle\(|head:\s*true|\.eq\('id'|\.limit\((\d{1,3}|1000)\)|rows: bounded/.test(s);
+      if (!ok && !/rows: bounded/.test(lines.slice(i, i + 4).join(' '))) bad.push(`${path.relative(root, f)}:${i + 1} ${m[1]}`);
+    });
+  }
+  assert.deepEqual(bad, [], 'reads that can be cut at 1,000 rows:\n' + bad.join('\n'));
+});
+
+// ---------- link with a code instead of a QR ----------
+test('arm: pairing code – asked once, stored as PAIR:XXXX-XXXX, QR refreshes do not replace it', async () => {
+  const qrs = [];
+  const updates = [];
+  dbAnswer((op) => {
+    if (op.table === 'arm_qr' && op.action === 'upsert') qrs.push(op.payload.qr);
+    if (op.table === 'arms' && op.action === 'update') updates.push(op.payload);
+    return { data: [], error: null };
+  });
+  const arm = new Arm({ id: 'p1', name: 'p', station_id: 'st' }, () => {});
+  let asked = 0;
+  const sock = { requestPairingCode: async (phone) => { asked++; assert.equal(phone, '972501234567'); return 'ABCD1234'; } };
+  arm.sock = sock;
+  arm.stopped = false;
+  arm.pairPhone = '972501234567';
+  await arm.onConnectionUpdate(sock, { qr: 'qr-1' });
+  await arm.onConnectionUpdate(sock, { qr: 'qr-2' });
+  assert.equal(asked, 1, 'one code per login');
+  assert.deepEqual(qrs, ['PAIR:ABCD-1234']);
+  assert.equal(updates.at(-1).status, 'qr');
+});
+
+test('arm: pairWithCode normalises 05X numbers and starts a fresh login; bad number refused', async () => {
+  dbAnswer(() => ({ data: [], error: null }));
+  const arm = new Arm({ id: 'p2', name: 'p', station_id: 'st' }, () => {});
+  let resets = 0;
+  arm.reset = async () => { resets++; };
+  await arm.pairWithCode('050-123-4567');
+  assert.equal(arm.pairPhone, '972501234567');
+  assert.equal(resets, 1);
+  await assert.rejects(() => arm.pairWithCode('12'), /לא תקין/);
+});
+
+test('arm: pairing code request failing → back to waiting with a clear message', async () => {
+  const updates = [];
+  dbAnswer((op) => {
+    if (op.table === 'arms' && op.action === 'update') updates.push(op.payload);
+    return { data: [], error: null };
+  });
+  const arm = new Arm({ id: 'p3', name: 'p', station_id: 'st' }, () => {});
+  const sock = { requestPairingCode: async () => { throw new Error('bad request'); } };
+  arm.sock = sock;
+  arm.stopped = false;
+  arm.pairPhone = '972501234567';
+  await arm.onConnectionUpdate(sock, { qr: 'qr-1' });
+  assert.equal(updates.at(-1).status, 'pending');
+  assert.match(updates.at(-1).last_error, /קוד חיבור/);
+  assert.equal(arm.pairPhone, null);
+});
+
+// ---------- anti-block ----------
+test('anti-block: the same ride text within the window is recognised (spaces/newlines ignored); other text or cancelled rides are not', async () => {
+  const quote = require('../src/quote');
+  quote.setSettingsSource(() => ({ duplicate_window_min: 10 }));
+  dbAnswer((op) => {
+    if (op.table === 'campaigns') {
+      assert.ok(op.filters.some((f) => f[0] === 'neq' && f[1] === 'status' && f[2] === 'cancelled'), 'cancelled rides do not count');
+      return { data: [{ id: 'c1', status: 'running', final_text: 'ביתר שמש 180\nאולמי הגפן\nמיניק זמן' }], error: null };
+    }
+    return { data: [], error: null };
+  });
+  assert.equal(await quote.sameRideRecently('st', 'ביתר שמש 180\n\nאולמי הגפן  \nמיניק זמן'), true);
+  assert.equal(await quote.sameRideRecently('st', 'תל אביב 200'), false);
+  quote.setSettingsSource(() => ({ duplicate_window_min: 0 }));
+  assert.equal(await quote.sameRideRecently('st', 'ביתר שמש 180\nאולמי הגפן\nמיניק זמן'), false, '0 = feature off');
+  dbAnswer(() => ({ data: null, error: { message: 'db down' } }));
+  quote.setSettingsSource(() => ({ duplicate_window_min: 10 }));
+  assert.equal(await quote.sameRideRecently('st', 'x'), false, 'lookup problem never blocks a ride');
+});
+
+test('anti-block: 4 refusals in 5 minutes rest only that arm for 10 minutes; fewer refusals change nothing', async () => {
+  const arm = { name: 'a', online: true, nextSendAt: 0 };
+  for (let i = 0; i < 3; i++) engine.slowDown(arm);
+  assert.ok(!(arm.coolUntil > Date.now()), 'three refusals: keeps sending at full speed');
+  engine.slowDown(arm);
+  assert.ok(arm.coolUntil > Date.now() + 9 * 60_000, 'fourth: rests ~10 minutes');
+  assert.equal(arm.penalty, 1, 'speed setting untouched');
+  let claimed = 0;
+  dbAnswer((op) => {
+    if (op.rpc === 'claim_target_engine') claimed++;
+    return { data: [], error: null };
+  });
+  await engine.sendTick(arm);
+  assert.equal(claimed, 0, 'a resting arm takes no new groups');
 });

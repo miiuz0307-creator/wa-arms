@@ -61,7 +61,23 @@ function buildHelpText({ body, keyword, strip, template, phone }) {
   return parts.join('\n\n');
 }
 
+/**
+ * Read every row of a query. The database API returns at most 1,000 rows per request – a bigger result is
+ * cut silently. `build()` must return a fresh query with a stable .order(); pages of 1,000 are read until done.
+ * Returns { data, error } like a normal query.
+ */
+async function fetchAll(build, page = 1000) {
+  const out = [];
+  for (let from = 0; ; from += page) {
+    const { data, error } = await build().range(from, from + page - 1);
+    if (error) return { data: out.length ? out : null, error };
+    out.push(...(data || []));
+    if (!data || data.length < page) return { data: out, error: null };
+  }
+}
+
 module.exports = {
+  fetchAll,
   sleep,
   randomBetween,
   digits,

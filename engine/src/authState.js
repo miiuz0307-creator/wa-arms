@@ -126,7 +126,7 @@ async function useDbAuthState(armId, secret) {
     fromDisk = true;
     // the login identity on disk is damaged: take it from the database backup instead of losing the connection
     if (!cache.has('creds')) {
-      const { data } = await db.from('arm_auth').select('key,value').eq('arm_id', armId).or('key.eq.creds,key.like.app-state-sync-key-%');
+      const { data } = await db.from('arm_auth').select('key,value').eq('arm_id', armId).or('key.eq.creds,key.like.app-state-sync-key-%'); // rows: bounded – one arm's login identity, a few rows
       for (const r of data || []) {
         if (valid(r.value) && !cache.has(r.key)) {
           cache.set(r.key, r.value);

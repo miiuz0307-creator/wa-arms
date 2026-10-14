@@ -3,7 +3,7 @@
 // → the bot opens a private chat with the operator: preview without the customer's phone,
 //   numbered list of distribution lists, edit, "הפץ", live status.
 const { db, log } = require('./config');
-const { extractText, jidUser } = require('./util');
+const { extractText, jidUser, fetchAll } = require('./util');
 
 const { sanitize, verifyNoCustomerPhone, normalize, formatPhone, findPhones } = require('./phones');
 
@@ -119,7 +119,9 @@ async function loadLists(stationId) {
 
 async function selectedGroups(listIds, excludeGroup) {
   if (!listIds.length) return [];
-  const { data } = await db.from('list_groups').select('wa_group_id,group_name').in('list_id', listIds);
+  const { data } = await fetchAll(() =>
+    db.from('list_groups').select('wa_group_id,group_name').in('list_id', listIds).order('list_id').order('wa_group_id'),
+  );
   const map = new Map();
   for (const g of data || []) if (g.wa_group_id !== excludeGroup && !map.has(g.wa_group_id)) map.set(g.wa_group_id, g);
   return [...map.values()];
@@ -234,7 +236,7 @@ async function handleCancel(arm, m, ctx) {
   const { data: stopped } = await db
     .from('campaigns')
     .update({ status: 'cancelled', finished_at: new Date().toISOString() })
-    .in('id', campaignIds)
+    .in('id', campaignIds) // rows: bounded – rides of one quoted message (at most 10)
     .in('status', ['queued', 'running', 'pending_phone'])
     .select('id,sent,total');
   const cancelKey = keyOf(m, op);
@@ -441,7 +443,7 @@ async function handleGroup(arm, m) {
       .limit(5);
     const ids = (prev || []).map((p) => p.campaign_id);
     if (ids.length) {
-      const { data: camps } = await db.from('campaigns').select('id,status,finished_at').in('id', ids);
+      const { data: camps } = await db.from('campaigns').select('id,status,finished_at').in('id', ids); // rows: bounded – earlier rides of the same message
       const busy = (camps || []).find(
         (c) => ['queued', 'running'].includes(c.status) || (c.status === 'completed' && Date.now() - new Date(c.finished_at).getTime() < dupWindowMin * 60 * 1000),
       );
@@ -526,7 +528,7 @@ async function update(session, patch) {
 
 async function statusText(session) {
   if (!session.campaign_id) return null;
-  const { data: rows } = await db.from('campaign_targets').select('status').eq('campaign_id', session.campaign_id);
+  const { data: rows } = await fetchAll(() => db.from('campaign_targets').select('status').eq('campaign_id', session.campaign_id).order('id'));
   const c = { pending: 0, sending: 0, sent: 0, failed: 0, skipped: 0 };
   for (const r of rows || []) c[r.status] = (c[r.status] || 0) + 1;
   const total = (rows || []).length;
@@ -684,6 +686,29 @@ async function handleDM(arm, m) {
   return true;
 }
 
+const normRide = (t) => String(t || '').replace(/\s+/g, ' ').trim();
+
+// a ride with the same text was distributed (or is being distributed) in this station within the duplicate window
+async function sameRideRecently(stationId, text) {
+  const mins = Number(getSettings(stationId)?.duplicate_window_min ?? 10);
+  const want = normRide(text);
+  if (!(mins > 0) || !want) return false;
+  try {
+    const since = new Date(Date.now() - mins * 60_000).toISOString();
+    const { data } = await db
+      .from('campaigns')
+      .select('id,status,final_text')
+      .eq('station_id', stationId)
+      .gte('created_at', since)
+      .neq('status', 'cancelled')
+      .order('created_at', { ascending: false })
+      .limit(200); // rows: bounded – rides of the last few minutes of one station
+    return (data || []).some((c) => normRide(c.final_text) === want);
+  } catch {
+    return false; // never block a ride because of a lookup problem
+  }
+}
+
 async function distribute(arm, chat, session, allow, opts = {}) {
   if (!session.selected_list_ids.length) {
     await fail(arm, session.trigger_key, session.id, '⚠️ לא נבחרה אף רשימה. שלח מספר מהתפריט או *הכל*.');
@@ -702,6 +727,16 @@ async function distribute(arm, chat, session, allow, opts = {}) {
   if (problems.length) {
     await update(session, { needs_review: true, review_reason: `נשאר מספר טלפון בטקסט: ${problems.join(', ')}` });
     await fail(arm, session.trigger_key, session.id, `נשאר מספר טלפון בטקסט: ${problems.join(', ')}`);
+    return true;
+  }
+
+  // anti-block: the same ride TEXT posted again (a new message, not a reply to the old one) within the
+  // station's window is not distributed a second time – fewer messages per number, nothing slower.
+  if (await sameRideRecently(arm.stationId, session.clean_text)) {
+    await update(session, { status: 'cancelled' });
+    if (session.trigger_key) await arm.react(session.trigger_key, '🔁');
+    await activity(arm.stationId, 'quote_duplicate', session.id, { operator: session.operator_name, by: 'text' });
+    log.info({ arm: arm.name }, 'quote: same ride text was just distributed – not sent again');
     return true;
   }
 
@@ -833,4 +868,5 @@ async function handle(arm, m) {
   return false;
 }
 
-module.exports = { handle, notifyFinished, setTriggerSource, setArmsSource, setSettingsSource, setSourceGroupCheck, renderMenu };
+module.exports = {
+  sameRideRecently, handle, notifyFinished, setTriggerSource, setArmsSource, setSettingsSource, setSourceGroupCheck, renderMenu, selectedGroups };
