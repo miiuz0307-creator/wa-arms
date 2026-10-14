@@ -904,7 +904,7 @@ function AddToList({
     setListId(defaultList || lists[0]?.id || 'new');
     setName('');
     setAddArms(true);
-    setShare(true);
+    setShare(false);
     // only when the window opens – the screen refreshes every few seconds and must not reset the choice
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -919,7 +919,7 @@ function AddToList({
   const otherArms = chosenArms.length
     ? ([...new Set(groups.flatMap((g) => g.armIds))].filter((a) => armById[a]?.is_active && !chosenArms.includes(a) && !missingArms.includes(a)) as string[])
     : [];
-  const [share, setShare] = useState(true);
+  const [share, setShare] = useState(false); // opt-in: adding arms changes who sends the whole list
 
   async function save() {
     setBusy(true);
@@ -999,8 +999,8 @@ function AddToList({
             onChange={setShare}
             label={
               <span className="text-sm leading-relaxed">
-                <b>חלוקת עבודה בין הזרועות:</b> בקבוצות שבחרת נמצאות גם {otherArms.map((a) => armById[a]?.name).join(', ')}. הוספה שלהן לזרועות השולחות של הרשימה מחלקת את
-                הנסיעות בין כולן (כל קבוצה עדיין מקבלת כל נסיעה פעם אחת).
+                <b>חלוקת עבודה בין הזרועות:</b> בקבוצות שבחרת נמצאות גם {otherArms.map((a) => armById[a]?.name).join(', ')}. סמן רק אם אתה רוצה שגם הן ישלחו לרשימה הזו – הן
+                יצטרפו לזרועות השולחות שלה, ובלשונית "לצירוף" יופיעו גם הקבוצות שלהן.
               </span>
             }
           />
