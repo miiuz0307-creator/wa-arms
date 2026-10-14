@@ -47,7 +47,8 @@ function GroupsAndLists() {
   // inside a list: 'in' = the groups already in it, 'add' = groups not in it yet (to add)
   const [listMode, setListMode] = useState<'in' | 'add'>('in');
   // in 'add': also offer groups only OTHER arms are in (adding them adds that arm to the list's sending arms)
-  const [addOthers, setAddOthers] = useState(false);
+  // in 'add': whose groups to offer – the list's own arm (the one it is named after), changeable
+  const [addArm, setAddArm] = useState('');
   const [statusF, setStatusF] = useState<'all' | 'ok' | 'bad'>('all');
   const [showUnavailable, setShowUnavailable] = useState(true);
   // outside a list: all groups / only groups not in any list yet / only groups already in lists
@@ -137,14 +138,18 @@ function GroupsAndLists() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, listF, listArms]);
 
-  // groups worth adding to the open list: not in it yet, and one of the list's sending arms is in the group
-  // (no sending arms chosen = every active arm of the station). A group none of them is in could never get a ride.
+  // the arm a list belongs to: the arm with the same name as the list, else its first sending arm
+  const ownArmOf = (listId: string) => {
+    const l = lists.find((x) => x.id === listId);
+    const byName = (arms || []).find((a) => l && a.name?.trim() === String(l.name || '').trim());
+    return byName?.id || armsOfList(listId)[0] || '';
+  };
+  const offerArm = addArm || (listF ? ownArmOf(listF) : '');
+  // groups worth adding to the open list: not in it yet, and the chosen arm (by default the list's own arm) is in them.
+  // Other arms that also sit in those groups keep sharing the work – that does not widen what is offered here.
   const addable = (r: Row) => {
     if (!listF || r.lists.includes(listF)) return false;
-    const active = new Set((arms || []).filter((a) => a.is_active).map((a) => a.id));
-    const chosen = armsOfList(listF);
-    const pool = (chosen.length ? chosen : [...active]).filter((id) => active.has(id)); // switched-off arms send nothing
-    return r.armIds.some((id) => (addOthers ? active.has(id) : pool.includes(id)));
+    return !!offerArm && r.armIds.includes(offerArm);
   };
   // reachable through the open list's own sending arms (false = only through another arm)
   const viaListArms = (r: Row) => {
@@ -164,9 +169,10 @@ function GroupsAndLists() {
         (statusF === 'all' || (statusF === 'ok' ? r.available : !r.available)) &&
         (showUnavailable || r.available || (listF && listMode === 'in' && r.lists.includes(listF))),
     );
-  }, [viewRows, q, armF, listF, listMode, addOthers, assignF, statusF, showUnavailable, listArms, arms]);
+  }, [viewRows, q, armF, listF, listMode, offerArm, assignF, statusF, showUnavailable, listArms, arms]);
 
-  useEffect(() => setSel(new Set()), [armF, listF, listMode, addOthers]);
+  useEffect(() => setSel(new Set()), [armF, listF, listMode, offerArm]);
+  useEffect(() => setAddArm(''), [listF]);
 
   const countsFor = (listId: string) => {
     const pool = armsOfList(listId);
@@ -322,13 +328,19 @@ function GroupsAndLists() {
             ))}
           </div>
         )}
-        {curList && listMode === 'add' && armsOfList(listF).length > 0 && (
-          <label className="mb-3 flex cursor-pointer items-start gap-2.5 rounded-xl bg-amber-50 p-3 text-sm text-amber-900 ring-1 ring-amber-200">
-            <input type="checkbox" checked={addOthers} onChange={(e) => setAddOthers(e.target.checked)} className="mt-0.5 h-4 w-4 accent-indigo-600" />
-            <span>
-              <b>הצג גם קבוצות של זרועות אחרות</b> – קבוצה שאין בה זרוע של הרשימה תתווסף יחד עם הזרוע שנמצאת בה, והזרוע הזו תצטרף לזרועות השולחות של הרשימה.
-            </span>
-          </label>
+        {curList && listMode === 'add' && (
+          <div className="mb-3 flex flex-wrap items-center gap-2 text-sm text-slate-600">
+            <span>קבוצות שהזרוע הזו נמצאת בהן:</span>
+            <Select value={offerArm} onChange={(e) => setAddArm(e.target.value)} className="w-auto">
+              {(arms || [])
+                .filter((a) => a.is_active)
+                .map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+            </Select>
+          </div>
         )}
         {/* filters */}
         <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -511,7 +523,7 @@ function AddToList({
     setListId(defaultList || lists[0]?.id || 'new');
     setName('');
     setAddArms(true);
-    setShare(false);
+    setShare(true);
     // only when the window opens – the screen refreshes every few seconds and must not reset the choice
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -526,7 +538,7 @@ function AddToList({
   const otherArms = chosenArms.length
     ? ([...new Set(groups.flatMap((g) => g.armIds))].filter((a) => armById[a]?.is_active && !chosenArms.includes(a) && !missingArms.includes(a)) as string[])
     : [];
-  const [share, setShare] = useState(false); // opt-in: adding arms changes who sends the whole list
+  const [share, setShare] = useState(true);
 
   async function save() {
     setBusy(true);
@@ -606,7 +618,7 @@ function AddToList({
             onChange={setShare}
             label={
               <span className="text-sm">
-                <b>חלוקת עבודה בין הזרועות:</b> בקבוצות שבחרת נמצאות גם הזרועות {otherArms.map((a) => armById[a]?.name).join(', ')}. סמן רק אם אתה רוצה שגם הן ישלחו לרשימה הזו – הן יצטרפו לזרועות השולחות שלה, ובלשונית "לצירוף" יופיעו גם הקבוצות שלהן.
+                <b>חלוקת עבודה בין הזרועות:</b> בקבוצות שבחרת נמצאות גם הזרועות {otherArms.map((a) => armById[a]?.name).join(', ')}. הן יצטרפו לזרועות השולחות של הרשימה והעבודה תתחלק ביניהן (כל קבוצה מקבלת כל נסיעה פעם אחת).
               </span>
             }
           />
