@@ -6,6 +6,7 @@ import { useAuth, ROLE_LABEL, Role } from '@/lib/auth';
 import { timeAgo } from '@/lib/format';
 import { RequireRole } from '@/components/Shell';
 import { Badge, Button, Card, PageHeader, Select, Spinner, Toggle, toast } from '@/components/ui';
+import { TeamCodes } from '@/components/TeamCodes';
 
 export default function UsersPage() {
   return (
@@ -71,6 +72,7 @@ function Users() {
           </Button>
         </Card>
       )}
+      {isSuper && <TeamCodes />}
       <div className="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
         {(Object.keys(ROLE_LABEL) as Role[]).map((r) => (
           <Card key={r} className="p-3">

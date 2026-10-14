@@ -596,4 +596,47 @@ exception when others then perform testkit.check(true, 'engine health: only the 
 select testkit.check(public.owner_engine_status() is null, 'engine health: a station does not see the engine status');
 reset role;
 
+-- ========== team members with a code ==========
+reset role;
+select id as home_id from stations where is_home \gset
+set role authenticated; select testkit.as_owner();
+select (public.owner_member_add(null, 'סדרן בדיקה', '0500000000'))->>'code' as mcode \gset
+select (public.owner_member_add('0000000a-0000-0000-0000-000000000000', 'עוזר בתחנה א', null))->>'code' as acode \gset
+select testkit.check(length(:'mcode') = 9 and length(:'acode') = 9, 'team: adding a person makes a 9-character code');
+select testkit.check((select count(*) from public.owner_members()) = 2, 'team: owner sees the people');
+reset role;
+set role anon; select testkit.as_nobody('10.0.0.31');
+select (public.member_login(:'mcode'))->>'token' as mtok \gset
+select (public.member_login(:'acode'))->>'token' as atok \gset
+select testkit.check(:'mtok' <> '' and :'atok' <> '', 'team: the code signs in');
+select testkit.check((public.member_login('WRONGCODE'))->>'error' = 'קוד שגוי', 'team: a wrong code is refused');
+select testkit.check((public.station_login(:'mcode'))->>'error' = 'קוד שגוי', 'team: a person code is not a station code');
+select testkit.as_station(:'mtok');
+select testkit.check(public.my_station() = :'home_id'::uuid, 'team: person of the home system works in the home system');
+select testkit.check(not public.is_super(), 'team: a person code never gives owner rights');
+do $$ begin perform public.owner_members(); perform testkit.check(false, 'team: a person cannot see or add people');
+exception when others then perform testkit.check(true, 'team: a person cannot see or add people'); end $$;
+select testkit.as_station(:'atok');
+select testkit.check(public.my_station() = '0000000a-0000-0000-0000-000000000000' and (select count(*) from arms) = 2, 'team: person of station A sees only station A');
+select testkit.as_station('tok-a');
+do $$ begin perform public.owner_member_add(null, 'x', null); perform testkit.check(false, 'team: a station manager cannot add people');
+exception when others then perform testkit.check(true, 'team: a station manager cannot add people'); end $$;
+do $$ declare n int; begin select count(*) into n from public.station_members; perform testkit.check(false, 'team: codes table is closed');
+exception when others then perform testkit.check(true, 'team: codes table is closed'); end $$;
+reset role;
+select id as mid from station_members where name = 'סדרן בדיקה' \gset
+set role authenticated; select testkit.as_owner();
+select public.owner_member_set_active(:'mid', false);
+set role anon; select testkit.as_station(:'mtok');
+select testkit.check(public.my_station() is null, 'team: turning a person off signs them out at once');
+select testkit.as_nobody('10.0.0.32');
+select testkit.check((public.member_login(:'mcode'))->>'error' = 'קוד שגוי', 'team: a person turned off cannot sign in');
+reset role;
+set role authenticated; select testkit.as_owner();
+select public.owner_member_set_active(:'mid', true);
+select public.owner_member_new_code(:'mid') as mcode2 \gset
+set role anon; select testkit.as_nobody('10.0.0.33');
+select testkit.check((public.member_login(:'mcode'))->>'error' = 'קוד שגוי' and (public.member_login(:'mcode2'))->>'token' is not null, 'team: a new code replaces the old one');
+reset role;
+
 select n, case when ok then 'PASS' else 'FAIL' end as result, name, coalesce(left(detail, 80), '') from testkit.results where name not like '%(update attempted)%' order by n;

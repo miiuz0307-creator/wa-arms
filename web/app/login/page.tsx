@@ -80,7 +80,9 @@ function CodeLogin() {
     if (!code.trim()) return;
     setBusy(true);
     setErr(null);
-    const { data, error } = await sb().rpc('station_login', { p_code: code });
+    // personal codes (team members) have 9 characters, station codes 8
+    const personal = code.replace(/\s/g, '').length === 9;
+    const { data, error } = await sb().rpc(personal ? 'member_login' : 'station_login', { p_code: code });
     setBusy(false);
     if (error) return setErr('לא הצלחנו להתחבר. נסה שוב.');
     if (data?.error) return setErr(data.error);
@@ -94,7 +96,7 @@ function CodeLogin() {
     <form onSubmit={submit} className="space-y-5">
       <div>
         <h2 className="text-2xl font-bold">כניסה לתחנה</h2>
-        <p className="mt-1 text-sm text-slate-500">הזן את קוד הגישה שקיבלת ממנהל המערכת.</p>
+        <p className="mt-1 text-sm text-slate-500">הזן את קוד הגישה שקיבלת ממנהל המערכת – קוד תחנה או קוד אישי.</p>
       </div>
       <Field label="קוד גישה">
         <Input
