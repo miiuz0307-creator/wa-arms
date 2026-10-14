@@ -1,0 +1,19 @@
+{
+  "name": "wa-members",
+  "version": "1.0.0",
+  "private": true,
+  "description": "ניהול חברים בקבוצות: הסרה וצירוף של מספר לקבוצות דרך זרוע ייעודית. שירות נפרד – לא נוגע ב-BotiX",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "engines": {
+    "node": "22.x"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "demo": "DEMO=1 ACCESS_CODE=1234 DATA_DIR=./.data node src/index.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "6.7.24"
+  }
+}

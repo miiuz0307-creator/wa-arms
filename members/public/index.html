@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f172a">
+<title>ניהול חברים בקבוצות</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+:root{
+  --bg:#f4f5f7;--card:#fff;--ink:#14161a;--muted:#6b7280;--line:#e5e7eb;--soft:#f0f1f4;
+  --brand:#0f172a;--red:#d92d20;--red-soft:#fdecea;--green:#0f8a4b;--green-soft:#e6f6ee;
+  --amber:#b45309;--amber-soft:#fef3e2;--accent:#2563eb;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0c0e12;--card:#161a20;--ink:#eef0f3;--muted:#9aa3af;--line:#262c35;--soft:#1d222a;
+    --brand:#eef0f3;--red:#f97066;--red-soft:#2a1715;--green:#3ccb7f;--green-soft:#11241a;
+    --amber:#f5b041;--amber-soft:#2a2112;--accent:#6ea0ff;color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0c0e12;--card:#161a20;--ink:#eef0f3;--muted:#9aa3af;--line:#262c35;--soft:#1d222a;
+  --brand:#eef0f3;--red:#f97066;--red-soft:#2a1715;--green:#3ccb7f;--green-soft:#11241a;
+  --amber:#f5b041;--amber-soft:#2a2112;--accent:#6ea0ff;color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:Assistant,system-ui,sans-serif;font-size:16px;-webkit-text-size-adjust:100%}
+button,input{font:inherit;color:inherit}
+.wrap{max-width:720px;margin:0 auto;padding-block:12px 120px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+header{display:flex;align-items:center;gap:10px;padding:14px 0 10px}
+header h1{font-size:20px;font-weight:800;margin:0;flex:1;letter-spacing:-.2px}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;font-size:13px;font-weight:600;background:var(--soft);white-space:nowrap}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+.on .dot{background:var(--green)} .warn .dot{background:var(--amber)} .off .dot{background:var(--red)}
+.icon-btn{border:1px solid var(--line);background:var(--card);border-radius:10px;width:38px;height:38px;display:grid;place-items:center;cursor:pointer}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin:12px 0}
+.row{display:flex;gap:8px;align-items:center}
+.num{flex:1;min-width:0;height:50px;border:1.5px solid var(--line);border-radius:12px;padding:0 14px;font-size:20px;font-weight:700;background:var(--card);direction:ltr;text-align:right;letter-spacing:.5px}
+.num:focus,.search:focus{outline:none;border-color:var(--accent)}
+.btn{height:50px;padding:0 18px;border-radius:12px;border:0;font-weight:700;cursor:pointer;background:var(--brand);color:var(--bg)}
+.btn:disabled{opacity:.45;cursor:default}
+.btn.red{background:var(--red);color:#fff}.btn.green{background:var(--green);color:#fff}
+.btn.ghost{background:var(--soft);color:var(--ink)}
+.small{font-size:13px;color:var(--muted)}
+.summary{display:flex;gap:8px;margin:4px 0 0}
+.tabs{display:grid;grid-template-columns:1fr 1fr;gap:6px;background:var(--soft);padding:4px;border-radius:12px;margin:14px 0 10px}
+.tab{border:0;background:transparent;border-radius:9px;padding:10px 6px;font-weight:700;cursor:pointer;color:var(--muted)}
+.tab.active{background:var(--card);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.tab b{font-variant-numeric:tabular-nums}
+.tab.t-remove.active{color:var(--red)} .tab.t-add.active{color:var(--green)}
+.search{width:100%;height:44px;border:1.5px solid var(--line);border-radius:10px;padding:0 12px;background:var(--card)}
+.listhead{display:flex;align-items:center;justify-content:space-between;margin:10px 2px 6px;font-size:14px}
+.listhead label{display:flex;align-items:center;gap:8px;font-weight:600;cursor:pointer}
+.list{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--card)}
+.item{display:flex;align-items:center;gap:12px;padding:12px 14px;border-top:1px solid var(--line);cursor:pointer}
+.item:first-child{border-top:0}
+.item.dis{cursor:default;opacity:.55}
+.item .name{flex:1;min-width:0;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.item .meta{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.tag{font-size:11px;font-weight:700;padding:2px 7px;border-radius:6px;background:var(--amber-soft);color:var(--amber);white-space:nowrap}
+input[type=checkbox]{width:22px;height:22px;accent-color:var(--accent);flex:none;margin:0}
+.empty{padding:28px 14px;text-align:center;color:var(--muted)}
+.bar{position:fixed;inset:auto 0 0 0;background:var(--card);border-top:1px solid var(--line);padding-block:12px calc(12px + env(safe-area-inset-bottom,0px));padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.bar .inner{max-width:720px;margin:0 auto;display:flex;gap:10px;align-items:center}
+.bar .btn{flex:1}
+.job{border-radius:12px;padding:14px;background:var(--soft)}
+.prog{height:8px;border-radius:99px;background:var(--line);overflow:hidden;margin:10px 0}
+.prog i{display:block;height:100%;background:var(--accent);transition:width .3s}
+.res{display:flex;gap:8px;align-items:flex-start;padding:7px 0;border-top:1px solid var(--line);font-size:14px}
+.res:first-of-type{border-top:0}
+.res .s{flex:none;width:20px;text-align:center}
+.res .why{color:var(--muted);font-size:12px}
+.qrbox{display:grid;place-items:center;padding:12px;background:#fff;border-radius:12px;margin:12px auto;width:fit-content}
+.hist .h{padding:10px 0;border-top:1px solid var(--line);font-size:14px}
+.hist .h:first-child{border-top:0}
+dialog{border:0;border-radius:16px;padding:0;max-width:420px;width:calc(100% - 32px);background:var(--card);color:var(--ink)}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+dialog .in{padding:20px}
+dialog h3{margin:0 0 8px;font-size:18px}
+dialog .acts{display:flex;gap:8px;margin-top:16px}
+dialog .acts .btn{flex:1;height:46px}
+.field{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:10px 0}
+.field input{width:80px;height:40px;border:1.5px solid var(--line);border-radius:10px;text-align:center;background:var(--card)}
+.err{color:var(--red);font-size:14px;margin-top:8px;min-height:1em}
+.hidden{display:none!important}
+.login{max-width:360px;margin:12vh auto 0;text-align:center}
+.login .num{text-align:center;letter-spacing:6px;width:100%;margin:16px 0 10px}
+.login .btn{width:100%}
+.demo{background:var(--amber-soft);color:var(--amber);font-weight:700;font-size:13px;text-align:center;padding:6px;border-radius:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- login -->
+  <section id="login" class="login hidden">
+    <h1 style="font-size:24px;margin:0">ניהול חברים בקבוצות</h1>
+    <p class="small">הכנס קוד גישה</p>
+    <input id="code" class="num" type="password" inputmode="numeric" autocomplete="current-password">
+    <button id="loginBtn" class="btn">כניסה</button>
+    <div id="loginErr" class="err"></div>
+  </section>
+
+  <section id="app" class="hidden">
+    <div id="demoNote" class="demo hidden">גרסת ניסיון – קבוצות לדוגמה, בלי וואטסאפ אמיתי</div>
+    <header>
+      <h1>ניהול חברים בקבוצות</h1>
+      <span id="armPill" class="pill"><span class="dot"></span><span id="armText">…</span></span>
+      <button class="icon-btn" id="openSettings" aria-label="הגדרות">⚙︎</button>
+    </header>
+
+    <!-- arm not connected -->
+    <div id="connectCard" class="card hidden">
+      <b id="connectTitle">מחבר את הזרוע…</b>
+      <p class="small" id="connectText">בוואטסאפ של הזרוע: הגדרות ← מכשירים מקושרים ← קישור מכשיר, וסרוק את הקוד.</p>
+      <div id="qr" class="qrbox hidden"></div>
+    </div>
+
+    <!-- lookup -->
+    <div class="card" id="lookupCard">
+      <div class="row">
+        <input id="number" class="num" type="tel" inputmode="tel" placeholder="050-0000000" autocomplete="off">
+        <button id="lookupBtn" class="btn">בדוק</button>
+      </div>
+      <div id="lookupErr" class="err"></div>
+      <div id="armInfo" class="small"></div>
+    </div>
+
+    <!-- results -->
+    <div id="results" class="hidden">
+      <div class="small" id="resTitle"></div>
+      <div class="tabs">
+        <button class="tab t-remove active" data-tab="remove">להסרה · <b id="cntIn">0</b></button>
+        <button class="tab t-add" data-tab="add">לצירוף · <b id="cntOut">0</b></button>
+      </div>
+      <input id="search" class="search" type="search" placeholder="חיפוש קבוצה…">
+      <div class="listhead">
+        <label><input type="checkbox" id="selAll"> בחר הכל<span id="selAllNote" class="small"></span></label>
+        <span class="small" id="selCount"></span>
+      </div>
+      <div id="list" class="list"></div>
+    </div>
+
+    <!-- running / last job -->
+    <div id="jobCard" class="card hidden"></div>
+
+    <!-- history -->
+    <div class="card">
+      <b>פעולות אחרונות</b>
+      <div id="hist" class="hist"></div>
+    </div>
+  </section>
+</div>
+
+<div id="bar" class="bar hidden">
+  <div class="inner">
+    <button id="actBtn" class="btn red">הסר</button>
+  </div>
+</div>
+
+<dialog id="confirm"><div class="in">
+  <h3 id="cfTitle"></h3>
+  <div id="cfText" class="small"></div>
+  <div class="acts"><button class="btn ghost" value="no" id="cfNo">ביטול</button><button class="btn red" id="cfYes">אישור</button></div>
+</div></dialog>
+
+<dialog id="settings"><div class="in">
+  <h3>הגדרות</h3>
+  <p class="small">השהיה בין פעולה לפעולה (שניות). השהיה ארוכה יותר מורידה את הסיכון שהמספר ייחסם.</p>
+  <div class="field"><span>מינימום</span><input id="dMin" type="number" min="1" max="120"></div>
+  <div class="field"><span>מקסימום</span><input id="dMax" type="number" min="1" max="300"></div>
+  <div class="field"><span>רשימת הקבוצות</span><button class="btn ghost" id="refreshBtn" style="height:40px">רענן עכשיו</button></div>
+  <div class="field"><span>החלפת מספר הזרוע</span><button class="btn ghost" id="armLogout" style="height:40px;color:var(--red)">נתק זרוע</button></div>
+  <div class="err" id="setErr"></div>
+  <div class="acts"><button class="btn ghost" id="setClose">סגור</button><button class="btn" id="setSave">שמור</button></div>
+</div></dialog>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const api = async (path, body) => {
+  const r = await fetch('/api' + path, body === undefined ? { credentials: 'same-origin' } : {
+    method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 401 && path !== '/login') { showLogin(); throw new Error(j.error || 'צריך להתחבר'); }
+  if (!r.ok) throw new Error(j.error || 'שגיאה');
+  return j;
+};
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const pretty = (d) => { d = String(d || ''); return d.startsWith('972') && d.length === 12 ? '0' + d.slice(3, 5) + '-' + d.slice(5) : d ? '+' + d : ''; };
+const timeOf = (iso) => iso ? new Date(iso).toLocaleString('he-IL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+
+let S = { status: null, result: null, tab: 'remove', sel: { remove: new Set(), add: new Set() }, q: '', jobs: [] };
+
+function showLogin() { $('login').classList.remove('hidden'); $('app').classList.add('hidden'); $('bar').classList.add('hidden'); }
+$('loginBtn').onclick = async () => {
+  $('loginErr').textContent = '';
+  try { await api('/login', { code: $('code').value.trim() }); $('login').classList.add('hidden'); boot(); }
+  catch (e) { $('loginErr').textContent = e.message; }
+};
+$('code').onkeydown = (e) => { if (e.key === 'Enter') $('loginBtn').click(); };
+
+// ---- arm status ----
+let qrShown = null;
+function renderStatus() {
+  const s = S.status; if (!s) return;
+  $('demoNote').classList.toggle('hidden', !s.demo);
+  const pill = $('armPill');
+  pill.className = 'pill ' + (s.state === 'online' ? 'on' : s.state === 'qr' || s.state === 'connecting' ? 'warn' : 'off');
+  $('armText').textContent = s.state === 'online' ? pretty(s.phone) : s.state === 'qr' ? 'ממתין לסריקה' : s.state === 'connecting' ? 'מתחבר…' : 'מנותק';
+  const online = s.state === 'online';
+  $('connectCard').classList.toggle('hidden', online);
+  $('lookupBtn').disabled = !online;
+  if (!online) {
+    $('connectTitle').textContent = s.state === 'qr' ? 'סרוק כדי לחבר את הזרוע' : 'מחבר את הזרוע…';
+    $('qr').classList.toggle('hidden', !s.qr);
+    if (s.qr && s.qr !== qrShown && window.QRCode) {
+      $('qr').innerHTML = ''; new QRCode($('qr'), { text: s.qr, width: 240, height: 240, correctLevel: QRCode.CorrectLevel.L }); qrShown = s.qr;
+    }
+  }
+  $('armInfo').textContent = online ? `הזרוע ב-${s.groups} קבוצות, מנהלת ב-${s.adminOf}` + (s.groupsAt ? ` · עודכן ${timeOf(s.groupsAt)}` : '') : '';
+}
+
+// ---- lookup ----
+$('lookupBtn').onclick = async () => {
+  $('lookupErr').textContent = ''; $('lookupBtn').disabled = true; $('lookupBtn').textContent = '…';
+  try {
+    S.result = await api('/lookup', { number: $('number').value });
+    S.sel.remove.clear(); S.sel.add.clear(); S.q = ''; $('search').value = '';
+    S.tab = S.result.inGroups.length || !S.result.notIn.length ? 'remove' : 'add';
+    renderResults();
+  } catch (e) { $('lookupErr').textContent = e.message; }
+  finally { $('lookupBtn').disabled = S.status?.state !== 'online'; $('lookupBtn').textContent = 'בדוק'; }
+};
+$('number').onkeydown = (e) => { if (e.key === 'Enter') $('lookupBtn').click(); };
+
+function rows() {
+  const r = S.result; if (!r) return [];
+  const all = S.tab === 'remove' ? r.inGroups : r.notIn;
+  const q = S.q.trim().toLowerCase();
+  return q ? all.filter((g) => g.name.toLowerCase().includes(q)) : all;
+}
+
+function renderResults() {
+  const r = S.result;
+  $('results').classList.toggle('hidden', !r);
+  if (!r) { $('bar').classList.add('hidden'); return; }
+  $('resTitle').innerHTML = `<b>${esc(pretty(r.number))}</b> נמצא ב-<b>${r.inGroups.length}</b> קבוצות` + (r.onWhatsApp === false ? ' · <span style="color:var(--red)">המספר לא רשום בוואטסאפ</span>' : '');
+  $('cntIn').textContent = r.inGroups.length; $('cntOut').textContent = r.notIn.length;
+  document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === S.tab));
+  const sel = S.sel[S.tab];
+  const list = rows();
+  const can = list.filter((g) => g.iAmAdmin);
+  $('list').innerHTML = list.length ? list.map((g) => `
+    <label class="item ${g.iAmAdmin ? '' : 'dis'}">
+      <input type="checkbox" data-id="${esc(g.id)}" ${sel.has(g.id) ? 'checked' : ''} ${g.iAmAdmin ? '' : 'disabled'}>
+      <span class="name">${esc(g.name)}</span>
+      ${g.memberAdmin ? '<span class="tag">מנהל בקבוצה</span>' : ''}
+      ${g.iAmAdmin ? '' : '<span class="tag">הזרוע לא מנהלת</span>'}
+      <span class="meta">${g.size}</span>
+    </label>`).join('') : `<div class="empty">${S.q ? 'אין קבוצה בשם הזה' : S.tab === 'remove' ? 'המספר לא נמצא באף קבוצה של הזרוע' : 'המספר כבר בכל הקבוצות'}</div>`;
+  const allSel = can.length > 0 && can.every((g) => sel.has(g.id));
+  $('selAll').checked = allSel; $('selAll').disabled = !can.length;
+  $('selAllNote').textContent = S.q ? ' (מהתוצאות)' : '';
+  $('selCount').textContent = sel.size ? `נבחרו ${sel.size}` : '';
+  const btn = $('actBtn');
+  $('bar').classList.toggle('hidden', !sel.size);
+  btn.className = 'btn ' + (S.tab === 'remove' ? 'red' : 'green');
+  btn.textContent = S.tab === 'remove' ? `הסר מ-${sel.size} קבוצות` : `צרף ל-${sel.size} קבוצות`;
+  btn.disabled = !!S.status?.running;
+}
+
+document.querySelectorAll('.tab').forEach((t) => t.onclick = () => { S.tab = t.dataset.tab; renderResults(); });
+$('search').oninput = (e) => { S.q = e.target.value; renderResults(); };
+$('list').onchange = (e) => {
+  const id = e.target.dataset?.id; if (!id) return;
+  const sel = S.sel[S.tab]; e.target.checked ? sel.add(id) : sel.delete(id); renderResults();
+};
+$('selAll').onchange = (e) => {
+  const sel = S.sel[S.tab];
+  for (const g of rows()) if (g.iAmAdmin) e.target.checked ? sel.add(g.id) : sel.delete(g.id);
+  renderResults();
+};
+
+// ---- run a job ----
+$('actBtn').onclick = () => {
+  const action = S.tab; const ids = S.sel[action];
+  const src = action === 'remove' ? S.result.inGroups : S.result.notIn;
+  const groups = src.filter((g) => ids.has(g.id)).map((g) => ({ id: g.id, name: g.name }));
+  $('cfTitle').textContent = action === 'remove' ? `להסיר את ${pretty(S.result.number)} מ-${groups.length} קבוצות?` : `לצרף את ${pretty(S.result.number)} ל-${groups.length} קבוצות?`;
+  const est = Math.round(groups.length * ((S.status.settings.delayMin + S.status.settings.delayMax) / 2));
+  $('cfText').innerHTML = groups.slice(0, 8).map((g) => '• ' + esc(g.name)).join('<br>') + (groups.length > 8 ? `<br>ועוד ${groups.length - 8}…` : '') + `<br><br>זמן משוער: כ-${est < 60 ? est + ' שניות' : Math.ceil(est / 60) + ' דקות'}`;
+  $('cfYes').className = 'btn ' + (action === 'remove' ? 'red' : 'green');
+  $('cfYes').onclick = async () => {
+    $('confirm').close();
+    try {
+      await api('/jobs', { action, number: S.result.number, groups });
+      ids.clear(); renderResults(); await tick();
+    } catch (e) { alert(e.message); }
+  };
+  $('confirm').showModal();
+};
+$('cfNo').onclick = () => $('confirm').close();
+
+const ICON = { ok: '✅', fail: '❌', pending: '⏳', running: '🔄', skipped: '⏹' };
+function renderJobs() {
+  const live = S.jobs.find((j) => !j.finishedAt) || (S.jobs[0] && Date.now() - new Date(S.jobs[0].finishedAt) < 10 * 60_000 ? S.jobs[0] : null);
+  const card = $('jobCard');
+  card.classList.toggle('hidden', !live);
+  if (live) {
+    const done = live.items.filter((i) => i.status !== 'pending' && i.status !== 'running').length;
+    const ok = live.items.filter((i) => i.status === 'ok').length;
+    const fail = live.items.filter((i) => i.status === 'fail').length;
+    card.innerHTML = `
+      <div class="row" style="justify-content:space-between">
+        <b>${live.action === 'remove' ? 'הסרת' : 'צירוף'} ${esc(pretty(live.number))}</b>
+        ${live.finishedAt ? `<span class="small">${live.stopped ? 'נעצר' : 'הסתיים'}</span>` : `<button class="btn ghost" style="height:36px" id="stopJob">עצור</button>`}
+      </div>
+      <div class="prog"><i style="width:${(done / live.items.length) * 100}%"></i></div>
+      <div class="small">${done}/${live.items.length} · הצליחו ${ok}${fail ? ` · נכשלו <b style="color:var(--red)">${fail}</b>` : ''}</div>
+      <div style="margin-top:8px">${live.items.map((i) => `<div class="res"><span class="s">${ICON[i.status] || ''}</span><div><div>${esc(i.name)}</div>${i.message && i.status !== 'ok' ? `<div class="why">${esc(i.message)}</div>` : ''}</div></div>`).join('')}</div>`;
+    const stop = $('stopJob'); if (stop) stop.onclick = async () => { await api(`/jobs/${live.id}/stop`, {}); tick(); };
+  }
+  $('hist').innerHTML = S.jobs.length ? S.jobs.slice(0, 15).map((j) => {
+    const ok = j.items.filter((i) => i.status === 'ok').length;
+    return `<div class="h">${j.action === 'remove' ? '➖ הוסר' : '➕ צורף'} <b>${esc(pretty(j.number))}</b> · ${ok}/${j.items.length} קבוצות <span class="small">· ${timeOf(j.createdAt)}${j.finishedAt ? '' : ' · רץ עכשיו'}</span></div>`;
+  }).join('') : '<div class="empty">עדיין לא בוצעו פעולות</div>';
+}
+
+let wasRunning = false;
+async function tick() {
+  try {
+    const [st, jb] = await Promise.all([api('/status'), api('/jobs')]);
+    S.status = st; S.jobs = jb.jobs;
+    renderStatus(); renderJobs();
+    if (wasRunning && !st.running && S.result) { // job finished: refresh the tables
+      S.result = await api('/lookup', { number: S.result.number }).catch(() => S.result);
+    }
+    wasRunning = st.running;
+    renderResults();
+  } catch {}
+}
+
+// ---- settings ----
+$('openSettings').onclick = () => { $('dMin').value = S.status?.settings.delayMin; $('dMax').value = S.status?.settings.delayMax; $('setErr').textContent = ''; $('settings').showModal(); };
+$('setClose').onclick = () => $('settings').close();
+$('setSave').onclick = async () => { try { await api('/settings', { delayMin: +$('dMin').value, delayMax: +$('dMax').value }); $('settings').close(); tick(); } catch (e) { $('setErr').textContent = e.message; } };
+$('refreshBtn').onclick = async () => { $('refreshBtn').textContent = '…'; try { await api('/refresh', {}); await tick(); } catch (e) { $('setErr').textContent = e.message; } $('refreshBtn').textContent = 'רענן עכשיו'; };
+$('armLogout').onclick = async () => { if (!confirm('לנתק את הזרוע? אחרי זה תצטרך לסרוק QR מחדש.')) return; await api('/arm/logout', {}); $('settings').close(); tick(); };
+
+let timer = null;
+async function boot() {
+  try { await api('/status'); } catch { return; }
+  $('app').classList.remove('hidden');
+  await tick();
+  clearInterval(timer);
+  timer = setInterval(tick, 2500);
+}
+boot();
+</script>
+</body>
+</html>
