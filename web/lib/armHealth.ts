@@ -34,6 +34,8 @@ export type ArmExtras = {
   failedRecent?: number;
   /** a QR code is waiting to be scanned right now */
   hasQr?: boolean;
+  /** a pairing code (link with a code instead of a QR) is shown */
+  pairing?: boolean;
 };
 
 const RECONNECT = "ודא שהטלפון מחובר לאינטרנט ושוואטסאפ פתוח בו, ולחץ 'חיבור מחדש'.";
@@ -110,7 +112,9 @@ export function armHealth(a: ArmLike, x: ArmExtras = {}): ArmHealth {
   }
 
   if (st === 'qr' || (st === 'pending' && !a.phone && !raw))
-    return mk('action', 'דורשת סריקת QR', x.hasQr ? 'קוד QR מוכן לסריקה.' : 'הזרוע ממתינה לקישור לטלפון.', SCAN);
+    return x.pairing
+      ? mk('action', 'ממתינה לקוד חיבור', 'קוד החיבור מוכן.', 'בטלפון: WhatsApp ← הגדרות ← מכשירים מקושרים ← קישור מכשיר ← "קישור באמצעות מספר טלפון", והקלד את הקוד שמופיע כאן.')
+      : mk('action', 'דורשת סריקת QR', x.hasQr ? 'קוד QR מוכן לסריקה.' : 'הזרוע ממתינה לקישור לטלפון.', SCAN);
 
   if (st === 'pending' && !raw)
     return mk('action', 'ממתינה לחיבור', 'הזרוע אמורה להתחבר תוך דקה. אם זה לא קורה – צריך לקשר אותה מחדש.', SCAN);

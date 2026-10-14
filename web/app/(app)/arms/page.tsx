@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Plus, QrCode, Power, PlugZap, RefreshCw, Trash2, Pencil, Smartphone, Loader2, Flame, ChevronDown, Gauge } from 'lucide-react';
+import { Plus, QrCode, KeyRound, Power, PlugZap, RefreshCw, Trash2, Pencil, Smartphone, Loader2, Flame, ChevronDown, Gauge } from 'lucide-react';
 import { sb, logAct } from '@/lib/supabase';
 import { useRealtime } from '@/lib/hooks';
 import { useAuth, myUid } from '@/lib/auth';
@@ -78,6 +78,17 @@ function Arms() {
   }, [load, loadFailed]);
   useRealtime(['arms', 'arm_qr', 'groups'], load);
 
+  const [pairFor, setPairFor] = useState<any>(null);
+  const [pairPhone, setPairPhone] = useState('');
+  async function sendPair() {
+    const digits = pairPhone.replace(/\D/g, '');
+    if (!/^0?5\d{8}$/.test(digits) && !/^9725\d{8}$/.test(digits)) return toast('מספר טלפון לא תקין – לדוגמה 050-1234567', 'error');
+    const intl = digits.startsWith('972') ? digits : '972' + digits.replace(/^0/, '');
+    await command(pairFor, `pair:${intl}`, 'מבקש קוד חיבור…');
+    setPairFor(null);
+    setPairPhone('');
+  }
+
   async function command(arm: any, command: string, label: string) {
     const { error } = await sb().from('arm_commands').insert({ arm_id: arm.id, command, created_by: myUid(profile) });
     if (error) return toast(error.message, 'error');
@@ -149,7 +160,7 @@ function Arms() {
       </>
     );
 
-  const healths = arms.map((a) => armHealth(a, { failedRecent: failed[a.id], hasQr: !!qr[a.id] }));
+  const healths = arms.map((a) => armHealth(a, { failedRecent: failed[a.id], hasQr: !!qr[a.id], pairing: !!qr[a.id]?.startsWith('PAIR:') }));
   const okCount = healths.filter((h) => h.level === 'ok').length;
 
   return (
@@ -194,6 +205,10 @@ function Arms() {
               qr={qr[a.id]}
               groups={groups[a.id] || 0}
               onCommand={(c, l) => command(a, c, l)}
+              onPair={() => {
+                setPairPhone(a.phone || '');
+                setPairFor(a);
+              }}
               onActive={(v) => setActive(a, v)}
               onEdit={() => setEditing(a)}
               onRemove={() => remove(a)}
@@ -201,6 +216,31 @@ function Arms() {
           ))}
         </div>
       )}
+
+      <Modal
+        open={!!pairFor}
+        onClose={() => setPairFor(null)}
+        title={`חיבור עם קוד – ${pairFor?.name || ''}`}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setPairFor(null)}>
+              ביטול
+            </Button>
+            <Button onClick={sendPair}>
+              <KeyRound className="h-4 w-4" /> קבלת קוד
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <Field label="מספר הטלפון של הוואטסאפ שמחברים" hint="המספר של הטלפון שעליו תקליד את הקוד">
+            <Input dir="ltr" inputMode="tel" placeholder="050-1234567" value={pairPhone} onChange={(e) => setPairPhone(e.target.value)} autoFocus />
+          </Field>
+          <p className="text-sm leading-relaxed text-slate-600">
+            תוך כמה שניות יופיע כאן בכרטיס של הזרוע קוד של 8 תווים. אם הזרוע כבר מחוברת למספר אחר, החיבור הקודם יוחלף.
+          </p>
+        </div>
+      </Modal>
 
       <AddArm open={adding} onClose={() => setAdding(false)} next={arms.length + 1} />
       <RequestArms
@@ -224,6 +264,7 @@ function ArmCard({
   qr,
   groups,
   onCommand,
+  onPair,
   onActive,
   onEdit,
   onRemove,
@@ -234,6 +275,7 @@ function ArmCard({
   qr?: string;
   groups: number;
   onCommand: (command: string, label: string) => void;
+  onPair: () => void;
   onActive: (v: boolean) => void;
   onEdit: () => void;
   onRemove: () => void;
@@ -257,17 +299,29 @@ function ArmCard({
     );
   } else if (needsScan && !qr) {
     primary = (
-      <Button onClick={() => onCommand('reset', 'מייצר QR חדש…')}>
-        <QrCode className="h-4 w-4" />
-        QR חדש
-      </Button>
+      <span className="flex flex-wrap gap-2">
+        <Button onClick={() => onCommand('reset', 'מייצר QR חדש…')}>
+          <QrCode className="h-4 w-4" />
+          QR חדש
+        </Button>
+        <Button variant="secondary" onClick={onPair}>
+          <KeyRound className="h-4 w-4" />
+          חיבור עם קוד
+        </Button>
+      </span>
     );
   } else if (h.level === 'bad') {
     primary = rescan ? (
-      <Button onClick={() => onCommand('reset', 'מייצר QR חדש…')}>
-        <QrCode className="h-4 w-4" />
-        QR חדש
-      </Button>
+      <span className="flex flex-wrap gap-2">
+        <Button onClick={() => onCommand('reset', 'מייצר QR חדש…')}>
+          <QrCode className="h-4 w-4" />
+          QR חדש
+        </Button>
+        <Button variant="secondary" onClick={onPair}>
+          <KeyRound className="h-4 w-4" />
+          חיבור עם קוד
+        </Button>
+      </span>
     ) : (
       <Button onClick={() => onCommand('connect', 'מתחבר מחדש…')}>
         <PlugZap className="h-4 w-4" />
@@ -330,7 +384,20 @@ function ArmCard({
         )}
       </div>
 
-      {a.status === 'qr' && qr && (
+      {a.status === 'qr' && qr?.startsWith('PAIR:') && (
+        <div className="mx-5 mb-4 flex flex-col items-center rounded-2xl bg-slate-50 p-4">
+          <div className="text-xs text-slate-500">קוד החיבור</div>
+          <div dir="ltr" className="mt-1 select-all rounded-xl bg-white px-5 py-3 font-mono text-3xl font-bold tracking-[0.2em] text-slate-900 shadow-sm">
+            {qr.slice(5)}
+          </div>
+          <p className="mt-3 text-center text-xs leading-relaxed text-slate-600">
+            בטלפון: WhatsApp ← הגדרות ← מכשירים מקושרים ← קישור מכשיר ← &quot;קישור באמצעות מספר טלפון&quot;, והקלד את הקוד.
+            <br />
+            הקוד תקף כמה דקות.
+          </p>
+        </div>
+      )}
+      {a.status === 'qr' && qr && !qr.startsWith('PAIR:') && (
         <div className="mx-5 mb-4 flex flex-col items-center rounded-2xl bg-slate-50 p-4">
           <div className="rounded-xl bg-white p-3 shadow-sm">
             <QRCodeSVG value={qr} size={200} />
@@ -340,6 +407,9 @@ function ArmCard({
             <br />
             הקוד מתחלף אוטומטית.
           </p>
+          <button type="button" onClick={onPair} className="mt-2 flex items-center gap-1.5 text-sm font-medium text-indigo-600 hover:underline">
+            <KeyRound className="h-4 w-4" /> אין אפשרות לסרוק? חיבור עם קוד במקום
+          </button>
         </div>
       )}
       {a.status === 'qr' && !qr && (
@@ -382,6 +452,10 @@ function ArmCard({
             <Button size="sm" variant="secondary" onClick={() => onCommand('reset', 'מייצר QR חדש…')}>
               <QrCode className="h-4 w-4" />
               QR חדש
+            </Button>
+            <Button size="sm" variant="secondary" onClick={onPair}>
+              <KeyRound className="h-4 w-4" />
+              חיבור עם קוד
             </Button>
             {a.status === 'online' && (
               <Button size="sm" variant="secondary" onClick={() => onCommand('refresh_groups', 'מרענן קבוצות…')}>

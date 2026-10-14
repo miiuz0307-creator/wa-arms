@@ -555,11 +555,33 @@ class Arm {
 
     if (u.qr) {
       this.lastQrAt = Date.now();
-      await db.from('arm_qr').upsert({ arm_id: this.id, qr: u.qr, updated_at: new Date().toISOString() });
-      await this.update({ status: 'qr', last_error: null });
+      if (this.pairPhone) {
+        // link with a code instead of a QR: ask once per connection, keep showing the code (QR refreshes are ignored)
+        if (!this.pairCodeAt) {
+          this.pairCodeAt = Date.now();
+          try {
+            const code = await sock.requestPairingCode(this.pairPhone);
+            const pretty = String(code || '').replace(/[^0-9A-Za-z]/g, '').toUpperCase().replace(/^(.{4})(.{4})$/, '$1-$2');
+            await db.from('arm_qr').upsert({ arm_id: this.id, qr: `PAIR:${pretty}`, updated_at: new Date().toISOString() });
+            await this.update({ status: 'qr', last_error: null });
+            log.info({ arm: this.name }, 'pairing code issued');
+          } catch (e) {
+            log.warn({ arm: this.name, err: e.message }, 'pairing code request failed');
+            this.pairPhone = null;
+            await this.update({ status: 'pending', last_error: 'לא התקבל קוד חיבור מוואטסאפ. בדוק את מספר הטלפון ונסה שוב, או חבר עם QR.' });
+          }
+        }
+      } else {
+        await db.from('arm_qr').upsert({ arm_id: this.id, qr: u.qr, updated_at: new Date().toISOString() });
+        await this.update({ status: 'qr', last_error: null });
+      }
     }
 
-    if (u.connection === 'open') await this.markOnline(sock, 'open');
+    if (u.connection === 'open') {
+      this.pairPhone = null;
+      this.pairCodeAt = null;
+      await this.markOnline(sock, 'open');
+    }
 
     if (u.connection === 'close') {
       this.online = false;
@@ -585,7 +607,10 @@ class Arm {
       if (!this.creds?.me) {
         // QR expired without being scanned – wait for the user to ask for a new one
         await db.from('arm_qr').delete().eq('arm_id', this.id);
-        await this.update({ status: 'pending', last_error: 'פג תוקף ה-QR. לחץ "QR חדש".' });
+        const byCode = !!this.pairPhone;
+        this.pairPhone = null;
+        this.pairCodeAt = null;
+        await this.update({ status: 'pending', last_error: byCode ? 'פג תוקף קוד החיבור. לחץ "חיבור עם קוד" כדי לקבל קוד חדש.' : 'פג תוקף ה-QR. לחץ "QR חדש".' });
         this.stopped = true;
         return;
       }
@@ -770,6 +795,16 @@ class Arm {
   }
 
   // log out from WhatsApp, wipe session, and start fresh (new QR)
+  // link this arm to a phone with an 8-character code typed in WhatsApp (instead of scanning a QR).
+  // Starts a fresh login exactly like "QR חדש" (an existing link of this arm is replaced).
+  async pairWithCode(phone) {
+    const digits = String(phone || '').replace(/\D/g, '').replace(/^00/, '').replace(/^0/, '972');
+    if (!/^972\d{8,9}$/.test(digits) && !/^\d{10,15}$/.test(digits)) throw new Error('מספר טלפון לא תקין');
+    this.pairPhone = digits;
+    this.pairCodeAt = null;
+    await this.reset();
+  }
+
   async reset() {
     const s = this.sock;
     this.stopped = true;

@@ -52,6 +52,11 @@ function tick() {
     changed = true;
     if (!arm) continue;
     if (cmd.command === 'connect' || cmd.command === 'reset') showQr(arm, now + 6000 + rand().int(0, 2000));
+    else if (String(cmd.command).startsWith('pair:')) {
+      const abc = 'ABCDEFGHJKLMNPQRSTVWXYZ23456789';
+      const code = Array.from({ length: 8 }, () => abc[rand().int(0, abc.length - 1)]).join('');
+      showQr(arm, now + 20000, `${code.slice(0, 4)}-${code.slice(4)}`);
+    }
     else if (cmd.command === 'refresh_groups') table('groups').filter((g) => g.arm_id === arm.id).forEach((g) => (g.updated_at = iso()));
     else if (cmd.command === 'disconnect') Object.assign(arm, { status: 'offline', last_error: null });
   }
@@ -97,9 +102,9 @@ function tick() {
   if (changed) touch();
 }
 
-function showQr(arm: Row, onlineAt: number) {
+function showQr(arm: Row, onlineAt: number, pairCode?: string) {
   Object.assign(arm, { status: 'qr', last_error: null });
-  const qr = `2@${newUuid().replace(/-/g, '')},${btoa(String(Date.now())).replace(/=/g, '')},demo-botix`;
+  const qr = pairCode ? `PAIR:${pairCode}` : `2@${newUuid().replace(/-/g, '')},${btoa(String(Date.now())).replace(/=/g, '')},demo-botix`;
   const cur = table('arm_qr').find((q) => q.arm_id === arm.id);
   if (cur) Object.assign(cur, { qr, updated_at: iso(), demo_online_at: onlineAt });
   else table('arm_qr').push({ arm_id: arm.id, qr, updated_at: iso(), station_id: arm.station_id, demo_online_at: onlineAt });
