@@ -153,6 +153,23 @@ select testkit.check((select count(*) from campaign_targets where campaign_id = 
   'late rides: a slow arm cannot send a ride older than 15 minutes (what was sent stays sent)');
 select testkit.check((select status from campaign_targets where campaign_id = '00000000-0000-0000-0000-0000000000d4') = 'pending', 'late rides: manual campaigns are not cut at 15 minutes');
 
+-- a ride does not wait for an arm that is not linked (pending) or offline for minutes
+insert into campaigns (id, kind, status, message_text, final_text, station_id, created_at) values ('00000000-0000-0000-0000-0000000000d5', 'help', 'running', 'נסיעה', 'נסיעה', '0000000c-0000-0000-0000-000000000000', now() - interval '1 minute');
+insert into campaign_arms (campaign_id, arm_id, station_id) values ('00000000-0000-0000-0000-0000000000d5', '00000000-0000-0000-0001-00000000000c', '0000000c-0000-0000-0000-000000000000'), ('00000000-0000-0000-0000-0000000000d5', '00000000-0000-0000-0002-00000000000c', '0000000c-0000-0000-0000-000000000000');
+insert into campaign_targets (campaign_id, wa_group_id, station_id) values ('00000000-0000-0000-0000-0000000000d5', '0000000c-0000-0000-0000-000000000000-7@g.us', '0000000c-0000-0000-0000-000000000000');
+update arms set status = 'pending' where id = '00000000-0000-0000-0001-00000000000c';
+update arms set status = 'offline', last_seen_at = now() - interval '10 minutes' where id = '00000000-0000-0000-0002-00000000000c';
+select public.finalize_campaigns();
+select testkit.check((select status from campaign_targets where campaign_id = '00000000-0000-0000-0000-0000000000d5') = 'failed'
+  and (select status from campaigns where id = '00000000-0000-0000-0000-0000000000d5') = 'completed', 'finish: a ride does not wait for an unlinked arm / one offline for minutes');
+update campaigns set status = 'running', finished_at = null where id = '00000000-0000-0000-0000-0000000000d5';
+update campaign_targets set status = 'pending', error = null where campaign_id = '00000000-0000-0000-0000-0000000000d5';
+update arms set last_seen_at = now() - interval '30 seconds' where id = '00000000-0000-0000-0002-00000000000c';
+select public.finalize_campaigns();
+select testkit.check((select status from campaign_targets where campaign_id = '00000000-0000-0000-0000-0000000000d5') = 'pending', 'finish: an arm that dropped a moment ago is still waited for');
+update arms set status = 'online', last_seen_at = now() where station_id = '0000000c-0000-0000-0000-000000000000';
+update campaigns set status = 'completed' where id = '00000000-0000-0000-0000-0000000000d5';
+
 -- ========== 6. login ==========
 set role anon;
 select testkit.as_nobody('10.1.1.1');
