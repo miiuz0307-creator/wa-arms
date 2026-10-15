@@ -24,6 +24,8 @@ arm.start().catch((e) => console.error('arm start failed', e));
 
 const PUBLIC = path.join(__dirname, '..', 'public');
 const INDEX = fs.readFileSync(path.join(PUBLIC, 'index.html'));
+// the open app compares this with the version it was loaded with and refreshes itself on a new one
+const VERSION = (process.env.RAILWAY_GIT_COMMIT_SHA || crypto.createHash('sha1').update(INDEX).digest('hex')).slice(0, 12);
 // app files (install as an app on the phone) – public, no login needed
 const STATIC = {
   '/manifest.webmanifest': ['manifest.webmanifest', 'application/manifest+json'],
@@ -84,6 +86,7 @@ const server = http.createServer(async (req, res) => {
   const p = url.pathname;
   try {
     if (p === '/health') return send(res, 200, { ok: true, arm: arm.status().state });
+    if (p === '/version') return send(res, 200, { version: VERSION });
     if (req.method === 'GET' && (p === '/' || p === '/index.html')) return send(res, 200, INDEX);
     if (req.method === 'GET' && staticFiles[p]) {
       const f = staticFiles[p];

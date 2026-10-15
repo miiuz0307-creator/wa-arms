@@ -258,6 +258,10 @@ main{margin-top:-44px;position:relative;z-index:2;padding-block:0 140px}
 <div id="app" class="hidden">
   <div class="band gut">
     <div class="max">
+      <div id="updBar" class="install hidden">
+        <span>יש גרסה חדשה</span>
+        <button id="updBtn">עדכן עכשיו</button>
+      </div>
       <div id="install" class="install hidden">
         <span id="installText"></span>
         <button id="installBtn" class="hidden">התקן</button>
@@ -597,6 +601,25 @@ addEventListener('appinstalled', () => { $('install').classList.add('hidden'); t
 $('installBtn').onclick = async () => { if (!installEvt) return; installEvt.prompt(); await installEvt.userChoice.catch(() => {}); installEvt = null; $('install').classList.add('hidden'); };
 $('installClose').onclick = () => $('install').classList.add('hidden');
 showInstall();
+
+// ---- new version: refresh by itself ----
+// Checked every 30s and whenever the app comes back to the screen. Waits while a choice is in progress
+// (groups selected or a window open) and shows a bar instead, so nothing you are doing is lost.
+let myVersion = null, newVersion = false;
+const busyUI = () => S.sel.remove.size || S.sel.add.size || document.querySelector('.scrim.open');
+async function checkVersion() {
+  try {
+    const r = await fetch('/version', { cache: 'no-store' }); const { version } = await r.json();
+    if (!myVersion) { myVersion = version; return; }
+    if (version === myVersion) return;
+    if (!busyUI()) return location.reload();
+    if (!newVersion) { newVersion = true; $('updBar').classList.remove('hidden'); }
+  } catch {}
+}
+$('updBtn').onclick = () => location.reload();
+setInterval(() => { if (newVersion && !busyUI()) location.reload(); else checkVersion(); }, 30_000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { checkVersion(); tick(); } });
+checkVersion();
 
 let timer = null;
 async function boot() {
