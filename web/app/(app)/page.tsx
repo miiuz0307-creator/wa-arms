@@ -111,10 +111,34 @@ export default function Dashboard() {
     });
   }, [can, isSuper, station?.acting]);
 
+  // live part, every 2 seconds: rides in progress (sent / total) and the arms – a few small rows, so the
+  // screen follows a distribution as it happens. Everything heavy (groups, statistics, monitor) every 30s.
+  const loadLive = useCallback(async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const [arms, active, pendingPhone] = await Promise.all([
+      sb().from('arms').select('*').order('created_at'),
+      sb().from('campaigns').select('*').in('status', ['queued', 'running', 'paused']).order('created_at', { ascending: false }).limit(8),
+      sb().from('campaigns').select('id', { count: 'exact', head: true }).eq('status', 'pending_phone'),
+    ]);
+    if (arms.error || active.error) return;
+    const armRows = arms.data || [];
+    setD((prev: any) =>
+      prev && {
+        ...prev,
+        arms: armRows,
+        active: active.data || [],
+        pendingPhone: pendingPhone.count || 0,
+        sentToday: armRows.reduce((s: number, a: any) => s + (a.sent_day === today ? a.sent_today : 0), 0),
+        sentTotal: armRows.reduce((s: number, a: any) => s + Number(a.sent_total || 0), 0),
+      },
+    );
+  }, []);
+
   useEffect(() => {
     load();
   }, [load]);
-  useRealtime(['arms', 'campaigns', 'activity_log'], load);
+  useRealtime(['arms', 'campaigns'], loadLive, 'live', 2000);
+  useRealtime(['arms', 'campaigns', 'activity_log'], load, undefined, 30000);
 
   if (!d) return <Spinner />;
 
