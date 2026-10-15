@@ -22,7 +22,19 @@ const arm = DEMO ? new (require('./demoArm').DemoArm)() : new (require('./arm').
 const jobs = new Jobs(arm, DATA_DIR);
 arm.start().catch((e) => console.error('arm start failed', e));
 
-const INDEX = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'));
+const PUBLIC = path.join(__dirname, '..', 'public');
+const INDEX = fs.readFileSync(path.join(PUBLIC, 'index.html'));
+// app files (install as an app on the phone) – public, no login needed
+const STATIC = {
+  '/manifest.webmanifest': ['manifest.webmanifest', 'application/manifest+json'],
+  '/sw.js': ['sw.js', 'text/javascript; charset=utf-8'],
+  '/icons/icon-192.png': ['icons/icon-192.png', 'image/png'],
+  '/icons/icon-512.png': ['icons/icon-512.png', 'image/png'],
+  '/icons/maskable-512.png': ['icons/maskable-512.png', 'image/png'],
+  '/apple-touch-icon.png': ['icons/apple-touch-icon.png', 'image/png'],
+  '/favicon.ico': ['icons/icon-192.png', 'image/png'],
+};
+const staticFiles = Object.fromEntries(Object.entries(STATIC).map(([u, [f, type]]) => [u, { body: fs.readFileSync(path.join(PUBLIC, f)), type }]));
 
 // ---- login: one access code, signed cookie for 30 days ----
 const sign = (v) => crypto.createHmac('sha256', SECRET).update(v).digest('base64url');
@@ -73,6 +85,11 @@ const server = http.createServer(async (req, res) => {
   try {
     if (p === '/health') return send(res, 200, { ok: true, arm: arm.status().state });
     if (req.method === 'GET' && (p === '/' || p === '/index.html')) return send(res, 200, INDEX);
+    if (req.method === 'GET' && staticFiles[p]) {
+      const f = staticFiles[p];
+      res.writeHead(200, { 'content-type': f.type, 'cache-control': p === '/sw.js' ? 'no-cache' : 'public, max-age=86400' });
+      return res.end(f.body);
+    }
 
     if (p === '/api/login' && req.method === 'POST') {
       const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress).split(',')[0].trim();
