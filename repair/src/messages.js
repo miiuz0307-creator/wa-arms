@@ -39,6 +39,28 @@ const help = (isApprover) =>
     '• *עזרה* – ההודעה הזו',
   ].join('\n');
 
+// The opening menu after "עזרה": tap a button, or type its number where buttons do not show.
+const MENU = [
+  { id: 'menu:report', title: '🛠 דיווח על תקלה', digit: '1' },
+  { id: 'menu:human', title: '👤 דבר עם נציג', digit: '2' },
+];
+const menu = () =>
+  [
+    '🤖 *BotiX AI Repair*',
+    '',
+    'במה אפשר לעזור? לחצו על כפתור, או כתבו את המספר:',
+    ...MENU.map((b) => `*${b.digit}* – ${b.title}`),
+    '',
+    '_לרשימת הפקודות כתבו *פקודות*_',
+  ].join('\n');
+
+const askReport = 'מעולה. כתבו לי מה לא עובד, במילים פשוטות. אפשר לצרף צילום מסך.\nלדוגמה: "ההפצה לא עובדת" או "זרוע 2 מנותקת".';
+
+const toHuman =
+  '👤 העברתי אותך לנציג.\nמעכשיו הבוט לא יענה בשיחה הזו – פשוט כתבו כאן ונציג יחזור אליכם.\nכדי לחזור לבוט כתבו *עזרה*.';
+
+const humanRequested = (name, phone) => `👤 *${name}* (${phone}) ביקש לדבר עם נציג.\nהבוט הפסיק לענות לו – אפשר לענות לו ישירות מהטלפון של הבוט.`;
+
 const received = (t, position) =>
   [
     `📥 קיבלתי. פנייה *#${t.id}*`,
@@ -163,6 +185,11 @@ function ticketDetails(t) {
 module.exports = {
   statusLabel,
   help,
+  MENU,
+  menu,
+  askReport,
+  toHuman,
+  humanRequested,
   received,
   imageAttached,
   started,

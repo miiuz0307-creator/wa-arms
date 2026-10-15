@@ -14,6 +14,7 @@ const SESSION_MS = 30 * 60_000; // a conversation stays open 30 minutes after th
 // Explicit commands that carry a ticket number or approval code always work for approved numbers
 // (the bot asked for them). Anything else is answered only inside a conversation opened by "עזרה".
 const ALWAYS = new Set(['help', 'help_text', 'approve', 'reject', 'cancel', 'rollback', 'show']);
+// a button tap from an earlier menu also works after the conversation timed out
 
 function parseCommand(raw) {
   const t = String(raw || '')
@@ -22,6 +23,12 @@ function parseCommand(raw) {
     .trim();
   let m;
   if (/^(עזרה|תפריט|help|\?)$/i.test(t)) return { cmd: 'help' };
+  // a tapped menu button arrives as its id; typing the menu number does the same
+  if (t === 'menu:report') return { cmd: 'menu_report', button: true };
+  if (t === 'menu:human') return { cmd: 'menu_human', button: true };
+  if (t === '1') return { cmd: 'menu_report' };
+  if (t === '2') return { cmd: 'menu_human' };
+  if (/^(פקודות|commands)$/i.test(t)) return { cmd: 'commands' };
   if ((m = /^עזרה[\s,:.!-]+([\s\S]{4,})$/.exec(t))) return { cmd: 'help_text', text: m[1].trim() };
   if (/^(סטטוס|מצב)$/.test(t)) return { cmd: 'status' };
   if (/^(פניות|רשימה)$/.test(t)) return { cmd: 'list' };
@@ -84,7 +91,7 @@ function createIntake({ cfg, store, wa, pipeline, log }) {
     const isApprover = sender.role === 'approver';
     const displayName = sender.name || name || formatLocal(actor);
     const c = parseCommand(text);
-    if (!ALWAYS.has(c.cmd) && !inSession(actor)) return; // not talking to the bot – ignore
+    if (!ALWAYS.has(c.cmd) && !c.button && !inSession(actor)) return; // not talking to the bot – ignore
     touch(actor);
 
     // ---- screenshots ----
@@ -109,7 +116,21 @@ function createIntake({ cfg, store, wa, pipeline, log }) {
 
     switch (c.cmd) {
       case 'help':
+        if (jid.endsWith('@g.us')) return reply(jid, M.help(isApprover));
+        return wa.sendButtons(jid, M.menu(), M.MENU).catch((e) => log.warn({ err: e.message }, 'reply failed'));
+      case 'commands':
         return reply(jid, M.help(isApprover));
+      case 'menu_report':
+        return reply(jid, M.askReport);
+      case 'menu_human': {
+        // hand the chat to a person: the bot stays silent until "עזרה" is written again
+        sessions.delete(actor);
+        await pipeline.audit(null, actor, 'human_requested', `${displayName} ביקש לדבר עם נציג`);
+        await reply(jid, M.toHuman);
+        const approvers = (await store.listNumbers()).filter((n) => n.active && n.role === 'approver' && n.phone !== actor);
+        for (const a of approvers) await reply(a.phone, M.humanRequested(displayName, formatLocal(actor)));
+        return;
+      }
       case 'help_text':
         return createTicket(jid, actor, displayName, c.text, []);
       case 'status': {

@@ -24,6 +24,7 @@ async function lib() {
     proto: pick('proto'),
     makeCacheableSignalKeyStore: pick('makeCacheableSignalKeyStore'),
     downloadMediaMessage: pick('downloadMediaMessage'),
+    generateWAMessageFromContent: pick('generateWAMessageFromContent'),
   };
   return B;
 }
@@ -155,10 +156,23 @@ async function hasSession(store, secret) {
   }
 }
 
-const textOf = (m = {}) =>
-  m.conversation || m.extendedTextMessage?.text || m.imageMessage?.caption || m.documentMessage?.caption || '';
+// A tapped button arrives as its id (e.g. "menu:human"), the same as if the id had been typed.
+function buttonIdOf(m = {}) {
+  const flow = m.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson;
+  if (flow) {
+    try {
+      const id = JSON.parse(flow)?.id;
+      if (id) return String(id);
+    } catch {}
+  }
+  return m.buttonsResponseMessage?.selectedButtonId || m.templateButtonReplyMessage?.selectedId || m.listResponseMessage?.singleSelectReply?.selectedRowId || '';
+}
 
-function createWhatsApp({ store, secret, log, onMessage, onOpen, onGroupFound }) {
+const textOf = (m = {}) =>
+  buttonIdOf(m) || m.conversation || m.extendedTextMessage?.text || m.imageMessage?.caption || m.documentMessage?.caption || '';
+
+function createWhatsApp({ store, secret, log, onMessage, onOpen, onGroupFound, buttons = true }) {
+  const buttonsEnabled = buttons;
   // Private chats with this version of WhatsApp Web often arrive empty ("Message absent from node"),
   // group messages decrypt reliably – so the bot also works in one dedicated command group.
   let commandGroup = null;
@@ -378,13 +392,50 @@ function createWhatsApp({ store, secret, log, onMessage, onOpen, onGroupFound })
     }
   }
 
+  const remember = (id, message) => {
+    if (!id || !message) return;
+    sentCache.set(id, message);
+    if (sentCache.size > 500) sentCache.delete(sentCache.keys().next().value);
+  };
+
   async function send(to, text) {
     if (!sock || status.state !== 'connected') throw new Error('WhatsApp לא מחובר');
     const jid = to.includes('@') ? to : jidOf(to);
     const sent = await sock.sendMessage(jid, { text });
-    if (sent?.key?.id && sent.message) {
-      sentCache.set(sent.key.id, sent.message);
-      if (sentCache.size > 500) sentCache.delete(sentCache.keys().next().value);
+    remember(sent?.key?.id, sent?.message);
+  }
+
+  /**
+   * A message with tap buttons (WhatsApp "quick reply"). Buttons are not officially supported for
+   * QR-linked numbers; if sending fails the same options go out as a numbered text instead.
+   * The text always lists the numbers too, so typing 1/2 works where buttons do not show.
+   */
+  async function sendButtons(to, text, buttons, footer = '') {
+    if (!sock || status.state !== 'connected') throw new Error('WhatsApp לא מחובר');
+    const jid = to.includes('@') ? to : jidOf(to);
+    const { generateWAMessageFromContent } = await lib();
+    try {
+      if (!buttonsEnabled || !generateWAMessageFromContent || !sock.relayMessage) throw new Error('buttons off');
+      const content = {
+        interactiveMessage: {
+          header: { title: '', subtitle: '', hasMediaAttachment: false },
+          body: { text },
+          footer: { text: footer || 'BotiX' },
+          nativeFlowMessage: {
+            buttons: buttons.map((b) => ({ name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: b.title, id: b.id }) })),
+            messageParamsJson: '',
+          },
+        },
+      };
+      const msg = generateWAMessageFromContent(jid, content, { userJid: sock.user?.id });
+      await sock.relayMessage(jid, msg.message, {
+        messageId: msg.key.id,
+        additionalNodes: [{ tag: 'biz', attrs: {}, content: [{ tag: 'interactive', attrs: { type: 'native_flow', v: '1' }, content: [{ tag: 'native_flow', attrs: { v: '9', name: 'mixed' } }] }] }],
+      });
+      remember(msg.key.id, msg.message);
+    } catch (e) {
+      if (e.message !== 'buttons off') log.warn({ err: e.message }, 'buttons message failed – sending text');
+      await send(to, text);
     }
   }
 
@@ -410,6 +461,7 @@ function createWhatsApp({ store, secret, log, onMessage, onOpen, onGroupFound })
     connect,
     disconnect,
     send,
+    sendButtons,
     lidOf,
     setCommandGroup,
     commandGroup: () => commandGroup,
@@ -417,4 +469,4 @@ function createWhatsApp({ store, secret, log, onMessage, onOpen, onGroupFound })
   };
 }
 
-module.exports = { createWhatsApp, useDbAuthState, hasSession, textOf, ignoredJid, COMMAND_GROUP_NAME };
+module.exports = { createWhatsApp, useDbAuthState, hasSession, textOf, buttonIdOf, ignoredJid, COMMAND_GROUP_NAME };

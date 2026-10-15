@@ -56,6 +56,7 @@ async function main() {
     store,
     secret: cfg.sessionSecret,
     log,
+    buttons: cfg.waButtons,
     onMessage: (msg) => (intake ? intake.handle(msg) : null),
     // learn the hidden WhatsApp id of every approved number, so their messages are recognised
     onOpen: async () => {

@@ -72,6 +72,8 @@ function load() {
     approvalMinutes: num('APPROVAL_MINUTES', 30),
     deployWaitMin: num('DEPLOY_WAIT_MIN', 15),
     autoRollback: bool('AUTO_ROLLBACK', true),
+    // tap buttons in WhatsApp (not official for QR-linked numbers; WA_BUTTONS=false sends plain text)
+    waButtons: bool('WA_BUTTONS', true),
 
     // collect screenshots sent right after a description before starting work
     intakeGraceSec: num('INTAKE_GRACE_SEC', 20),

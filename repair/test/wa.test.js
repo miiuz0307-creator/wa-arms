@@ -43,3 +43,10 @@ test('command group name pattern', () => {
   for (const n of ['BotiX תיקונים', 'botix', 'תיקונים בוט']) assert.ok(COMMAND_GROUP_NAME.test(n), n);
   for (const n of ['נהגים 8080', 'משפחה']) assert.ok(!COMMAND_GROUP_NAME.test(n), n);
 });
+
+test('a tapped button is read as its id', () => {
+  const { textOf } = require('../src/wa');
+  assert.equal(textOf({ interactiveResponseMessage: { nativeFlowResponseMessage: { paramsJson: JSON.stringify({ id: 'menu:human' }) } } }), 'menu:human');
+  assert.equal(textOf({ buttonsResponseMessage: { selectedButtonId: 'menu:report' } }), 'menu:report');
+  assert.equal(textOf({ conversation: 'שלום' }), 'שלום');
+});

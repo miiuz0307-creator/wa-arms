@@ -44,6 +44,7 @@ function fakeWa() {
   return {
     sent,
     send: async (to, text) => sent.push({ to, text }),
+    sendButtons: async (to, text, buttons) => sent.push({ to, text, buttons }),
     status: () => ({ state: 'connected', qr: null, me: '972500000000', error: null }),
     connect: async () => {},
     disconnect: async () => {},

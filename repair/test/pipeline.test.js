@@ -377,3 +377,30 @@ test('command group: everything goes to the group, chatter is ignored, approver 
   await inGroup(OWNER, `אשר ${code}`);
   await h.waitFor(async () => (await s.store.getTicket(1)).status === 'deployed');
 });
+
+test('"עזרה" shows the menu with buttons; "דבר עם נציג" silences the bot and tells the approvers', async () => {
+  const s = await setup();
+  const J = `${ASKER}@s.whatsapp.net`;
+  await s.say(ASKER, 'עזרה', { raw: true });
+  const menu = s.wa.sent.find((m) => m.to === J);
+  assert.deepEqual(menu.buttons.map((b) => b.id), ['menu:report', 'menu:human']);
+  await s.say(ASKER, 'menu:human', { raw: true });
+  assert.ok(s.wa.textsTo(J).at(-1).includes('נציג'));
+  assert.ok(s.wa.textsTo(OWNER).some((t) => t.includes('ביקש לדבר עם נציג')));
+  const before = s.wa.textsTo(J).length;
+  await s.say(ASKER, 'ההפצה לא עובדת', { raw: true });
+  assert.equal(s.wa.textsTo(J).length, before, 'bot stays silent after handing over');
+  assert.equal((await s.store.listTickets()).length, 0);
+});
+
+test('"1" after the menu asks for the problem, then the description opens a ticket', async () => {
+  const s = await setup();
+  const J = `${ASKER}@s.whatsapp.net`;
+  await s.say(ASKER, 'עזרה', { raw: true });
+  await s.say(ASKER, '1', { raw: true });
+  assert.ok(s.wa.textsTo(J).at(-1).includes('מה לא עובד'));
+  await s.say(ASKER, 'ההפצה לא עובדת', { raw: true });
+  assert.equal((await s.store.listTickets()).length, 1);
+  await s.say('972503333333', '1', { raw: true }); // stranger: still nothing
+  assert.equal(s.wa.textsTo('972503333333@s.whatsapp.net').length, 0);
+});
