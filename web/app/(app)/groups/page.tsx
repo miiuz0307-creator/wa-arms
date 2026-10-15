@@ -87,7 +87,8 @@ function GroupsAndLists() {
     load();
     loadPerm().catch(() => {});
   }, [load, loadPerm]);
-  useRealtime(['groups', 'arms', 'list_groups', 'list_arms', 'distribution_lists'], load);
+  // heavy screen (all groups + lists): every 15s is enough – every 5s re-drew ~2,000 rows and froze phones
+  useRealtime(['groups', 'arms', 'list_groups', 'list_arms', 'distribution_lists'], load, undefined, 15000);
 
   const armById = useMemo(() => Object.fromEntries((arms || []).map((a) => [a.id, a])), [arms]);
   const listById = useMemo(() => Object.fromEntries(lists.map((l) => [l.id, l])), [lists]);
