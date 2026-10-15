@@ -41,6 +41,7 @@ class Arm {
     this.lastError = null;
     this.retry = 0;
     this.refreshing = null;
+    try { this.lastPhone = fs.readFileSync(path.join(dataDir, 'last-phone'), 'utf8').trim(); } catch {}
   }
 
   status() {
@@ -54,7 +55,41 @@ class Arm {
       adminOf,
       groupsAt: this.groupsAt,
       lastError: this.lastError,
+      pairCode: this.state !== 'online' ? this.pairCode || null : null,
+      pairPhone: this.state !== 'online' ? this.pairPhone || null : null,
+      pairError: this.state !== 'online' ? this.pairError || null : null,
+      wasLoggedOut: !!this.wasLoggedOut,
+      lastPhone: this.lastPhone || null,
     };
+  }
+
+  // one pending reconnect at a time (a second one would replace a socket that is mid-link)
+  later(ms) {
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = setTimeout(() => this.start().catch((e) => log('start failed', e.message)), ms);
+  }
+
+  /** Link with an 8-character code typed into WhatsApp instead of scanning a QR. */
+  async requestPairing(raw) {
+    const intl = toIntl(raw);
+    if (!intl) throw new Error('מספר לא תקין');
+    if (this.state === 'online') throw new Error('הזרוע כבר מחוברת');
+    this.pairPhone = intl;
+    this.pairCode = null;
+    this.pairError = null;
+    this.pairAsked = false;
+    // fresh connection: the code is requested on its first QR event
+    clearTimeout(this.reconnectTimer);
+    const old = this.sock;
+    this.sock = null;
+    try {
+      old?.end?.(undefined);
+    } catch {}
+    await this.start();
+    for (let i = 0; i < 40 && !this.pairCode && !this.pairError; i++) await new Promise((r) => setTimeout(r, 250));
+    if (this.pairError) throw new Error(this.pairError);
+    if (!this.pairCode) throw new Error('וואטסאפ לא החזיר קוד. נסה שוב.');
+    return { code: this.pairCode };
   }
 
   async start() {
@@ -92,14 +127,34 @@ class Arm {
       if (u.qr) {
         this.qr = u.qr;
         this.state = 'qr';
+        // linking with a code instead of a QR (the phone can't scan its own screen): ask once per connection
+        if (this.pairPhone && !this.pairCode && !this.pairAsked) {
+          this.pairAsked = true;
+          try {
+            const code = await sock.requestPairingCode(this.pairPhone);
+            this.pairCode = String(code || '').replace(/[^0-9A-Za-z]/g, '').toUpperCase().replace(/^(.{4})(.{4})$/, '$1-$2');
+            this.pairAt = new Date().toISOString();
+            log('pairing code issued');
+          } catch (e) {
+            this.pairError = 'וואטסאפ לא החזיר קוד. בדוק את המספר ונסה שוב.';
+            this.pairPhone = null;
+            log('pairing code failed', e.message);
+          }
+        }
       }
       if (u.connection === 'open') {
         this.state = 'online';
         this.qr = null;
+        this.pairPhone = null;
+        this.pairCode = null;
+        this.pairError = null;
+        this.wasLoggedOut = false;
         this.retry = 0;
         this.lastError = null;
         this.me = { pn: bareJid(sock.user?.id), lid: sock.user?.lid ? bareJid(sock.user.lid) : null };
         log('arm online', jidUser(this.me.pn));
+        this.lastPhone = jidUser(this.me.pn);
+        try { fs.writeFileSync(path.join(path.dirname(this.authDir), 'last-phone'), this.lastPhone); } catch {}
         this.refreshGroups().catch((e) => log('groups refresh failed', e.message));
       }
       if (u.connection === 'close') {
@@ -108,16 +163,32 @@ class Arm {
         if (code === DisconnectReason.loggedOut) {
           log('arm logged out – needs a new QR');
           this.state = 'logged_out';
+          this.wasLoggedOut = true;
+          this.me = null;
           fs.rmSync(this.authDir, { recursive: true, force: true });
           this.groups.clear();
-          setTimeout(() => this.start().catch((e) => log('start failed', e.message)), 2000);
+          this.later(2000);
+          return;
+        }
+        // Waiting to be linked: the QR / code ran out (408). Start again right away so a fresh QR is on screen –
+        // backing off here hid the QR for up to a minute at a time. A pairing code is not renewed by itself.
+        if (!state.creds?.registered) {
+          if (this.pairCode) {
+            this.pairPhone = null;
+            this.pairCode = null;
+            this.pairError = 'הקוד פג תוקף. בקש קוד חדש.';
+          }
+          this.pairAsked = false;
+          this.state = 'qr';
+          log('waiting for link, new QR', code);
+          this.later(1000);
           return;
         }
         this.state = 'connecting';
         this.retry += 1;
         const wait = Math.min(60_000, 2000 * 2 ** Math.min(this.retry, 5));
         log('arm closed', code, 'reconnect in', wait);
-        setTimeout(() => this.start().catch((e) => log('start failed', e.message)), wait);
+        this.later(wait);
       }
     });
 

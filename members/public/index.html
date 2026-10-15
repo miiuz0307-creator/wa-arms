@@ -107,6 +107,17 @@ main{margin-top:-44px;position:relative;z-index:2;padding-block:0 140px}
 .steps{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;margin-top:12px;font-size:13px;color:var(--muted)}
 .steps span{background:var(--soft);padding:4px 10px;border-radius:999px}
 
+.ctabs{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:4px;margin:14px auto 4px;max-width:320px;border-radius:12px;background:var(--soft)}
+.ctabs button{border:0;background:transparent;border-radius:9px;padding:9px 6px;font-weight:700;color:var(--muted)}
+.ctabs button.active{background:var(--card);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.small2{color:var(--muted);font-size:13.5px;margin:10px auto}
+.pairf{max-width:360px;margin:0 auto}
+.pairf input{font-size:20px;height:52px}
+.pairbox{margin-top:16px}
+.pcode{font-family:var(--f-display);font-size:38px;font-weight:800;letter-spacing:4px;direction:ltr;color:var(--ink);background:var(--soft);border:1px dashed var(--line);border-radius:16px;padding:14px;margin:0 auto 10px;max-width:320px}
+.pairbox ol{text-align:right;margin:14px auto 0;max-width:340px;padding-right:20px;color:var(--muted);font-size:14px;line-height:1.7}
+.warnbox{background:var(--warn-soft);color:var(--warn);border-radius:12px;padding:10px 12px;font-size:14px;font-weight:600;margin:10px auto 0;max-width:360px}
+
 /* person */
 .person{display:flex;align-items:center;gap:14px;padding:18px 4px 4px}
 .ava{width:52px;height:52px;border-radius:16px;display:grid;place-items:center;flex:none;background:var(--soft);border:1px solid var(--line)}
@@ -296,8 +307,31 @@ main{margin-top:-44px;position:relative;z-index:2;padding-block:0 140px}
       <div id="connectCard" class="card connect hidden">
         <h2 id="connectTitle">מחבר את הזרוע…</h2>
         <p id="connectText">פתח את וואטסאפ במספר שיהיה הזרוע וסרוק את הקוד.</p>
-        <div id="qr" class="qr hidden"></div>
-        <div class="steps"><span>הגדרות</span><span>מכשירים מקושרים</span><span>קישור מכשיר</span></div>
+        <div class="ctabs" role="tablist">
+          <button id="tabQr" class="active">סריקת QR</button>
+          <button id="tabCode">קוד בטלפון</button>
+        </div>
+        <div id="viaQr">
+          <div id="qr" class="qr hidden"></div>
+          <div class="steps"><span>הגדרות</span><span>מכשירים מקושרים</span><span>קישור מכשיר</span></div>
+        </div>
+        <div id="viaCode" class="hidden">
+          <p class="small2">מתאים כשהזרוע נמצאת באותו טלפון שבו פתוחה האפליקציה.</p>
+          <div class="field pairf">
+            <input id="pairPhone" type="tel" inputmode="tel" placeholder="מספר הזרוע" autocomplete="off">
+            <button id="pairBtn" class="go">קבל קוד</button>
+          </div>
+          <div id="pairErr" class="err"></div>
+          <div id="pairBox" class="pairbox hidden">
+            <div class="pcode num-font" id="pairCode"></div>
+            <button id="pairCopy" class="linkbtn">העתק</button>
+            <ol>
+              <li>בוואטסאפ של הזרוע: הגדרות ← מכשירים מקושרים ← קישור מכשיר</li>
+              <li>לחץ למטה על "קישור באמצעות מספר טלפון"</li>
+              <li>הקלד את הקוד. הוא תקף לכמה דקות.</li>
+            </ol>
+          </div>
+        </div>
       </div>
 
       <div id="results" class="hidden">
@@ -424,13 +458,40 @@ function renderStatus() {
   $('connectCard').classList.toggle('hidden', online);
   $('lookupBtn').disabled = !online;
   if (!online) {
-    $('connectTitle').textContent = s.state === 'qr' ? 'סרוק כדי לחבר את הזרוע' : 'מחבר את הזרוע…';
+    $('connectTitle').textContent = s.wasLoggedOut ? 'הזרוע נותקה מוואטסאפ' : s.state === 'qr' ? 'חבר את הזרוע' : 'מחבר את הזרוע…';
+    $('connectText').textContent = s.wasLoggedOut
+      ? 'וואטסאפ ניתק את המכשיר המקושר (למשל אם הוסר ב"מכשירים מקושרים" בטלפון). צריך לחבר שוב: סרוק QR או קבל קוד.'
+      : 'פתח את וואטסאפ במספר שיהיה הזרוע וחבר אותו.';
+    if (s.lastPhone && !$('pairPhone').value) $('pairPhone').value = pretty(s.lastPhone);
+    if (s.pairCode) { $('pairCode').textContent = s.pairCode; $('pairBox').classList.remove('hidden'); if (!connectMode) setMode('code'); }
+    else $('pairBox').classList.add('hidden');
+    if (s.pairError && !$('pairErr').textContent) $('pairErr').textContent = s.pairError;
     $('qr').classList.toggle('hidden', !s.qr);
     if (s.qr && s.qr !== qrShown && window.QRCode) {
       $('qr').innerHTML = ''; new QRCode($('qr'), { text: s.qr, width: 220, height: 220, correctLevel: QRCode.CorrectLevel.L }); qrShown = s.qr;
     }
   }
 }
+
+// ---- link the arm: QR or code ----
+let connectMode = null;
+function setMode(m) {
+  connectMode = m;
+  $('tabQr').classList.toggle('active', m === 'qr'); $('tabCode').classList.toggle('active', m === 'code');
+  $('viaQr').classList.toggle('hidden', m !== 'qr'); $('viaCode').classList.toggle('hidden', m !== 'code');
+}
+$('tabQr').onclick = () => setMode('qr');
+$('tabCode').onclick = () => setMode('code');
+$('pairBtn').onclick = async () => {
+  $('pairErr').textContent = ''; $('pairBtn').disabled = true; $('pairBtn').textContent = '…';
+  try { const r = await api('/arm/pair', { phone: $('pairPhone').value }); $('pairCode').textContent = r.code; $('pairBox').classList.remove('hidden'); }
+  catch (e) { $('pairErr').textContent = e.message; }
+  finally { $('pairBtn').disabled = false; $('pairBtn').textContent = 'קבל קוד'; }
+};
+$('pairCopy').onclick = async () => {
+  const t = $('pairCode').textContent.replace('-', '');
+  try { await navigator.clipboard.writeText(t); toast('הקוד הועתק'); } catch { toast(t); }
+};
 
 // ---- lookup ----
 $('lookupBtn').onclick = async () => {

@@ -64,6 +64,10 @@ class DemoArm {
     return { ok: true, code: '200', message: action === 'remove' ? 'הוסר' : 'צורף' };
   }
 
+  async requestPairing() {
+    return { code: 'ABCD-1234' };
+  }
+
   async logout() {}
 }
 

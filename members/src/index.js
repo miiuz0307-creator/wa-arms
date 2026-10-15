@@ -127,6 +127,10 @@ const server = http.createServer(async (req, res) => {
     const stop = /^\/api\/jobs\/([a-f0-9]+)\/stop$/.exec(p);
     if (stop && req.method === 'POST') return send(res, 200, { ok: jobs.stop(stop[1]) });
     if (p === '/api/settings' && req.method === 'POST') return send(res, 200, jobs.setSettings(await readBody(req)));
+    if (p === '/api/arm/pair' && req.method === 'POST') {
+      const { phone } = await readBody(req);
+      return send(res, 200, await arm.requestPairing(phone));
+    }
     if (p === '/api/arm/logout' && req.method === 'POST') {
       await arm.logout();
       return send(res, 200, { ok: true });
