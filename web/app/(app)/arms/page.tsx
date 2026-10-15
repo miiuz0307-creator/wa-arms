@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Plus, QrCode, KeyRound, Power, PlugZap, RefreshCw, Trash2, Pencil, Smartphone, Loader2 } from 'lucide-react';
+import { Plus, QrCode, KeyRound, Copy, Power, PlugZap, RefreshCw, Trash2, Pencil, Smartphone, Loader2 } from 'lucide-react';
 import { sb, logAct } from '@/lib/supabase';
 import { useRealtime } from '@/lib/hooks';
 import { useAuth, myUid } from '@/lib/auth';
@@ -161,6 +161,10 @@ function Arms() {
                     <div dir="ltr" className="mt-1 select-all rounded-xl bg-white px-5 py-3 font-mono text-3xl font-bold tracking-[0.2em] text-slate-900 shadow-sm">
                       {qr[a.id].slice(5)}
                     </div>
+                    <Button size="sm" variant="secondary" className="mt-3" onClick={() => copyCode(qr[a.id].slice(5))}>
+                      <Copy className="h-4 w-4" />
+                      העתקת הקוד
+                    </Button>
                     <p className="mt-3 text-center text-xs leading-relaxed text-slate-600">
                       בטלפון: WhatsApp ← הגדרות ← מכשירים מקושרים ← קישור מכשיר ← &quot;קישור באמצעות מספר טלפון&quot;, והקלד את הקוד.
                       <br />
@@ -494,4 +498,20 @@ function EditArm({ arm, onClose }: { arm: any; onClose: () => void }) {
       </div>
     </Modal>
   );
+}
+
+// copy the pairing code (without the dash) so it can be pasted in WhatsApp
+async function copyCode(code: string) {
+  const plain = code.replace(/[^A-Za-z0-9]/g, '');
+  try {
+    await navigator.clipboard.writeText(plain);
+  } catch {
+    const t = document.createElement('textarea');
+    t.value = plain;
+    document.body.appendChild(t);
+    t.select();
+    document.execCommand('copy');
+    t.remove();
+  }
+  toast('הקוד הועתק');
 }
