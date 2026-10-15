@@ -58,6 +58,7 @@ class DemoArm {
     if (!g) return { ok: false, code: 'nogroup', message: 'הזרוע כבר לא בקבוצה' };
     if (!g.admin) return { ok: false, code: 'notadmin', message: 'הזרוע לא מנהלת בקבוצה' };
     if (action === 'add' && g.name.includes('VIP')) return { ok: false, code: '403', message: 'הגדרות הפרטיות של המספר חוסמות צירוף – צריך לשלוח לו קישור הזמנה' };
+    if (action === 'promote') return { ok: true, code: '200', message: 'הוגדר כמנהל' };
     if (action === 'remove') g.members.delete(intl);
     else g.members.add(intl);
     return { ok: true, code: '200', message: action === 'remove' ? 'הוסר' : 'צורף' };

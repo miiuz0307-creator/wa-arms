@@ -219,26 +219,27 @@ class Arm {
     return { number: intl, onWhatsApp: exists, inGroups: inGroups.sort(byName), notIn: notIn.sort(byName) };
   }
 
-  /** remove / add one number in one group. Returns { ok, code, message }. */
+  /** remove / add / promote one number in one group. Returns { ok, code, message }. */
   async change(action, groupId, intl) {
     if (this.state !== 'online') return { ok: false, code: 'offline', message: 'הזרוע לא מחוברת' };
     const g = this.groups.get(groupId);
     if (!g) return { ok: false, code: 'nogroup', message: 'הזרוע כבר לא בקבוצה' };
     if (!this.iAmAdmin(g)) return { ok: false, code: 'notadmin', message: 'הזרוע לא מנהלת בקבוצה' };
     let target = `${intl}@s.whatsapp.net`;
-    if (action === 'remove') {
+    if (action === 'remove' || action === 'promote') {
       const { ids } = await this.idsFor(intl);
       const m = g.participants.find((p) => [...p.ids].some((x) => ids.has(x)));
-      if (!m) return { ok: true, code: 'absent', message: 'כבר לא בקבוצה' };
+      if (!m && action === 'remove') return { ok: true, code: 'absent', message: 'כבר לא בקבוצה' };
+      if (m && action === 'promote' && m.admin) return { ok: true, code: 'already', message: 'כבר מנהל' };
       // use the id the group itself knows the member by
-      target = [...m.ids].find((x) => ids.has(x));
+      if (m) target = [...m.ids].find((x) => ids.has(x));
     }
     try {
       const [r] = (await this.sock.groupParticipantsUpdate(groupId, [target], action)) || [];
       const status = String(r?.status ?? '200');
       if (status === '200') {
         this.applyParticipantEvent({ id: groupId, participants: [target], action });
-        return { ok: true, code: status, message: action === 'remove' ? 'הוסר' : 'צורף' };
+        return { ok: true, code: status, message: { remove: 'הוסר', add: 'צורף', promote: 'הוגדר כמנהל' }[action] };
       }
       if (action === 'add' && status === '409') return { ok: true, code: status, message: 'כבר בקבוצה' };
       return { ok: false, code: status, message: explain(status, action) };

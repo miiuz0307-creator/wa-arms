@@ -204,6 +204,15 @@ main{margin-top:-44px;position:relative;z-index:2;padding-block:0 140px}
 .sheet h3{font-family:var(--f-display);font-size:19px;margin:0 0 6px;text-wrap:balance}
 .sheet .sub{color:var(--muted);font-size:14.5px;line-height:1.5}
 .sheet .gl{margin:14px 0;padding:10px 14px;background:var(--soft);border-radius:14px;max-height:200px;overflow:auto;font-size:14.5px;line-height:1.8}
+.adminq{margin-top:4px;padding:14px;border-radius:16px;border:1px solid var(--line)}
+.adminq .q{font-weight:700;font-size:15.5px;margin-bottom:10px}
+.yn{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.yn button{height:48px;border-radius:13px;font-weight:700;font-size:16px;border:2px solid transparent;transition:all .12s}
+.yn .yes{background:var(--rm-soft);color:var(--rm-ink)}
+.yn .no{background:var(--ad-soft);color:var(--ad-ink)}
+.yn .yes[aria-pressed="true"]{background:var(--rm);color:#fff;border-color:var(--rm)}
+.yn .no[aria-pressed="true"]{background:var(--ad);color:#fff;border-color:var(--ad)}
+.r .adm{color:var(--ad-ink);font-size:12.5px}
 .btns{display:flex;gap:10px;margin-top:18px}
 .btns button{flex:1;height:52px;border-radius:14px;border:0;font-weight:700;font-size:16px}
 .b-ghost{background:var(--soft)}
@@ -332,6 +341,13 @@ main{margin-top:-44px;position:relative;z-index:2;padding-block:0 140px}
   <h3 id="cfTitle"></h3>
   <div id="cfSub" class="sub"></div>
   <div id="cfList" class="gl"></div>
+  <div id="cfAdmin" class="adminq hidden">
+    <div class="q">להגדיר אותו כמנהל בקבוצות?</div>
+    <div class="yn">
+      <button id="admYes" class="yes" aria-pressed="false">כן</button>
+      <button id="admNo" class="no" aria-pressed="true">לא</button>
+    </div>
+  </div>
   <div class="btns"><button class="b-ghost" id="cfNo">ביטול</button><button id="cfYes">אישור</button></div>
 </div></div>
 
@@ -491,10 +507,19 @@ $('actBtn').onclick = () => {
   $('cfSub').textContent = `זה ייקח ${estimate(groups.length)}. אפשר לעצור באמצע.`;
   $('cfList').innerHTML = groups.map((g) => esc(g.name)).join('<br>');
   $('cfYes').className = action === 'remove' ? 'b-rm' : 'b-ad';
-  $('cfYes').textContent = action === 'remove' ? 'הסר' : 'צרף';
+  let makeAdmin = false;
+  const setAdmin = (v) => {
+    makeAdmin = v;
+    $('admYes').setAttribute('aria-pressed', String(v)); $('admNo').setAttribute('aria-pressed', String(!v));
+    $('cfYes').textContent = action === 'remove' ? 'הסר' : v ? 'צרף והגדר כמנהל' : 'צרף';
+  };
+  $('cfAdmin').classList.toggle('hidden', action !== 'add');
+  $('admYes').onclick = () => setAdmin(true);
+  $('admNo').onclick = () => setAdmin(false);
+  setAdmin(false);
   $('cfYes').onclick = async () => {
     closeSheet('confirm');
-    try { await api('/jobs', { action, number: S.result.number, groups }); ids.clear(); renderResults(); await tick(); toast(action === 'remove' ? 'ההסרה התחילה' : 'הצירוף התחיל'); }
+    try { await api('/jobs', { action, number: S.result.number, groups, makeAdmin }); ids.clear(); renderResults(); await tick(); toast(action === 'remove' ? 'ההסרה התחילה' : 'הצירוף התחיל'); }
     catch (e) { toast(e.message); }
   };
   openSheet('confirm');
@@ -513,19 +538,19 @@ function renderJobs() {
     const rm = live.action === 'remove';
     $('jobCard').innerHTML = `
       <div class="hd">
-        <span class="badge ${rm ? 'rm' : 'ad'}">${rm ? 'הסרה' : 'צירוף'}</span>
+        <span class="badge ${rm ? 'rm' : 'ad'}">${rm ? 'הסרה' : live.makeAdmin ? 'צירוף כמנהל' : 'צירוף'}</span>
         <b class="num-font" style="direction:ltr;text-align:right">${esc(pretty(live.number))}</b>
         ${live.finishedAt ? `<span class="pmeta">${live.stopped ? 'נעצר' : 'הסתיים'}</span>` : '<button class="stop" id="stopJob">עצור</button>'}
       </div>
       <div class="prog"><i class="ok" style="width:${ok / n * 100}%"></i><i class="bad" style="width:${fail / n * 100}%"></i></div>
       <div class="pmeta num-font">${done} מתוך ${n} · ${ok} הצליחו${fail ? ` · ${fail} נכשלו` : ''}</div>
-      <div class="rs">${live.items.map((i) => `<div class="r"><span class="ri ${i.status}">${RI[i.status] ?? ''}</span><div><div>${esc(i.name)}</div>${i.status === 'fail' || i.status === 'skipped' ? `<div class="why">${esc(i.message)}</div>` : ''}</div></div>`).join('')}</div>`;
+      <div class="rs">${live.items.map((i) => `<div class="r"><span class="ri ${i.status}">${RI[i.status] ?? ''}</span><div><div>${esc(i.name)}</div>${i.status === 'fail' || i.status === 'skipped' ? `<div class="why">${esc(i.message)}</div>` : i.admin ? '<div class="adm">הוגדר כמנהל</div>' : ''}</div></div>`).join('')}</div>`;
     const stop = $('stopJob'); if (stop) stop.onclick = async () => { await api(`/jobs/${live.id}/stop`, {}); tick(); };
   }
   $('hist').innerHTML = S.jobs.length ? S.jobs.slice(0, 15).map((j) => {
     const ok = j.items.filter((i) => i.status === 'ok').length; const rm = j.action === 'remove';
     return `<div class="h"><div class="hi ${rm ? 'rm' : 'ad'}">${rm ? '−' : '+'}</div>
-      <div class="t">${rm ? 'הוסר' : 'צורף'} <b class="num-font">${esc(pretty(j.number))}</b><div>${when(j.createdAt)}${j.finishedAt ? '' : ' · רץ עכשיו'}</div></div>
+      <div class="t">${rm ? 'הוסר' : j.makeAdmin ? 'צורף כמנהל' : 'צורף'} <b class="num-font">${esc(pretty(j.number))}</b><div>${when(j.createdAt)}${j.finishedAt ? '' : ' · רץ עכשיו'}</div></div>
       <div class="c num-font">${ok}/${j.items.length}</div></div>`;
   }).join('') : '<div class="empty">עדיין לא בוצעו פעולות</div>';
 }

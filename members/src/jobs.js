@@ -41,7 +41,7 @@ class Jobs {
     return this.settings;
   }
 
-  create({ action, number, groups }) {
+  create({ action, number, groups, makeAdmin }) {
     if (action !== 'remove' && action !== 'add') throw new Error('פעולה לא מוכרת');
     const intl = toIntl(number);
     if (!intl) throw new Error('מספר לא תקין');
@@ -50,6 +50,7 @@ class Jobs {
     const job = {
       id: crypto.randomBytes(6).toString('hex'),
       action,
+      makeAdmin: action === 'add' && makeAdmin === true,
       number: intl,
       createdAt: new Date().toISOString(),
       finishedAt: null,
@@ -91,6 +92,13 @@ class Jobs {
           const r = await this.arm.change(job.action, it.groupId, job.number);
           it.status = r.ok ? 'ok' : 'fail';
           it.message = r.message;
+          if (r.ok && job.makeAdmin && !job.stopped) {
+            await sleep(1500); // WhatsApp needs a moment before the new member can be promoted
+            const p = await this.arm.change('promote', it.groupId, job.number);
+            it.admin = p.ok;
+            it.message = p.ok ? `${r.message} והוגדר כמנהל` : `${r.message}, אבל לא הוגדר כמנהל: ${p.message}`;
+            if (!p.ok) it.status = 'fail';
+          }
           it.at = new Date().toISOString();
           this.save();
         }
