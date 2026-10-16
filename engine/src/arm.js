@@ -749,7 +749,15 @@ class Arm {
     for (const k of variants) {
       const clean = { remoteJid: k.remoteJid, id: k.id, fromMe: !!k.fromMe, ...(k.participant ? { participant: k.participant } : {}) };
       try {
-        const sent = await this.sock.sendMessage(clean.remoteJid, { react: { text: emoji, key: clean } });
+        // a reaction WhatsApp never answers must not hold up whoever is waiting for it (15 Oct: it froze the
+        // completion notices for hours)
+        let t;
+        const sent = await Promise.race([
+          this.sock.sendMessage(clean.remoteJid, { react: { text: emoji, key: clean } }),
+          new Promise((_, rej) => {
+            t = setTimeout(() => rej(new Error('reaction timed out')), 15_000);
+          }),
+        ]).finally(() => clearTimeout(t));
         this.rememberSent(sent?.key?.id);
         ok = true;
       } catch (e) {

@@ -474,14 +474,27 @@ async function heartbeat() {
 // While the database is failing, back off (up to a minute) instead of hammering it –
 // a struggling database recovers faster when it is left alone.
 let dbFailStreak = 0;
-function every(ms, fn, name) {
+// timeoutMs (only for loops where a second pass is harmless – never for sending): a pass that hangs is given
+// up after timeoutMs and the loop goes on. On 15 Oct the completion-notice and settings loops hung on one
+// WhatsApp call at 00:56 and never ran again – no ✓ on any ride and no settings reload until a restart.
+function every(ms, fn, name, timeoutMs = 0) {
   const run = async () => {
     if (shuttingDown) return;
     let failed = false;
     const slow = setTimeout(() => log.warn({ loop: name }, 'loop still running after 3 minutes'), 180_000);
     slow.unref?.();
     try {
-      await fn();
+      if (timeoutMs) {
+        let t;
+        await Promise.race([
+          Promise.resolve().then(fn),
+          new Promise((_, rej) => {
+            t = setTimeout(() => rej(new Error(`pass did not finish in ${Math.round(timeoutMs / 1000)}s – given up`)), timeoutMs);
+          }),
+        ]).finally(() => clearTimeout(t));
+      } else {
+        await fn();
+      }
     } catch (e) {
       failed = true;
       log.error({ loop: name, err: String(e.message).slice(0, 120) }, 'loop error');
@@ -571,7 +584,7 @@ async function main() {
   every(10_000, async () => {
     await refreshSettings();
     await help.refreshConfig();
-  }, 'config');
+  }, 'config', 60_000);
   every(3_000, help.prepareHelpCampaigns, 'prepare');
   // closing finished distributions: every 10s while something is running, once a minute otherwise
   let lastFinalize = 0;
@@ -595,8 +608,8 @@ async function main() {
   }, 'memory');
   // daily database backup to the server disk (does not fail the loop – errors are logged)
   every(10 * 60_000, () => backup.maybeBackup(), 'backup');
-  every(5_000, () => quote.notifyFinished(arms), 'quote-notify');
-  every(5_000, () => help.reactFinished(arms), 'help-react');
+  every(5_000, () => quote.notifyFinished(arms), 'quote-notify', 60_000);
+  every(5_000, () => help.reactFinished(arms), 'help-react', 60_000);
   // each arm sends on its own: one slow or stuck send never delays the other arms
   every(250, async () => {
     await checkWork();
