@@ -362,6 +362,10 @@ async function handleGroup(arm, m) {
     ...(m.key.participant ? { participant: m.key.participant } : {}),
     ...(pnParticipant ? { participantPn: pnParticipant } : {}),
   };
+  // mark the "עזרה" message as read right away (blue ticks for the dispatcher), without waiting for it
+  if (!fromMe && m.key.participant) {
+    Promise.resolve(arm.sock?.readMessages?.([{ remoteJid: groupJid, id: m.key.id, participant: m.key.participant }])).catch(() => {});
+  }
   await arm.react(triggerKey, '⏳');
 
   const original = extractText(unwrap(ctx.quotedMessage));
