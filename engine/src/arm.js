@@ -628,6 +628,8 @@ class Arm {
         await this.update({ status: 'error', last_error: 'וואטסאפ חסם או הגביל את המספר הזה (קוד 403). בדוק בטלפון, ואז לחץ "התחבר".' });
         this.stopped = true;
         log.error({ arm: this.name }, 'WhatsApp refused the number (403) – not reconnecting');
+        // tell the owner right away (index.js sends it on WhatsApp from another connected arm)
+        Promise.resolve(this.onBlocked?.(this)).catch((e) => log.warn({ arm: this.name, err: e?.message }, 'block alert failed'));
         return;
       }
       // 440 = the same session was opened somewhere else. Retrying forever makes the two fight.

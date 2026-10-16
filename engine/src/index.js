@@ -5,6 +5,7 @@ const help = require('./help');
 const quote = require('./quote');
 const backup = require('./backup');
 const { randomBetween, sleep } = require('./util');
+const phones = require('./phones');
 
 const arms = new Map(); // arm id -> Arm
 quote.setArmsSource(() => arms);
@@ -83,6 +84,7 @@ async function reconcileArms(gen = syncGen) {
     if (shouldRun && !arm) {
       if (stopping.has(row.id)) continue; // the previous connection of this number is still closing
       arm = new Arm(row, help.onMessage);
+      arm.onBlocked = alertBlocked;
       arms.set(row.id, arm);
       arm.start();
     } else if (!shouldRun && arm) {
@@ -469,6 +471,37 @@ async function heartbeat() {
       rss_mb: Math.round(process.memoryUsage().rss / 1048576),
     },
   }).then(() => {}, () => {});
+}
+
+// A number WhatsApp blocked (403): a WhatsApp message right away to the system owner (the phone of the home
+// system) and to the manager of the arm's station (its phone), sent by another connected arm – preferably of
+// the same station. Once per block (the blocked arm stops and is not retried until someone presses "התחבר").
+async function alertBlocked(blocked) {
+  const { data: rows } = await db.from('stations').select('id,name,phone,is_home'); // rows: bounded – stations
+  const home = (rows || []).find((s) => s.is_home);
+  const own = (rows || []).find((s) => s.id === blocked.stationId);
+  const intl = (raw) => {
+    const d = phones.normalize(raw);
+    return /^05\d{8}$/.test(d) ? '972' + d.slice(1) : null;
+  };
+  const to = [...new Set([home?.phone, own?.phone].map(intl).filter(Boolean))];
+  if (!to.length) return log.warn({ arm: blocked.name }, 'block alert: no phone to send to (set the phone of the home system)');
+  const others = [...arms.values()].filter((a) => a !== blocked && a.online);
+  const sender = others.find((a) => a.stationId === blocked.stationId) || others[0];
+  if (!sender) return log.warn({ arm: blocked.name }, 'block alert: no connected arm to send from');
+  const { data: me } = await db.from('arms').select('phone,sent_today,sent_day').eq('id', blocked.id).maybeSingle();
+  const today = new Date().toISOString().slice(0, 10);
+  const time = new Date().toLocaleTimeString('he-IL', { timeZone: 'Asia/Jerusalem', hour: '2-digit', minute: '2-digit' });
+  const text = [
+    '⚠️ *זרוע נחסמה*',
+    `${blocked.name}${me?.phone ? ` (${me.phone})` : ''}${own && !own.is_home ? ` – ${own.name}` : ''}`,
+    `וואטסאפ חסם את המספר ב-${time}${me?.sent_day === today ? ` אחרי ${Number(me.sent_today || 0).toLocaleString('he-IL')} הודעות היום` : ''}.`,
+    'הזרוע הפסיקה לשלוח, ושאר הזרועות ממשיכות. בדוק בטלפון של המספר, ואחרי שישוחרר לחץ "התחבר" במסך הזרועות.',
+  ].join('\n');
+  for (const p of to) {
+    await sender.send(`${p}@s.whatsapp.net`, text).catch((e) => log.warn({ arm: blocked.name, err: e.message }, 'block alert: send failed'));
+  }
+  log.info({ arm: blocked.name, to: to.length, via: sender.name }, 'block alert sent');
 }
 
 // While the database is failing, back off (up to a minute) instead of hammering it –
