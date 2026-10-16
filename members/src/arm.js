@@ -116,8 +116,10 @@ class Arm {
       markOnlineOnConnect: false,
       syncFullHistory: false,
       shouldSyncHistoryMessage: () => false,
-      // this tool never reads messages
-      shouldIgnoreJid: (jid) => !String(jid).endsWith('@g.us'),
+      // Only skip broadcast channels. Private messages must NOT be ignored: they include key sharing and
+      // sync messages from the arm's own phone, and a linked device that never answers them is logged out
+      // by WhatsApp (that is what disconnected the arm every so often).
+      shouldIgnoreJid: (jid) => String(jid) === 'status@broadcast' || String(jid).endsWith('@newsletter'),
     });
     this.sock = sock;
     sock.ev.on('creds.update', saveCreds);
@@ -160,6 +162,9 @@ class Arm {
       if (u.connection === 'close') {
         const code = u.lastDisconnect?.error?.output?.statusCode;
         this.lastError = u.lastDisconnect?.error?.message || String(code || '');
+        let detail = '';
+        try { detail = JSON.stringify(u.lastDisconnect?.error?.data ?? u.lastDisconnect?.error?.output?.payload ?? '').slice(0, 300); } catch {}
+        log('connection closed', code, this.lastError, detail);
         if (code === DisconnectReason.loggedOut) {
           log('arm logged out – needs a new QR');
           this.state = 'logged_out';
