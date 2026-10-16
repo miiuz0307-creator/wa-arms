@@ -269,6 +269,7 @@ main{margin-top:-44px;position:relative;z-index:2;padding-block:0 140px}
 <div id="app" class="hidden">
   <div class="band gut">
     <div class="max">
+      <div id="netBar" class="install hidden"><span>אין חיבור לשרת, מנסה שוב…</span></div>
       <div id="updBar" class="install hidden">
         <span>יש גרסה חדשה</span>
         <button id="updBtn">עדכן עכשיו</button>
@@ -621,6 +622,7 @@ function renderJobs() {
 }
 
 let wasRunning = false;
+let fails = 0;
 async function tick() {
   try {
     const [st, jb] = await Promise.all([api('/status'), api('/jobs')]);
@@ -629,7 +631,8 @@ async function tick() {
     if (wasRunning && !st.running && S.result) S.result = await api('/lookup', { number: S.result.number }).catch(() => S.result);
     wasRunning = st.running;
     renderResults();
-  } catch {}
+    fails = 0; $('netBar').classList.add('hidden');
+  } catch { if (++fails >= 2) $('netBar').classList.remove('hidden'); }
 }
 
 // ---- settings ----
@@ -673,12 +676,19 @@ async function checkVersion() {
     const r = await fetch('/version', { cache: 'no-store' }); const { version } = await r.json();
     if (!myVersion) { myVersion = version; return; }
     if (version === myVersion) return;
-    if (!busyUI()) return location.reload();
+    if (!busyUI()) return safeReload();
     if (!newVersion) { newVersion = true; $('updBar').classList.remove('hidden'); }
   } catch {}
 }
-$('updBtn').onclick = () => location.reload();
-setInterval(() => { if (newVersion && !busyUI()) location.reload(); else checkVersion(); }, 30_000);
+// reload only once the new version actually answers – during the switch-over the server is down for a few seconds
+async function safeReload() {
+  for (let i = 0; i < 40; i++) {
+    try { const r = await fetch('/health', { cache: 'no-store' }); if (r.ok) return location.reload(); } catch {}
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+}
+$('updBtn').onclick = () => safeReload();
+setInterval(() => { if (newVersion && !busyUI()) safeReload(); else checkVersion(); }, 30_000);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { checkVersion(); tick(); } });
 checkVersion();
 

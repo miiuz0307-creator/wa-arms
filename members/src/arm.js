@@ -74,6 +74,9 @@ class Arm {
     const intl = toIntl(raw);
     if (!intl) throw new Error('מספר לא תקין');
     if (this.state === 'online') throw new Error('הזרוע כבר מחוברת');
+    if (fs.existsSync(path.join(this.authDir, 'creds.json'))) {
+      try { if (JSON.parse(fs.readFileSync(path.join(this.authDir, 'creds.json'), 'utf8'))?.me?.id) throw new Error('linked'); } catch (e) { if (e.message === 'linked') throw new Error('הזרוע מקושרת וממתינה לחיבור מחדש. נסה שוב בעוד דקה.'); }
+    }
     this.pairPhone = intl;
     this.pairCode = null;
     this.pairError = null;
@@ -177,7 +180,7 @@ class Arm {
         }
         // Waiting to be linked: the QR / code ran out (408). Start again right away so a fresh QR is on screen –
         // backing off here hid the QR for up to a minute at a time. A pairing code is not renewed by itself.
-        if (!state.creds?.registered) {
+        if (!state.creds?.me?.id) { // never linked yet (after a QR link `registered` can stay false, `me` is set)
           if (this.pairCode) {
             this.pairPhone = null;
             this.pairCode = null;
