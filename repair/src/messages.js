@@ -9,6 +9,7 @@ const STATUS = {
   awaiting_approval: 'ממתין לאישור שלך',
   deploying: 'מעלה לשרת הפעיל',
   deployed: 'הועלה בהצלחה',
+  merged: 'מוכן – ממתין ב"ניהול עדכונים"',
   no_fix: 'נבדק – אין תיקון בקוד',
   blocked: 'ממתין להשלמת הגדרות',
   rejected: 'נדחה',
@@ -68,6 +69,13 @@ const menu = () =>
     '',
     '_אם התפריט לא מופיע, כתבו את המספר:_',
     ...MENU.map((b) => `*${b.digit}* – ${b.title.replace(' | ', ' ')}`),
+  ].join('\n');
+
+const mergedForRelease = (t, sha) =>
+  [
+    `✅ *פנייה #${t.id}* – התיקון אושר ונשמר בקוד (גרסה ${String(sha || '').slice(0, 7)}).`,
+    '',
+    '🛡️ השרת הפעיל *לא* שונה. עדכונים לשרת הפעיל עולים רק דרך *"ניהול עדכונים"* באתר BotiX, אחרי האישור שלך שם.',
   ].join('\n');
 
 const askReport = 'מעולה. כתבו לי מה לא עובד, במילים פשוטות. אפשר לצרף צילום מסך.\nלדוגמה: "ההפצה לא עובדת" או "זרוע 2 מנותקת".';
@@ -207,6 +215,7 @@ module.exports = {
   MENU,
   MENU_BUTTON,
   menuRows,
+  mergedForRelease,
   menu,
   askReport,
   askQuestion,

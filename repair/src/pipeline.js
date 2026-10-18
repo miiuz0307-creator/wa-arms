@@ -451,8 +451,6 @@ function createPipeline(deps) {
     const touched = servicesFor(files, allServices);
     const prev = {};
     try {
-      if (!railway.ready('production')) throw new Error('חסר RAILWAY_PROD_TOKEN – אי אפשר לעקוב אחרי ההעלאה ולחזור אחורה');
-
       // the code that goes to production must be exactly the code that passed staging:
       // same fix commit, built on the same main
       const stagedSha = t.staging_result?.sha;
@@ -472,6 +470,15 @@ function createPipeline(deps) {
         if (!again.ok) throw new Error(`הבדיקה החוזרת בסביבת הבדיקה נכשלה: ${again.reason}`);
       });
 
+      if (cfg.prodMode === 'release') {
+        // production is changed only through the owner's update center: merge, never deploy or roll back here
+        const merged = await github.mergePr(t.pr_number, `BotiX Repair #${t.id} (אושר על ידי ${by})`, stagedSha);
+        t = await update(t.id, { status: 'merged', deploy: { by, at: new Date().toISOString(), mergeSha: merged.sha, mode: 'release' } });
+        await audit(t.id, 'system', 'merged', `התיקון מוזג לענף ${cfg.github.baseBranch}. השרת הפעיל לא שונה – ההעלאה נעשית רק דרך "ניהול עדכונים"`, { sha: merged.sha });
+        await notify(t, M.mergedForRelease(t, merged.sha), { toApprovers: true });
+        return;
+      }
+      if (!railway.ready('production')) throw new Error('חסר RAILWAY_PROD_TOKEN – אי אפשר לעקוב אחרי ההעלאה ולחזור אחורה');
       for (const svc of allServices) {
         const d = await railway.latest('production', svc, { successfulOnly: true });
         if (d) prev[svc] = d.id;

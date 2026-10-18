@@ -59,6 +59,7 @@ function load() {
       projectId: env('RAILWAY_PROJECT_ID', '4cc8f773-1f5c-40a1-b593-2d985e10ffb1'),
       prodEnvId: env('RAILWAY_PROD_ENV_ID', 'b8a4493e-241e-443a-96c4-9ce5afea5729'),
       stagingEnvId: env('RAILWAY_STAGING_ENV_ID'),
+      stagingProjectId: env('RAILWAY_STAGING_PROJECT_ID'), // when staging is a separate Railway project
       // project tokens are per environment – one for production, one for staging
       prodToken: env('RAILWAY_PROD_TOKEN'),
       stagingToken: env('RAILWAY_STAGING_TOKEN'),
@@ -72,6 +73,10 @@ function load() {
     approvalMinutes: num('APPROVAL_MINUTES', 30),
     deployWaitMin: num('DEPLOY_WAIT_MIN', 15),
     autoRollback: bool('AUTO_ROLLBACK', true),
+    // PROD_MODE=release (default): an approved fix is merged into the base branch and NOT deployed –
+    // production changes only through the owner's update center ("ניהול עדכונים").
+    // PROD_MODE=deploy: the bot waits for Railway to deploy the merge itself (only for auto-deploying setups).
+    prodMode: env('PROD_MODE', 'release') === 'deploy' ? 'deploy' : 'release',
     // tap buttons in WhatsApp (not official for QR-linked numbers; WA_BUTTONS=false sends plain text)
     waButtons: bool('WA_BUTTONS', true),
     // WA_GROUP_ONLY=true: answer only inside the command group (private chats ignored)

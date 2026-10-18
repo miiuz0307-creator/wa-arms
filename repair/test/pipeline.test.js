@@ -461,3 +461,16 @@ test('a question gets a read-only answer, no ticket; secrets in the answer are m
   await s.say(ASKER, 'שאלה איך עובדת ההפצה?', { raw: true });
   assert.equal((await s.store.listTickets()).length, 0);
 });
+
+test('release mode (default): approval merges only – no Railway deploy, no rollback', async () => {
+  const s = await setup({ cfg: { prodMode: 'release' } });
+  await s.say(ASKER, 'ההפצה לא עובדת, נתקע על שולח');
+  await s.runNext();
+  const code = codeFrom(s.wa.textsTo(OWNER));
+  await s.say(OWNER, `אשר ${code}`, { raw: true });
+  await h.waitFor(async () => (await s.store.getTicket(1)).status === 'merged');
+  assert.equal(s.github.calls.merged.length, 1);
+  assert.equal(s.railway.calls.waits.filter((w) => w.env === 'production').length, 0, 'no production deploy');
+  assert.equal(s.railway.calls.rollback.length, 0, 'no rollback');
+  assert.ok(s.wa.textsTo(OWNER).some((t) => t.includes('ניהול עדכונים')));
+});

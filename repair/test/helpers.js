@@ -35,6 +35,7 @@ function makeCfg(over = {}) {
     autoRollback: true,
     intakeGraceSec: 0,
     groupOnly: false,
+    prodMode: 'deploy',
     runnerUser: 'runner',
     ...over,
   };

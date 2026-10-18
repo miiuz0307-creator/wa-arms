@@ -6,11 +6,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function createRailway(cfg, { fetchImpl = fetch, pollMs = 15_000 } = {}) {
   const envs = {
-    production: { token: cfg.prodToken, envId: cfg.prodEnvId, services: cfg.services || {} },
-    staging: { token: cfg.stagingToken, envId: cfg.stagingEnvId, services: cfg.stagingServices || cfg.services || {} },
+    production: { token: cfg.prodToken, envId: cfg.prodEnvId, projectId: cfg.projectId, services: cfg.services || {} },
+    // staging may live in its own Railway project (a fully separate copy, no shared variables)
+    staging: { token: cfg.stagingToken, envId: cfg.stagingEnvId, projectId: cfg.stagingProjectId || cfg.projectId, services: cfg.stagingServices || cfg.services || {} },
   };
 
-  const ready = (name) => Boolean(envs[name].token && envs[name].envId && cfg.projectId);
+  const ready = (name) => Boolean(envs[name].token && envs[name].envId && envs[name].projectId);
 
   async function gql(name, query, variables) {
     const e = envs[name];
@@ -33,7 +34,7 @@ function createRailway(cfg, { fetchImpl = fetch, pollMs = 15_000 } = {}) {
   async function deployments(name, service, { first = 5, successfulOnly = false } = {}) {
     const sid = serviceId(name, service);
     if (!sid) throw new Error(`שירות לא מוכר: ${service}`);
-    const input = { projectId: cfg.projectId, serviceId: sid, environmentId: envs[name].envId };
+    const input = { projectId: envs[name].projectId, serviceId: sid, environmentId: envs[name].envId };
     if (successfulOnly) input.status = { successfulOnly: true };
     const d = await gql(
       name,
