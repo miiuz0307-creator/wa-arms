@@ -251,14 +251,14 @@ function createPipeline(deps) {
 
       // ---------- staging: mandatory ----------
       checkCancel(t.id);
-      if (!railway.ready('staging')) {
+      if (!stagingReady()) {
         t = await update(t.id, { status: 'blocked', staging_result: { ok: false, skipped: true, reason: 'not_configured', sha } });
         await audit(t.id, 'system', 'blocked', 'סביבת הבדיקה לא מוגדרת – אין העלאה לייצור');
         await notify(t, M.blocked(t, 'סביבת הבדיקה (staging) עוד לא הוגדרה, ולכן לא אבקש אישור להעלאה לשרת הפעיל.'), { toApprovers: true });
         return;
       }
       t = await update(t.id, { status: 'staging' });
-      const staging = await withStagingLock(() => runStaging(t, names, () => ws.pushTo(w, cfg.github.stagingBranch, { force: true })));
+      const staging = await withStagingLock(() => runStaging(t, names, () => ws.pushTo(w, cfg.github.stagingBranch, { force: true }), sha));
       staging.sha = sha;
       t = await update(t.id, { staging_result: staging });
       if (!staging.ok) {
@@ -320,11 +320,38 @@ function createPipeline(deps) {
   }
 
   /** Push to the staging branch (via `push`), wait for Railway, health-check. */
-  async function runStaging(t, files, push) {
+  const stagingReady = () => railway.ready('staging') || Boolean(cfg.stagingVersionUrl);
+
+  /** No Railway token for staging: wait until the staging site reports the pushed commit. */
+  async function waitForVersion(expectSha) {
+    const fetchJson = deps.fetchJson || (async (u) => (await fetch(u, { signal: AbortSignal.timeout(15_000), headers: { 'cache-control': 'no-cache' } })).json());
+    const until = Date.now() + cfg.deployWaitMin * 60_000;
+    let seen = null;
+    while (Date.now() < until) {
+      try {
+        seen = (await fetchJson(cfg.stagingVersionUrl))?.sha || null;
+        if (seen && expectSha && seen === expectSha) return { ok: true, sha: seen };
+      } catch {}
+      await new Promise((r) => setTimeout(r, deps.versionPollMs ?? 15_000));
+    }
+    return { ok: false, reason: `סביבת הבדיקה לא עלתה עם התיקון תוך ${cfg.deployWaitMin} דקות (רצה ${String(seen || 'לא ידוע').slice(0, 7)})` };
+  }
+
+  async function runStaging(t, files, push, expectSha) {
     const touched = servicesFor(files, allServices);
     const since = new Date();
     await push();
     await audit(t.id, 'system', 'staging_push', `התיקון נדחף לענף ${cfg.github.stagingBranch}`);
+    if (!railway.ready('staging')) {
+      const v = await waitForVersion(expectSha);
+      let result = v.ok ? { ok: true, version: v.sha } : { ok: false, reason: v.reason };
+      if (result.ok && cfg.stagingHealthUrls.length) {
+        const h = await health(cfg.stagingHealthUrls);
+        result = h.ok ? { ...result, health: h.results } : { ok: false, reason: 'בדיקת תקינות נכשלה', health: h.results };
+      }
+      await audit(t.id, 'system', result.ok ? 'staging_passed' : 'staging_failed', result.ok ? 'סביבת הבדיקה עלתה עם התיקון ותקינה' : `סביבת הבדיקה נכשלה: ${result.reason}`, result);
+      return result;
+    }
     const waits = await Promise.all(
       allServices.map(async (svc) => {
         const must = touched.includes(svc) || touched.length === 0;
@@ -464,7 +491,7 @@ function createPipeline(deps) {
         const stagingNow = await ws.remoteSha(cfg.github.stagingBranch);
         if (stagingNow === stagedSha) return;
         await audit(t.id, 'system', 'restage', 'סביבת הבדיקה הכילה גרסה אחרת – מעלה אליה שוב את התיקון הזה לפני הייצור');
-        const again = await runStaging(t, files, () => ws.pushBranchTo(t.id, t.branch, cfg.github.stagingBranch));
+        const again = await runStaging(t, files, () => ws.pushBranchTo(t.id, t.branch, cfg.github.stagingBranch), stagedSha);
         again.sha = stagedSha;
         t = await update(t.id, { staging_result: again });
         if (!again.ok) throw new Error(`הבדיקה החוזרת בסביבת הבדיקה נכשלה: ${again.reason}`);

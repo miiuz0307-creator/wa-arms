@@ -474,3 +474,16 @@ test('release mode (default): approval merges only – no Railway deploy, no rol
   assert.equal(s.railway.calls.rollback.length, 0, 'no rollback');
   assert.ok(s.wa.textsTo(OWNER).some((t) => t.includes('ניהול עדכונים')));
 });
+
+test('staging without a Railway token: waits until the staging site reports the pushed commit', async () => {
+  let calls = 0;
+  const s = await setup({ railway: { staging: false }, cfg: { stagingVersionUrl: 'https://staging.invalid/api/version' } });
+  s.pipeline = require('../src/pipeline').createPipeline({ ...s, fetchJson: async () => ({ sha: ++calls < 2 ? 'old' : 'sha1' }), versionPollMs: 1 });
+  await s.store.createTicket({ requester_phone: ASKER, requester_name: 'דני', description: 'ההפצה לא עובדת', images: [], graceSec: 0 });
+  const t = await s.store.claimNextTicket();
+  await s.pipeline.processTicket(t);
+  const after = await s.store.getTicket(t.id);
+  assert.equal(after.status, 'awaiting_approval');
+  assert.equal(after.staging_result.version, 'sha1');
+  assert.ok(calls >= 2);
+});

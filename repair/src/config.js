@@ -69,6 +69,8 @@ function load() {
 
     prodHealthUrls: list('PROD_HEALTH_URLS'),
     stagingHealthUrls: list('STAGING_HEALTH_URLS'),
+    // without a staging Railway token: wait until this URL reports the pushed commit ({"sha": "..."})
+    stagingVersionUrl: env('STAGING_VERSION_URL') || list('STAGING_HEALTH_URLS').find((u) => /\/api\/version$/.test(u)) || '',
 
     approvalMinutes: num('APPROVAL_MINUTES', 30),
     deployWaitMin: num('DEPLOY_WAIT_MIN', 15),

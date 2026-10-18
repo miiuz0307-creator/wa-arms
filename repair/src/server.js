@@ -69,7 +69,7 @@ function createServer({ cfg, store, wa, railway, github, claude, pipeline, log, 
       { key: 'claude', label: 'חיבור ל-Claude', ok: claude.ready(), hint: 'הריצו במחשב `claude setup-token` והוסיפו את התוצאה כ-CLAUDE_CODE_OAUTH_TOKEN.' },
       { key: 'github', label: 'גישה לקוד (GitHub)', ok: github.ready(), hint: 'צרו טוקן GitHub מוגבל למאגר wa-arms בלבד והוסיפו כ-GITHUB_TOKEN.' },
       { key: 'logs', label: 'לוגים וחזרה לאחור (Railway)', ok: railway.ready('production'), hint: 'צרו Project Token לסביבת production והוסיפו כ-RAILWAY_PROD_TOKEN.' },
-      { key: 'staging', label: 'סביבת בדיקה (staging)', ok: railway.ready('staging'), hint: 'צרו סביבת staging ב-Railway שעוקבת אחרי הענף staging, והוסיפו RAILWAY_STAGING_ENV_ID ו-RAILWAY_STAGING_TOKEN.' },
+      { key: 'staging', label: 'סביבת בדיקה (staging)', ok: railway.ready('staging') || Boolean(cfg.stagingVersionUrl), hint: 'צרו סביבת staging ב-Railway שעוקבת אחרי הענף staging, והוסיפו RAILWAY_STAGING_ENV_ID ו-RAILWAY_STAGING_TOKEN.' },
       { key: 'runner', label: 'הפרדת הרשאות ל-Claude', ok: Boolean(ws.runner), hint: 'השרת צריך לרוץ מתוך ה-Dockerfile המצורף (משתמש runner נפרד).' },
     ];
   }
