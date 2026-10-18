@@ -5,16 +5,21 @@ import { createClient } from 'npm:@supabase/supabase-js@2.45.4';
 import webpush from 'npm:web-push@3.6.7';
 
 const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
-webpush.setVapidDetails(
-  Deno.env.get('VAPID_SUBJECT') || 'mailto:admin@botix.app',
-  Deno.env.get('VAPID_PUBLIC_KEY')!,
-  Deno.env.get('VAPID_PRIVATE_KEY')!,
-);
+// the push keys live in the database (ops.push_keys, readable only by this function's service role)
+let keysReady = false;
+async function keys() {
+  if (keysReady) return;
+  const { data, error } = await db.rpc('push_keys_get');
+  if (error || !data?.public_key) throw new Error(`push keys: ${error?.message || 'missing'}`);
+  webpush.setVapidDetails(data.subject || 'mailto:admin@botix.app', data.public_key, data.private_key);
+  keysReady = true;
+}
 
 Deno.serve(async (req) => {
   // same internal key as the release runner: only the database calls this
   const { data: ok } = await db.rpc('runner_key_ok', { p_key: req.headers.get('x-runner-key') || '' });
   if (ok !== true) return new Response('no', { status: 401 });
+  await keys();
   const { id } = await req.json().catch(() => ({}));
   if (!id) return Response.json({ ok: false, error: 'no id' }, { status: 400 });
 

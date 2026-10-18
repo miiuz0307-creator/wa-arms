@@ -190,3 +190,19 @@ begin
   where (p_station is null and not s.is_home and s.status = 'active') or s.id = p_station;
   return mid;
 end $function$;
+
+-- the push sender's key pair (the private key is filled in once, outside this file)
+create schema if not exists ops;
+create table if not exists ops.push_keys (
+  id int primary key default 1 check (id = 1),
+  public_key text not null,
+  private_key text not null,
+  subject text not null default 'mailto:admin@botix.app'
+);
+revoke all on ops.push_keys from public, anon, authenticated;
+create or replace function public.push_keys_get() returns json
+language sql stable security definer set search_path = public as $$
+  select json_build_object('public_key', public_key, 'private_key', private_key, 'subject', subject) from ops.push_keys where id = 1
+$$;
+revoke all on function public.push_keys_get() from public, anon, authenticated;
+grant execute on function public.push_keys_get() to service_role;
