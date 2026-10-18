@@ -101,6 +101,18 @@ async function main() {
   if (await hasSession(store, cfg.sessionSecret)) wa.connect().catch((e) => log.error({ err: e.message }, 'auto-connect failed'));
 
   pipeline.start();
+
+  // tell in the server log whether the Railway keys actually work (no secrets printed)
+  for (const env of ['production', 'staging']) {
+    if (!railway.ready(env)) {
+      log.info({ env }, 'railway access: not configured');
+      continue;
+    }
+    railway
+      .latest(env, 'engine')
+      .then((d) => log.info({ env, ok: true, deployment: d?.status || 'none' }, 'railway access'))
+      .catch((e) => log.warn({ env, ok: false, err: String(e.message).slice(0, 200) }, 'railway access'));
+  }
   const server = createServer({ cfg, store, wa, railway, github, claude, pipeline, log, ws });
   server.listen(cfg.port, () => log.info({ port: cfg.port }, 'BotiX AI Repair is up'));
 
