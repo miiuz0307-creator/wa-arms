@@ -11,16 +11,23 @@ self.addEventListener('push', (e) => {
   } catch {
     d = { title: 'התראה', body: e.data ? e.data.text() : '' };
   }
+  // the level the sender chose shows in the title (a web notification cannot have its own colour)
+  const level = d.level || (d.urgent ? 'urgent' : 'info');
+  const mark = level === 'urgent' ? '🔴 ' : level === 'warning' ? '🟠 ' : '';
+  const strong = level !== 'info';
   e.waitUntil(
-    self.registration.showNotification(d.title || 'התראה מהמערכת', {
+    self.registration.showNotification(mark + (d.title || 'התראה מהמערכת'), {
       body: d.body || '',
-      icon: '/icon-192.png',
-      badge: '/icon-192.png',
+      // same logo as the login screen; the badge is the small white mark in the phone's top bar
+      icon: '/notify-icon.png',
+      badge: '/notify-badge.png',
+      vibrate: strong ? [300, 120, 300, 120, 300] : [200],
+      silent: false,
       dir: 'rtl',
       lang: 'he',
       tag: d.tag,
       renotify: !!d.tag,
-      requireInteraction: !!d.urgent,
+      requireInteraction: level === 'urgent',
       data: { url: d.url || '/notifications' },
     }),
   );

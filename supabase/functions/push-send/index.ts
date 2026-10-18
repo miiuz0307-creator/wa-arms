@@ -40,6 +40,7 @@ Deno.serve(async (req) => {
     url: n.url || '/notifications',
     tag: n.arm_id ? `arm-${n.arm_id}` : `n-${n.id}`,
     urgent: n.level === 'urgent',
+    level: n.level,
   });
   let sent = 0;
   await Promise.all(
@@ -47,7 +48,7 @@ Deno.serve(async (req) => {
       try {
         await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload, {
           TTL: 6 * 3600,
-          urgency: n.level === 'urgent' ? 'high' : 'normal',
+          urgency: 'high',
         });
         sent++;
         await db.from('push_subscriptions').update({ last_ok_at: new Date().toISOString(), failures: 0 }).eq('id', s.id);
