@@ -45,6 +45,11 @@ function fakeWa() {
     sent,
     send: async (to, text) => sent.push({ to, text }),
     sendButtons: async (to, text, buttons) => sent.push({ to, text, buttons }),
+    menuTests: [],
+    async sendMenuTest(to) {
+      this.menuTests.push(to);
+      return [{ variant: 'A', sent: true }, { variant: 'B', sent: false, error: 'x' }, { variant: 'C', sent: true }];
+    },
     status: () => ({ state: 'connected', qr: null, me: '972500000000', error: null }),
     connect: async () => {},
     disconnect: async () => {},

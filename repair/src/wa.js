@@ -168,6 +168,14 @@ function buttonIdOf(m = {}) {
   return m.buttonsResponseMessage?.selectedButtonId || m.templateButtonReplyMessage?.selectedId || m.listResponseMessage?.singleSelectReply?.selectedRowId || '';
 }
 
+// which kind of message arrived – used by the menu test to tell which menu style WhatsApp delivered
+function kindOf(m = {}) {
+  if (m.interactiveResponseMessage) return 'native_flow';
+  if (m.listResponseMessage) return 'list';
+  if (m.buttonsResponseMessage || m.templateButtonReplyMessage) return 'buttons';
+  return 'text';
+}
+
 const textOf = (m = {}) =>
   buttonIdOf(m) || m.conversation || m.extendedTextMessage?.text || m.imageMessage?.caption || m.documentMessage?.caption || '';
 
@@ -326,7 +334,7 @@ function createWhatsApp({ store, secret, log, onMessage, onOpen, onGroupFound, b
         if (pn) phone = String(pn).split('@')[0].split(':')[0];
       } catch {}
     }
-    log.info({ chat: jid.endsWith('@g.us') ? 'group' : 'private', from: phone ? `${phone.slice(0, 5)}***${phone.slice(-2)}` : null, lid: lid ? 'yes' : 'no', image: Boolean(msg.imageMessage) }, 'message received');
+    log.info({ chat: jid.endsWith('@g.us') ? 'group' : 'private', from: phone ? `${phone.slice(0, 5)}***${phone.slice(-2)}` : null, lid: lid ? 'yes' : 'no', image: Boolean(msg.imageMessage), kind: kindOf(msg) }, 'message received');
     let image = null;
     if (msg.imageMessage) {
       const size = Number(msg.imageMessage.fileLength || 0);
@@ -347,7 +355,7 @@ function createWhatsApp({ store, secret, log, onMessage, onOpen, onGroupFound, b
         },
       };
     }
-    await onMessage({ jid, phone, lid, name: m.pushName || '', text: textOf(msg).trim(), image });
+    await onMessage({ jid, phone, lid, name: m.pushName || '', text: textOf(msg).trim(), kind: kindOf(msg), image });
   }
 
   function considerGroup(id, subject) {
@@ -439,6 +447,89 @@ function createWhatsApp({ store, secret, log, onMessage, onOpen, onGroupFound, b
     }
   }
 
+  // Send a message built by hand (interactive/list) with the extra "biz" node WhatsApp expects
+  // for these types. Not officially supported for QR-linked numbers – used by the menu test.
+  async function relayRaw(jid, content, bizContent) {
+    const { generateWAMessageFromContent } = await lib();
+    if (!generateWAMessageFromContent || !sock.relayMessage) throw new Error('הספרייה לא תומכת בשליחה כזו');
+    const msg = generateWAMessageFromContent(jid, content, { userJid: sock.user?.id });
+    await sock.relayMessage(jid, msg.message, { messageId: msg.key.id, additionalNodes: [{ tag: 'biz', attrs: {}, content: bizContent }] });
+    remember(msg.key.id, msg.message);
+    return msg.key.id;
+  }
+
+  /**
+   * Menu test: three menu styles, each labelled, so a real phone shows which ones WhatsApp renders.
+   *   A – "פתיחת תפריט" button with a list (native flow single_select)
+   *   B – classic list message (listMessage)
+   *   C – three tap buttons (quick_reply)
+   * Returns what was sent and what failed; nothing else in the bot changes.
+   */
+  async function sendMenuTest(to) {
+    if (!sock || status.state !== 'connected') throw new Error('WhatsApp לא מחובר');
+    const jid = to.includes('@') ? to : jidOf(to);
+    const rows = (v) => [1, 2, 3].map((n) => ({ id: `test:${v}${n}`, title: `אפשרות ${n}`, description: `בדיקה ${v} – אפשרות ${n}` }));
+    const flowNode = [{ tag: 'interactive', attrs: { type: 'native_flow', v: '1' }, content: [{ tag: 'native_flow', attrs: { v: '9', name: 'mixed' } }] }];
+    const variants = [
+      {
+        v: 'A',
+        send: () =>
+          relayRaw(jid, {
+            interactiveMessage: {
+              header: { title: 'בדיקה A', subtitle: '', hasMediaAttachment: false },
+              body: { text: '🧪 בדיקה A: לחצו על "פתיחת תפריט" ובחרו אפשרות.' },
+              footer: { text: 'BotiX' },
+              nativeFlowMessage: {
+                buttons: [{ name: 'single_select', buttonParamsJson: JSON.stringify({ title: 'פתיחת תפריט', sections: [{ title: 'בדיקה A', rows: rows('A').map((r) => ({ header: '', ...r })) }] }) }],
+                messageParamsJson: '',
+              },
+            },
+          }, flowNode),
+      },
+      {
+        v: 'B',
+        send: () =>
+          relayRaw(jid, {
+            listMessage: {
+              title: 'בדיקה B',
+              description: '🧪 בדיקה B: לחצו על "פתיחת תפריט" ובחרו אפשרות.',
+              buttonText: 'פתיחת תפריט',
+              footerText: 'BotiX',
+              listType: 1,
+              sections: [{ title: 'בדיקה B', rows: rows('B').map((r) => ({ title: r.title, description: r.description, rowId: r.id })) }],
+            },
+          }, [{ tag: 'list', attrs: { type: 'product_list', v: '2' } }]),
+      },
+      {
+        v: 'C',
+        send: () =>
+          relayRaw(jid, {
+            interactiveMessage: {
+              header: { title: 'בדיקה C', subtitle: '', hasMediaAttachment: false },
+              body: { text: '🧪 בדיקה C: לחצו על אחד הכפתורים.' },
+              footer: { text: 'BotiX' },
+              nativeFlowMessage: {
+                buttons: rows('C').map((r) => ({ name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: r.title, id: r.id }) })),
+                messageParamsJson: '',
+              },
+            },
+          }, flowNode),
+      },
+    ];
+    const results = [];
+    for (const x of variants) {
+      try {
+        await x.send();
+        results.push({ variant: x.v, sent: true });
+      } catch (e) {
+        results.push({ variant: x.v, sent: false, error: e.message });
+      }
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+    log.info({ results }, 'menu test sent');
+    return results;
+  }
+
   async function disconnect({ logout = false } = {}) {
     stopped = true;
     clearTimeout(reconnectTimer);
@@ -462,6 +553,7 @@ function createWhatsApp({ store, secret, log, onMessage, onOpen, onGroupFound, b
     disconnect,
     send,
     sendButtons,
+    sendMenuTest,
     lidOf,
     setCommandGroup,
     commandGroup: () => commandGroup,
@@ -469,4 +561,4 @@ function createWhatsApp({ store, secret, log, onMessage, onOpen, onGroupFound, b
   };
 }
 
-module.exports = { createWhatsApp, useDbAuthState, hasSession, textOf, buttonIdOf, ignoredJid, COMMAND_GROUP_NAME };
+module.exports = { createWhatsApp, useDbAuthState, hasSession, textOf, buttonIdOf, kindOf, ignoredJid, COMMAND_GROUP_NAME };

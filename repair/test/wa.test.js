@@ -50,3 +50,10 @@ test('a tapped button is read as its id', () => {
   assert.equal(textOf({ buttonsResponseMessage: { selectedButtonId: 'menu:report' } }), 'menu:report');
   assert.equal(textOf({ conversation: 'שלום' }), 'שלום');
 });
+
+test('reply kind tells which menu style answered', () => {
+  const { kindOf } = require('../src/wa');
+  assert.equal(kindOf({ interactiveResponseMessage: {} }), 'native_flow');
+  assert.equal(kindOf({ listResponseMessage: {} }), 'list');
+  assert.equal(kindOf({ conversation: 'x' }), 'text');
+});

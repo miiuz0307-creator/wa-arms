@@ -404,3 +404,19 @@ test('"1" after the menu asks for the problem, then the description opens a tick
   await s.say('972503333333', '1', { raw: true }); // stranger: still nothing
   assert.equal(s.wa.textsTo('972503333333@s.whatsapp.net').length, 0);
 });
+
+test('menu test: approvers only; a tapped choice is confirmed with its kind', async () => {
+  const s = await setup();
+  await s.say(ASKER, 'בדיקת תפריט', { raw: true });
+  assert.equal(s.wa.menuTests.length, 0, 'requester cannot run it');
+  await s.say(OWNER, 'בדיקת תפריט', { raw: true });
+  assert.deepEqual(s.wa.menuTests, [`${OWNER}@s.whatsapp.net`]);
+  assert.ok(s.wa.textsTo(`${OWNER}@s.whatsapp.net`).some((t) => t.includes('לא נשלחו: B')));
+  await s.say(OWNER, 'בדיקת תפריט 052-123-4567', { raw: true });
+  assert.equal(s.wa.menuTests[1], '972521234567');
+  await s.intake.handle({ jid: `${OWNER}@s.whatsapp.net`, phone: OWNER, lid: null, name: '', text: 'test:A2', kind: 'native_flow', image: null });
+  assert.ok(s.wa.textsTo(`${OWNER}@s.whatsapp.net`).at(-1).includes('A2'));
+  assert.equal((await s.store.listTickets()).length, 0);
+  await s.intake.handle({ jid: '972509999999@s.whatsapp.net', phone: '972509999999', lid: null, name: '', text: 'test:A1', kind: 'native_flow', image: null });
+  assert.equal(s.wa.textsTo('972509999999@s.whatsapp.net').length, 0, 'strangers still ignored');
+});

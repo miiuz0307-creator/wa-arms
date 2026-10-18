@@ -13,7 +13,7 @@ const SESSION_MS = 30 * 60_000; // a conversation stays open 30 minutes after th
 
 // Explicit commands that carry a ticket number or approval code always work for approved numbers
 // (the bot asked for them). Anything else is answered only inside a conversation opened by "עזרה".
-const ALWAYS = new Set(['help', 'help_text', 'approve', 'reject', 'cancel', 'rollback', 'show']);
+const ALWAYS = new Set(['help', 'help_text', 'approve', 'reject', 'cancel', 'rollback', 'show', 'menu_test']);
 // a button tap from an earlier menu also works after the conversation timed out
 
 function parseCommand(raw) {
@@ -28,6 +28,8 @@ function parseCommand(raw) {
   if (t === 'menu:human') return { cmd: 'menu_human', button: true };
   if (t === '1') return { cmd: 'menu_report' };
   if (t === '2') return { cmd: 'menu_human' };
+  if ((m = /^בדיקת תפריט(?:\s+([\d\s+-]{9,16}))?$/.exec(t))) return { cmd: 'menu_test', to: m[1] ? m[1].replace(/\D/g, '') : null };
+  if ((m = /^test:([ABC]\d)$/.exec(t))) return { cmd: 'menu_test_reply', choice: m[1], button: true };
   if (/^(פקודות|commands)$/i.test(t)) return { cmd: 'commands' };
   if ((m = /^עזרה[\s,:.!-]+([\s\S]{4,})$/.exec(t))) return { cmd: 'help_text', text: m[1].trim() };
   if (/^(סטטוס|מצב)$/.test(t)) return { cmd: 'status' };
@@ -76,7 +78,7 @@ function createIntake({ cfg, store, wa, pipeline, log }) {
     return open.filter((t) => t.id < id).length;
   }
 
-  async function handle({ jid, phone, lid, name, text, image }) {
+  async function handle({ jid, phone, lid, name, text, kind = 'text', image }) {
     const sender = await findSender(phone, lid);
     if (!sender) {
       const who = phone || `lid:${lid}`;
@@ -118,6 +120,28 @@ function createIntake({ cfg, store, wa, pipeline, log }) {
       case 'help':
         if (jid.endsWith('@g.us')) return reply(jid, M.help(isApprover));
         return wa.sendButtons(jid, M.menu(), M.MENU).catch((e) => log.warn({ err: e.message }, 'reply failed'));
+      case 'menu_test': {
+        // approvers only: sends three menu styles to see which ones this WhatsApp shows
+        if (!isApprover) return denied(jid, actor, 'בדיקת תפריט');
+        const to = c.to ? require('./phones').toIntl(c.to) : jid;
+        if (!to) return reply(jid, 'המספר לא תקין. לדוגמה: בדיקת תפריט 0521234567');
+        await reply(jid, '🧪 שולח 3 סוגי תפריט (A, B, C)' + (c.to ? ` למספר ${formatLocal(to)}` : '') + '. לחצו על כל אחד שמופיע ובחרו אפשרות.');
+        let results;
+        try {
+          results = await wa.sendMenuTest(to);
+        } catch (e) {
+          return reply(jid, `❌ הבדיקה לא נשלחה: ${e.message}`);
+        }
+        await pipeline.audit(null, actor, 'menu_test', `בדיקת תפריט נשלחה: ${results.map((r) => `${r.variant}=${r.sent ? 'נשלח' : 'נכשל'}`).join(', ')}`, { results });
+        const failed = results.filter((r) => !r.sent);
+        if (failed.length) await reply(jid, `⚠️ לא נשלחו: ${failed.map((r) => `${r.variant} (${r.error})`).join(', ')}`);
+        return;
+      }
+      case 'menu_test_reply': {
+        await pipeline.audit(null, actor, 'menu_test_reply', `נבחרה ${c.choice} בהקשה (${kind}) – ${displayName}`, { choice: c.choice, kind });
+        log.info({ choice: c.choice, kind }, 'menu test: a tap arrived');
+        return reply(jid, `✅ הבחירה הגיעה לבוט: *${c.choice}* (סוג: ${kind}). תפריט ${c.choice[0]} עובד.`);
+      }
       case 'commands':
         return reply(jid, M.help(isApprover));
       case 'menu_report':
