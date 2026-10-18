@@ -79,6 +79,8 @@ function createIntake({ cfg, store, wa, pipeline, log }) {
   }
 
   async function handle({ jid, phone, lid, name, text, kind = 'text', image }) {
+    // for now the bot talks only inside the command group – private chats get no answer
+    if (cfg.groupOnly && !jid.endsWith('@g.us')) return;
     const sender = await findSender(phone, lid);
     if (!sender) {
       const who = phone || `lid:${lid}`;

@@ -420,3 +420,12 @@ test('menu test: approvers only; a tapped choice is confirmed with its kind', as
   await s.intake.handle({ jid: '972509999999@s.whatsapp.net', phone: '972509999999', lid: null, name: '', text: 'test:A1', kind: 'native_flow', image: null });
   assert.equal(s.wa.textsTo('972509999999@s.whatsapp.net').length, 0, 'strangers still ignored');
 });
+
+test('group-only mode: private chats are ignored, the group is answered', async () => {
+  const s = await setup({ cfg: { groupOnly: true } });
+  await s.say(OWNER, 'עזרה', { raw: true });
+  assert.equal(s.wa.sent.length, 0);
+  const G = '120363000000000000@g.us';
+  await s.intake.handle({ jid: G, phone: OWNER, lid: null, name: '', text: 'עזרה', image: null });
+  assert.ok(s.wa.textsTo(G).length > 0);
+});

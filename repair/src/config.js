@@ -74,6 +74,8 @@ function load() {
     autoRollback: bool('AUTO_ROLLBACK', true),
     // tap buttons in WhatsApp (not official for QR-linked numbers; WA_BUTTONS=false sends plain text)
     waButtons: bool('WA_BUTTONS', true),
+    // answer only inside the command group; private chats are ignored (default on)
+    groupOnly: bool('WA_GROUP_ONLY', true),
 
     // collect screenshots sent right after a description before starting work
     intakeGraceSec: num('INTAKE_GRACE_SEC', 20),

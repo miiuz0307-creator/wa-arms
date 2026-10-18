@@ -34,6 +34,7 @@ function makeCfg(over = {}) {
     deployWaitMin: 1,
     autoRollback: true,
     intakeGraceSec: 0,
+    groupOnly: false,
     runnerUser: 'runner',
     ...over,
   };
