@@ -42,14 +42,24 @@ const help = (isApprover) =>
 
 // The opening menu after "עזרה": tap a button, or type its number where buttons do not show.
 const MENU = [
-  { id: 'menu:report', title: '🛠 דיווח על תקלה', description: 'הבוט בודק ומתקן', digit: '1' },
-  { id: 'menu:ask', title: '💬 שאלה על המערכת', description: 'תשובה מהירה, בלי לשנות כלום', digit: '2' },
-  { id: 'menu:human', title: '👤 דבר עם נציג', description: 'הבוט מפסיק לענות לך', digit: '3' },
-  { id: 'menu:status', title: '📋 פניות פתוחות', description: 'מה קורה עכשיו', digit: '4' },
-  { id: 'menu:list', title: '🗂 פניות אחרונות', description: '5 הפניות האחרונות', digit: '5' },
-  { id: 'menu:commands', title: '❓ כל הפקודות', description: 'רשימת פקודות לכתיבה', digit: '6' },
+  { id: 'menu:report', section: 'פעולות מיידיות', title: '🛠 | דיווח על תקלה', description: 'מתארים מה לא עובד – הבוט בודק את הקוד והיומנים ומכין תיקון', digit: '1' },
+  { id: 'menu:ask', section: 'פעולות מיידיות', title: '💬 | שאלה על המערכת', description: 'תשובה מהירה מהקוד והיומנים, בלי לשנות כלום', digit: '2' },
+  { id: 'menu:human', section: 'פעולות מיידיות', title: '👤 | דבר עם נציג', description: 'הבוט מפסיק לענות לך ונציג ממשיך את השיחה', digit: '3' },
+  { id: 'menu:status', section: 'מעקב ובקרה', title: '📋 | פניות פתוחות', description: 'מה בטיפול עכשיו', digit: '4' },
+  { id: 'menu:list', section: 'מעקב ובקרה', title: '🗂 | פניות אחרונות', description: '5 הפניות האחרונות והמצב שלהן', digit: '5' },
+  { id: 'menu:commands', section: 'עזרה', title: '❓ | כל הפקודות', description: 'רשימת הפקודות שאפשר לכתוב', digit: '6' },
 ];
 const MENU_BUTTON = 'פתיחת תפריט';
+
+/** The menu rows with live numbers in the descriptions (like "3 בטיפול · 1 ממתין לאישור"). */
+function menuRows({ open = 0, waiting = 0, last = null } = {}) {
+  const live = {
+    'menu:status': open || waiting ? `🟠 ${open} בטיפול · ⏳ ${waiting} ממתינים לאישור שלך` : '🟢 אין פניות פתוחות כרגע',
+    'menu:list': last ? `אחרונה: #${last.id} – ${statusLabel(last.status)}` : 'עוד אין פניות',
+  };
+  return MENU.map((r) => ({ ...r, description: `${live[r.id] || r.description}\n» קיצור מהיר: כתבו ${r.digit}` }));
+}
+
 const menu = () =>
   [
     '🤖 *BotiX AI Repair*',
@@ -57,7 +67,7 @@ const menu = () =>
     'במה אפשר לעזור? לחצו על *פתיחת תפריט* ובחרו.',
     '',
     '_אם התפריט לא מופיע, כתבו את המספר:_',
-    ...MENU.map((b) => `*${b.digit}* – ${b.title}`),
+    ...MENU.map((b) => `*${b.digit}* – ${b.title.replace(' | ', ' ')}`),
   ].join('\n');
 
 const askReport = 'מעולה. כתבו לי מה לא עובד, במילים פשוטות. אפשר לצרף צילום מסך.\nלדוגמה: "ההפצה לא עובדת" או "זרוע 2 מנותקת".';
@@ -196,6 +206,7 @@ module.exports = {
   help,
   MENU,
   MENU_BUTTON,
+  menuRows,
   menu,
   askReport,
   askQuestion,

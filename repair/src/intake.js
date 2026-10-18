@@ -131,7 +131,13 @@ function createIntake({ cfg, store, wa, pipeline, log }) {
 
     switch (c.cmd) {
       case 'help':
-        return wa.sendList(jid, M.menu(), M.MENU_BUTTON, M.MENU).catch((e) => log.warn({ err: e.message }, 'reply failed'));
+      {
+        const open = await store.listTickets(50, ['queued', 'blocked', ...pipeline.ACTIVE]).catch(() => []);
+        const waiting = await store.listTickets(50, ['awaiting_approval']).catch(() => []);
+        const [last] = await store.listTickets(1).catch(() => []);
+        const rows = M.menuRows({ open: open.length, waiting: waiting.length, last });
+        return wa.sendList(jid, M.menu(), M.MENU_BUTTON, rows).catch((e) => log.warn({ err: e.message }, 'reply failed'));
+      }
       case 'menu_test': {
         // approvers only: sends three menu styles to see which ones this WhatsApp shows
         if (!isApprover) return denied(jid, actor, 'בדיקת תפריט');

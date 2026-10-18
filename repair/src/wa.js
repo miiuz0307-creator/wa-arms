@@ -447,6 +447,18 @@ function createWhatsApp({ store, secret, log, onMessage, onOpen, onGroupFound, b
     }
   }
 
+  // rows that share a `section` are shown under one heading, in the order they first appear
+  function toSections(rows, fallback) {
+    const out = [];
+    for (const r of rows) {
+      const title = r.section || fallback;
+      let sec = out.find((x) => x.title === title);
+      if (!sec) out.push((sec = { title, rows: [] }));
+      sec.rows.push({ header: '', title: r.title, description: r.description || '', id: r.id });
+    }
+    return out;
+  }
+
   /**
    * A list menu: one "open menu" button that shows up to 10 options (WhatsApp native flow
    * single_select). Verified on a real Android phone in a group. Falls back to plain text on error.
@@ -462,7 +474,7 @@ function createWhatsApp({ store, secret, log, onMessage, onOpen, onGroupFound, b
           body: { text },
           footer: { text: footer },
           nativeFlowMessage: {
-            buttons: [{ name: 'single_select', buttonParamsJson: JSON.stringify({ title: buttonText, sections: [{ title: buttonText, rows: rows.slice(0, 10).map((r) => ({ header: '', title: r.title, description: r.description || '', id: r.id })) }] }) }],
+            buttons: [{ name: 'single_select', buttonParamsJson: JSON.stringify({ title: buttonText, sections: toSections(rows.slice(0, 10), buttonText) }) }],
             messageParamsJson: '',
           },
         },
