@@ -383,7 +383,7 @@ test('"עזרה" shows the menu with buttons; "דבר עם נציג" silences th
   const J = `${ASKER}@s.whatsapp.net`;
   await s.say(ASKER, 'עזרה', { raw: true });
   const menu = s.wa.sent.find((m) => m.to === J);
-  assert.deepEqual(menu.buttons.map((b) => b.id).slice(0, 2), ['menu:report', 'menu:human']);
+  assert.ok(['menu:report', 'menu:ask', 'menu:human'].every((id) => menu.buttons.some((b) => b.id === id)));
   await s.say(ASKER, 'menu:human', { raw: true });
   assert.ok(s.wa.textsTo(J).at(-1).includes('נציג'));
   assert.ok(s.wa.textsTo(OWNER).some((t) => t.includes('ביקש לדבר עם נציג')));
@@ -435,11 +435,29 @@ test('in the group: menu, then "report" and a description opens a ticket; status
   const G = '120363000000000001@g.us';
   const g = (text) => s.intake.handle({ jid: G, phone: ASKER, lid: null, name: '', text, image: null });
   await g('עזרה');
-  assert.equal(s.wa.sent.at(-1).buttons.length, 5);
+  assert.equal(s.wa.sent.at(-1).buttons.length, 6);
   await g('menu:report');
   assert.ok(s.wa.textsTo(G).at(-1).includes('מה לא עובד'));
   await g('ההפצה לא עובדת מהבוקר');
   assert.equal((await s.store.listTickets()).length, 1);
   await g('menu:status');
   assert.ok(s.wa.textsTo(G).at(-1).includes('פניות פתוחות'));
+});
+
+test('a question gets a read-only answer, no ticket; secrets in the answer are masked', async () => {
+  const s = await setup();
+  const J = `${ASKER}@s.whatsapp.net`;
+  await s.say(ASKER, 'עזרה', { raw: true });
+  await s.say(ASKER, 'menu:ask', { raw: true });
+  await s.say(ASKER, 'כמה זרועות פעולות יש כרגע');
+  assert.equal((await s.store.listTickets()).length, 0, 'a question is not a ticket');
+  const tick = s.pipeline.start(1e9);
+  await tick();
+  s.pipeline.stop();
+  assert.equal(s.claude.asked[0].question, 'כמה זרועות פעולות יש כרגע');
+  const last = s.wa.textsTo(J).at(-1);
+  assert.ok(last.includes('3 זרועות'));
+  assert.ok(!last.includes('abcdef1234567890'), 'secret masked');
+  await s.say(ASKER, 'שאלה איך עובדת ההפצה?', { raw: true });
+  assert.equal((await s.store.listTickets()).length, 0);
 });

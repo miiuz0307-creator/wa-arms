@@ -13,7 +13,7 @@ const SESSION_MS = 30 * 60_000; // a conversation stays open 30 minutes after th
 
 // Explicit commands that carry a ticket number or approval code always work for approved numbers
 // (the bot asked for them). Anything else is answered only inside a conversation opened by "עזרה".
-const ALWAYS = new Set(['help', 'help_text', 'approve', 'reject', 'cancel', 'rollback', 'show', 'menu_test']);
+const ALWAYS = new Set(['help', 'help_text', 'approve', 'reject', 'cancel', 'rollback', 'show', 'menu_test', 'question']);
 // a button tap from an earlier menu also works after the conversation timed out
 
 function parseCommand(raw) {
@@ -25,15 +25,18 @@ function parseCommand(raw) {
   if (/^(עזרה|תפריט|help|\?)$/i.test(t)) return { cmd: 'help' };
   // a tapped menu button arrives as its id; typing the menu number does the same
   if (t === 'menu:report') return { cmd: 'menu_report', button: true };
+  if (t === 'menu:ask') return { cmd: 'menu_ask', button: true };
+  if ((m = /^שאלה[\s,:.!-]+([\s\S]{3,})$/.exec(t))) return { cmd: 'question', text: m[1].trim() };
+  if (/^שאלה$/.test(t)) return { cmd: 'menu_ask' };
   if (t === 'menu:human') return { cmd: 'menu_human', button: true };
   if (t === 'menu:status') return { cmd: 'status', button: true };
   if (t === 'menu:list') return { cmd: 'list', button: true };
   if (t === 'menu:commands') return { cmd: 'commands', button: true };
-  if (t === '1') return { cmd: 'menu_report' };
-  if (t === '2') return { cmd: 'menu_human' };
-  if (t === '3') return { cmd: 'status' };
-  if (t === '4') return { cmd: 'list' };
-  if (t === '5') return { cmd: 'commands' };
+  // typing a menu number = choosing that menu row (where the menu does not show)
+  if (/^\d$/.test(t)) {
+    const row = M.MENU.find((r) => r.digit === t);
+    if (row) return { ...parseCommand(row.id), button: false };
+  }
   if ((m = /^בדיקת תפריט(?:\s+([\d\s+-]{9,16}))?$/.exec(t))) return { cmd: 'menu_test', to: m[1] ? m[1].replace(/\D/g, '') : null };
   if ((m = /^test:([ABC]\d)$/.exec(t))) return { cmd: 'menu_test_reply', choice: m[1], button: true };
   if (/^(פקודות|commands)$/i.test(t)) return { cmd: 'commands' };
@@ -54,6 +57,7 @@ function createIntake({ cfg, store, wa, pipeline, log }) {
   const inSession = (phone) => Date.now() - (sessions.get(phone) || 0) < SESSION_MS;
   const touch = (phone) => phone && sessions.set(phone, Date.now());
   const recentTickets = new Map(); // phone -> timestamps
+  const asking = new Set(); // phones whose next message is a question (chose "שאלה" in the menu)
 
   async function findSender(phone, lid) {
     const list = (await store.listNumbers()).filter((n) => n.active);
@@ -153,7 +157,14 @@ function createIntake({ cfg, store, wa, pipeline, log }) {
       case 'commands':
         return reply(jid, M.help(isApprover));
       case 'menu_report':
+        asking.delete(actor);
         return reply(jid, M.askReport);
+      case 'menu_ask':
+        asking.add(actor);
+        return reply(jid, M.askQuestion);
+      case 'question':
+        asking.delete(actor);
+        return queueQuestion(jid, actor, displayName, c.text);
       case 'menu_human': {
         // hand the chat to a person: the bot stays silent until "עזרה" is written again
         sessions.delete(actor);
@@ -208,8 +219,20 @@ function createIntake({ cfg, store, wa, pipeline, log }) {
         // in the command group people also chat ("תודה", "אוקיי") – only real descriptions open a ticket
         if (jid.endsWith('@g.us') && c.text.length < 8) return;
         if (c.text.length < 4) return reply(jid, M.tooShort);
+        if (asking.has(actor)) {
+          asking.delete(actor);
+          return queueQuestion(jid, actor, displayName, c.text);
+        }
         return createTicket(jid, actor, displayName, c.text, []);
     }
+  }
+
+  async function queueQuestion(jid, actor, name, text) {
+    const times = (recentTickets.get(actor) || []).filter((x) => Date.now() - x < 3600_000);
+    if (times.length >= MAX_TICKETS_PER_HOUR * 2) return reply(jid, 'נשאלו יותר מדי שאלות בשעה האחרונה. נסו שוב מאוחר יותר.');
+    recentTickets.set(actor, [...times, Date.now()]);
+    await pipeline.audit(null, actor, 'question_asked', `${name} שאל: ${text.slice(0, 120)}`);
+    return reply(jid, M.questionQueued(pipeline.askQuestion({ jid, actor, name, text })));
   }
 
   async function createTicket(jid, actor, name, description, images) {

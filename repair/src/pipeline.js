@@ -96,6 +96,13 @@ function createPipeline(deps) {
     const tick = async () => {
       if (running || prodBusy) return;
       try {
+        // questions are short and read-only: they go before waiting tickets
+        if (questions.length) {
+          const q = questions.shift();
+          running = `q${q.id}`;
+          await processQuestion(q);
+          return;
+        }
         const t = await store.claimNextTicket();
         if (!t) return;
         running = t.id;
@@ -110,6 +117,39 @@ function createPipeline(deps) {
     return tick;
   }
   const stop = () => clearInterval(timer);
+
+  // ---------- questions (read-only answers) ----------
+  const questions = [];
+  let questionSeq = 0;
+  /** Queue a question; returns how many are waiting before it (0 = next). */
+  function askQuestion({ jid, actor, name, text }) {
+    questions.push({ id: ++questionSeq, jid, actor, name, text: String(text).slice(0, 2000) });
+    return questions.length - 1 + (running ? 1 : 0);
+  }
+
+  async function processQuestion(q) {
+    let w = null;
+    const say = (text) => {
+      if (deps.onNotify) deps.onNotify(q.actor);
+      return wa.send(q.jid, text).catch((e) => log.warn({ err: e.message }, 'answer not sent'));
+    };
+    try {
+      if (!claude.ready() || !claude.ask) throw new Error('חסרה הגדרה: חיבור ל-Claude');
+      w = await ws.prepare(`q${q.id}`, `question-${q.id}`);
+      const area = classify(q.text);
+      const logsFile = await collectLogs({ id: null }, area, w);
+      const r = await claude.ask({ w, question: q.text, logsFile });
+      const answer = clean(r.answer || '').trim() || 'לא מצאתי תשובה.';
+      await audit(null, q.actor, 'question_answered', `${q.name || q.actor} שאל: ${q.text.slice(0, 100)}`, { cost: r.cost });
+      await say(`💬 *תשובה:*\n${answer}`);
+    } catch (e) {
+      const msg = clean(e.message || String(e));
+      await audit(null, q.actor, 'question_failed', `שאלה נכשלה: ${msg}`);
+      await say(`❌ לא הצלחתי לענות על השאלה: ${msg}`);
+    } finally {
+      if (w) ws.cleanup(w);
+    }
+  }
 
   // ---------- investigate + fix ----------
   async function processTicket(t) {
@@ -592,6 +632,8 @@ function createPipeline(deps) {
     start,
     stop,
     processTicket,
+    askQuestion,
+    processQuestion,
     approve,
     reissueApproval,
     rollback,

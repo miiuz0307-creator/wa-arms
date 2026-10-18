@@ -161,6 +161,11 @@ function fakeClaude(results) {
       if (typeof r.onRun === 'function') r.onRun();
       return { parsed: r.parsed, raw: '', cost: 0.12, denials: 0 };
     },
+    asked: [],
+    async ask({ question, logsFile }) {
+      this.asked.push({ question, logsFile });
+      return { answer: 'יש 3 זרועות מחוברות. token=abcdef1234567890', cost: 0.01 };
+    },
   };
 }
 

@@ -36,16 +36,18 @@ const help = (isApprover) =>
     ...(isApprover
       ? ['• *אשר 123456* – אישור העלאה לשרת הפעיל (הקוד מגיע בהודעת הסיכום)', '• *דחה 12* – דחיית תיקון', '• *החזר 12* – חזרה לגרסה שלפני התיקון']
       : []),
+    '• *שאלה* ואחריה השאלה – תשובה מהירה בלי לשנות כלום',
     '• *עזרה* – ההודעה הזו',
   ].join('\n');
 
 // The opening menu after "עזרה": tap a button, or type its number where buttons do not show.
 const MENU = [
   { id: 'menu:report', title: '🛠 דיווח על תקלה', description: 'הבוט בודק ומתקן', digit: '1' },
-  { id: 'menu:human', title: '👤 דבר עם נציג', description: 'הבוט מפסיק לענות לך', digit: '2' },
-  { id: 'menu:status', title: '📋 פניות פתוחות', description: 'מה קורה עכשיו', digit: '3' },
-  { id: 'menu:list', title: '🗂 פניות אחרונות', description: '5 הפניות האחרונות', digit: '4' },
-  { id: 'menu:commands', title: '❓ כל הפקודות', description: 'רשימת פקודות לכתיבה', digit: '5' },
+  { id: 'menu:ask', title: '💬 שאלה על המערכת', description: 'תשובה מהירה, בלי לשנות כלום', digit: '2' },
+  { id: 'menu:human', title: '👤 דבר עם נציג', description: 'הבוט מפסיק לענות לך', digit: '3' },
+  { id: 'menu:status', title: '📋 פניות פתוחות', description: 'מה קורה עכשיו', digit: '4' },
+  { id: 'menu:list', title: '🗂 פניות אחרונות', description: '5 הפניות האחרונות', digit: '5' },
+  { id: 'menu:commands', title: '❓ כל הפקודות', description: 'רשימת פקודות לכתיבה', digit: '6' },
 ];
 const MENU_BUTTON = 'פתיחת תפריט';
 const menu = () =>
@@ -59,6 +61,9 @@ const menu = () =>
   ].join('\n');
 
 const askReport = 'מעולה. כתבו לי מה לא עובד, במילים פשוטות. אפשר לצרף צילום מסך.\nלדוגמה: "ההפצה לא עובדת" או "זרוע 2 מנותקת".';
+
+const askQuestion = 'כתבו את השאלה. לדוגמה: "כמה זרועות מחוברות?" או "איך עובדת ההפצה?"\nאני רק קורא את הקוד והלוגים – לא משנה כלום.';
+const questionQueued = (pos) => (pos > 0 ? `🔎 קיבלתי את השאלה. יש לפניה ${pos} בתור – אענה ברגע שאתפנה.` : '🔎 בודק… תשובה בדרך כלל תוך 1–3 דקות.');
 
 const toHuman =
   '👤 העברתי אותך לנציג.\nמעכשיו הבוט לא יענה בשיחה הזו – פשוט כתבו כאן ונציג יחזור אליכם.\nכדי לחזור לבוט כתבו *עזרה*.';
@@ -193,6 +198,8 @@ module.exports = {
   MENU_BUTTON,
   menu,
   askReport,
+  askQuestion,
+  questionQueued,
   toHuman,
   humanRequested,
   received,
