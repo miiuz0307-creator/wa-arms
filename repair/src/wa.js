@@ -447,6 +447,32 @@ function createWhatsApp({ store, secret, log, onMessage, onOpen, onGroupFound, b
     }
   }
 
+  /**
+   * A list menu: one "open menu" button that shows up to 10 options (WhatsApp native flow
+   * single_select). Verified on a real Android phone in a group. Falls back to plain text on error.
+   */
+  async function sendList(to, text, buttonText, rows, footer = 'BotiX') {
+    if (!sock || status.state !== 'connected') throw new Error('WhatsApp לא מחובר');
+    const jid = to.includes('@') ? to : jidOf(to);
+    try {
+      if (!buttonsEnabled) throw new Error('buttons off');
+      await relayRaw(jid, {
+        interactiveMessage: {
+          header: { title: '', subtitle: '', hasMediaAttachment: false },
+          body: { text },
+          footer: { text: footer },
+          nativeFlowMessage: {
+            buttons: [{ name: 'single_select', buttonParamsJson: JSON.stringify({ title: buttonText, sections: [{ title: buttonText, rows: rows.slice(0, 10).map((r) => ({ header: '', title: r.title, description: r.description || '', id: r.id })) }] }) }],
+            messageParamsJson: '',
+          },
+        },
+      }, [{ tag: 'interactive', attrs: { type: 'native_flow', v: '1' }, content: [{ tag: 'native_flow', attrs: { v: '9', name: 'mixed' } }] }]);
+    } catch (e) {
+      if (e.message !== 'buttons off') log.warn({ err: e.message }, 'list menu failed – sending text');
+      await send(to, text);
+    }
+  }
+
   // Send a message built by hand (interactive/list) with the extra "biz" node WhatsApp expects
   // for these types. Not officially supported for QR-linked numbers – used by the menu test.
   async function relayRaw(jid, content, bizContent) {
@@ -554,6 +580,7 @@ function createWhatsApp({ store, secret, log, onMessage, onOpen, onGroupFound, b
     send,
     sendButtons,
     sendMenuTest,
+    sendList,
     lidOf,
     setCommandGroup,
     commandGroup: () => commandGroup,

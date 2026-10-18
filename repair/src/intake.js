@@ -26,8 +26,14 @@ function parseCommand(raw) {
   // a tapped menu button arrives as its id; typing the menu number does the same
   if (t === 'menu:report') return { cmd: 'menu_report', button: true };
   if (t === 'menu:human') return { cmd: 'menu_human', button: true };
+  if (t === 'menu:status') return { cmd: 'status', button: true };
+  if (t === 'menu:list') return { cmd: 'list', button: true };
+  if (t === 'menu:commands') return { cmd: 'commands', button: true };
   if (t === '1') return { cmd: 'menu_report' };
   if (t === '2') return { cmd: 'menu_human' };
+  if (t === '3') return { cmd: 'status' };
+  if (t === '4') return { cmd: 'list' };
+  if (t === '5') return { cmd: 'commands' };
   if ((m = /^בדיקת תפריט(?:\s+([\d\s+-]{9,16}))?$/.exec(t))) return { cmd: 'menu_test', to: m[1] ? m[1].replace(/\D/g, '') : null };
   if ((m = /^test:([ABC]\d)$/.exec(t))) return { cmd: 'menu_test_reply', choice: m[1], button: true };
   if (/^(פקודות|commands)$/i.test(t)) return { cmd: 'commands' };
@@ -121,8 +127,7 @@ function createIntake({ cfg, store, wa, pipeline, log }) {
 
     switch (c.cmd) {
       case 'help':
-        if (jid.endsWith('@g.us')) return reply(jid, M.help(isApprover));
-        return wa.sendButtons(jid, M.menu(), M.MENU).catch((e) => log.warn({ err: e.message }, 'reply failed'));
+        return wa.sendList(jid, M.menu(), M.MENU_BUTTON, M.MENU).catch((e) => log.warn({ err: e.message }, 'reply failed'));
       case 'menu_test': {
         // approvers only: sends three menu styles to see which ones this WhatsApp shows
         if (!isApprover) return denied(jid, actor, 'בדיקת תפריט');

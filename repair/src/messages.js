@@ -41,17 +41,21 @@ const help = (isApprover) =>
 
 // The opening menu after "עזרה": tap a button, or type its number where buttons do not show.
 const MENU = [
-  { id: 'menu:report', title: '🛠 דיווח על תקלה', digit: '1' },
-  { id: 'menu:human', title: '👤 דבר עם נציג', digit: '2' },
+  { id: 'menu:report', title: '🛠 דיווח על תקלה', description: 'הבוט בודק ומתקן', digit: '1' },
+  { id: 'menu:human', title: '👤 דבר עם נציג', description: 'הבוט מפסיק לענות לך', digit: '2' },
+  { id: 'menu:status', title: '📋 פניות פתוחות', description: 'מה קורה עכשיו', digit: '3' },
+  { id: 'menu:list', title: '🗂 פניות אחרונות', description: '5 הפניות האחרונות', digit: '4' },
+  { id: 'menu:commands', title: '❓ כל הפקודות', description: 'רשימת פקודות לכתיבה', digit: '5' },
 ];
+const MENU_BUTTON = 'פתיחת תפריט';
 const menu = () =>
   [
     '🤖 *BotiX AI Repair*',
     '',
-    'במה אפשר לעזור? לחצו על כפתור, או כתבו את המספר:',
-    ...MENU.map((b) => `*${b.digit}* – ${b.title}`),
+    'במה אפשר לעזור? לחצו על *פתיחת תפריט* ובחרו.',
     '',
-    '_לרשימת הפקודות כתבו *פקודות*_',
+    '_אם התפריט לא מופיע, כתבו את המספר:_',
+    ...MENU.map((b) => `*${b.digit}* – ${b.title}`),
   ].join('\n');
 
 const askReport = 'מעולה. כתבו לי מה לא עובד, במילים פשוטות. אפשר לצרף צילום מסך.\nלדוגמה: "ההפצה לא עובדת" או "זרוע 2 מנותקת".';
@@ -186,6 +190,7 @@ module.exports = {
   statusLabel,
   help,
   MENU,
+  MENU_BUTTON,
   menu,
   askReport,
   toHuman,

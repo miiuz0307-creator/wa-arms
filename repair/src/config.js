@@ -74,8 +74,8 @@ function load() {
     autoRollback: bool('AUTO_ROLLBACK', true),
     // tap buttons in WhatsApp (not official for QR-linked numbers; WA_BUTTONS=false sends plain text)
     waButtons: bool('WA_BUTTONS', true),
-    // answer only inside the command group; private chats are ignored (default on)
-    groupOnly: bool('WA_GROUP_ONLY', true),
+    // WA_GROUP_ONLY=true: answer only inside the command group (private chats ignored)
+    groupOnly: bool('WA_GROUP_ONLY', false),
     // numbers that are always kept as approvers (comma separated, e.g. 0532306885)
     ownerPhones: list('OWNER_PHONES'),
 

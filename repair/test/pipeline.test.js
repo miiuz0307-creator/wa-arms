@@ -383,7 +383,7 @@ test('"עזרה" shows the menu with buttons; "דבר עם נציג" silences th
   const J = `${ASKER}@s.whatsapp.net`;
   await s.say(ASKER, 'עזרה', { raw: true });
   const menu = s.wa.sent.find((m) => m.to === J);
-  assert.deepEqual(menu.buttons.map((b) => b.id), ['menu:report', 'menu:human']);
+  assert.deepEqual(menu.buttons.map((b) => b.id).slice(0, 2), ['menu:report', 'menu:human']);
   await s.say(ASKER, 'menu:human', { raw: true });
   assert.ok(s.wa.textsTo(J).at(-1).includes('נציג'));
   assert.ok(s.wa.textsTo(OWNER).some((t) => t.includes('ביקש לדבר עם נציג')));
@@ -428,4 +428,18 @@ test('group-only mode: private chats are ignored, the group is answered', async 
   const G = '120363000000000000@g.us';
   await s.intake.handle({ jid: G, phone: OWNER, lid: null, name: '', text: 'עזרה', image: null });
   assert.ok(s.wa.textsTo(G).length > 0);
+});
+
+test('in the group: menu, then "report" and a description opens a ticket; status button works', async () => {
+  const s = await setup();
+  const G = '120363000000000001@g.us';
+  const g = (text) => s.intake.handle({ jid: G, phone: ASKER, lid: null, name: '', text, image: null });
+  await g('עזרה');
+  assert.equal(s.wa.sent.at(-1).buttons.length, 5);
+  await g('menu:report');
+  assert.ok(s.wa.textsTo(G).at(-1).includes('מה לא עובד'));
+  await g('ההפצה לא עובדת מהבוקר');
+  assert.equal((await s.store.listTickets()).length, 1);
+  await g('menu:status');
+  assert.ok(s.wa.textsTo(G).at(-1).includes('פניות פתוחות'));
 });

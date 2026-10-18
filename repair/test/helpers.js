@@ -46,6 +46,7 @@ function fakeWa() {
     sent,
     send: async (to, text) => sent.push({ to, text }),
     sendButtons: async (to, text, buttons) => sent.push({ to, text, buttons }),
+    sendList: async (to, text, buttonText, rows) => sent.push({ to, text, buttons: rows }),
     menuTests: [],
     async sendMenuTest(to) {
       this.menuTests.push(to);
