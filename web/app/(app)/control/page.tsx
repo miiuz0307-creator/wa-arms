@@ -352,10 +352,10 @@ function Messages({ stations }: { stations: [string, string][] }) {
 
   return (
     <Card className="mb-6">
-      <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+      <div id="messages" className="flex scroll-mt-20 items-center justify-between border-b border-slate-100 px-5 py-4">
         <div className="flex items-center gap-2 font-semibold">
           <Megaphone className="h-4 w-4 text-indigo-600" />
-          הודעות מערכת לתחנות
+          הודעות מערכת לתחנות (גם כהתראה בטלפון)
           {active.length > 0 && <Badge tone="violet">{active.length} מוצגות</Badge>}
         </div>
         <Button size="sm" onClick={() => setOpen((v) => !v)}>

@@ -22,6 +22,7 @@ import {
   Gauge,
   Wallet,
   Rocket,
+  Bell,
 } from 'lucide-react';
 import { useAuth, ROLE_LABEL, Role } from '@/lib/auth';
 import { actAsStation } from '@/lib/supabase';
@@ -30,6 +31,7 @@ import { StationBanners, useInbox } from './StationInbox';
 import { AppLock } from './AppLock';
 import { UpdateNotifier } from './UpdateNotifier';
 import { LiveDot } from '@/components/LiveDot';
+import { NotifyBell, PushInvite } from './NotifyBell';
 
 type Item = { href: string; label: string; icon: any; min: Role; superOnly?: boolean };
 
@@ -39,6 +41,7 @@ const NAV: Item[] = [
   { href: '/billing', label: 'תשלומים', icon: Wallet, min: 'owner', superOnly: true },
   { href: '/updates', label: 'ניהול עדכונים', icon: Rocket, min: 'owner', superOnly: true },
   { href: '/', label: 'בית', icon: LayoutDashboard, min: 'viewer' },
+  { href: '/notifications', label: 'התראות', icon: Bell, min: 'viewer' },
   { href: '/send', label: 'שליחת הודעה', icon: Send, min: 'operator' },
   { href: '/history', label: 'היסטוריה', icon: History, min: 'viewer' },
   { href: '/arms', label: 'חיבור זרועות', icon: Smartphone, min: 'admin' },
@@ -162,6 +165,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
               <div className="truncate text-sm font-medium">{profile.full_name || profile.email}</div>
               <div className="text-xs text-slate-500">{isStation ? 'מנהל התחנה' : ROLE_LABEL[profile.role]}</div>
             </div>
+            <NotifyBell />
             <button onClick={signOut} title="התנתקות" className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
               <LogOut className="h-4 w-4" />
             </button>
@@ -178,9 +182,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
             <LiveDot />
           </div>
         </div>
-        <button onClick={signOut} className="rounded-lg p-2 text-slate-500">
-          <LogOut className="h-5 w-5" />
-        </button>
+        <div className="flex items-center gap-1">
+          <NotifyBell />
+          <button onClick={signOut} className="rounded-lg p-2 text-slate-500">
+            <LogOut className="h-5 w-5" />
+          </button>
+        </div>
       </header>
 
       <main className="min-w-0 flex-1 px-4 pb-28 pt-5 md:px-8 md:pb-10 md:pt-8">
@@ -202,6 +209,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </div>
         )}
         <StationBanners inbox={inbox} />
+        <PushInvite />
         <div className="mx-auto max-w-6xl">{children}</div>
       </main>
 

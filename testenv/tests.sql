@@ -656,4 +656,43 @@ set role anon; select testkit.as_nobody('10.0.0.33');
 select testkit.check((public.member_login(:'mcode'))->>'error' = 'קוד שגוי' and (public.member_login(:'mcode2'))->>'token' is not null, 'team: a new code replaces the old one');
 reset role;
 
+-- ========== notifications ==========
+reset role;
+-- an arm of station A not working for 10 minutes
+update arms set status = 'offline', last_seen_at = now() - interval '10 minutes', down_notified_at = null where id = '00000000-0000-0000-0001-00000000000a';
+select public.watch_arms() as w1 \gset
+select public.watch_arms() as w2 \gset
+select testkit.check(:'w1' = '1' and :'w2' = '0', 'notify: an arm down 5+ minutes gives one notice, not one per minute', :'w1' || '/' || :'w2');
+update arms set status = 'online', last_seen_at = now() where id = '00000000-0000-0000-0001-00000000000a';
+select public.watch_arms() as w3 \gset
+select testkit.check(:'w3' = '1', 'notify: the arm back online gives a "back" notice');
+update arms set status = 'offline', last_seen_at = now() - interval '2 minutes' where id = '00000000-0000-0000-0002-00000000000a';
+select testkit.check(public.watch_arms() = 0, 'notify: a short drop (2 minutes) gives no notice');
+update arms set status = 'online', last_seen_at = now() where id = '00000000-0000-0000-0002-00000000000a';
+set role anon; select testkit.as_station('tok-a');
+select testkit.check((select count(*) from json_array_elements(public.my_notifications()) e where e->>'kind' like 'arm_%') = 2, 'notify: station A sees its 2 arm notices');
+select testkit.as_station('tok-b');
+select testkit.check((select count(*) from json_array_elements(public.my_notifications()) e where e->>'kind' like 'arm_%') = 0, 'notify: station B does not see station A notices');
+reset role;
+set role authenticated; select testkit.as_owner();
+select testkit.check(public.notifications_unread() = 2, 'notify: the owner sees arm notices of every station');
+select public.owner_message_send('בדיקה', 'הודעת מערכת', 'warning', null, 1);
+reset role;
+set role anon; select testkit.as_station('tok-b');
+select testkit.check((public.my_notifications() -> 0 ->> 'title') = 'בדיקה', 'notify: a system message reaches every station');
+select public.notifications_mark_read(null);
+select testkit.check(public.notifications_unread() = 0, 'notify: mark all read');
+select testkit.as_station('tok-a');
+select testkit.check(public.notifications_unread() >= 3, 'notify: station A read state is its own');
+do $$ begin perform public.push_subscribe('http://bad', 'k', 'a'); perform testkit.check(false, 'notify: a bad push address is refused');
+exception when others then perform testkit.check(true, 'notify: a bad push address is refused'); end $$;
+select public.push_subscribe('https://push.example/abc', 'key1', 'auth1', 'test');
+select testkit.as_nobody();
+do $$ begin perform public.push_subscribe('https://push.example/x', 'k', 'a'); perform testkit.check(false, 'notify: without login no push subscription');
+exception when others then perform testkit.check(true, 'notify: without login no push subscription'); end $$;
+do $$ declare n int; begin select count(*) into n from public.push_subscriptions; perform testkit.check(false, 'notify: push table is closed');
+exception when others then perform testkit.check(true, 'notify: push table is closed'); end $$;
+reset role;
+select testkit.check((select station_id from push_subscriptions where endpoint = 'https://push.example/abc') = '0000000a-0000-0000-0000-000000000000', 'notify: a phone is registered to its station');
+
 select n, case when ok then 'PASS' else 'FAIL' end as result, name, coalesce(left(detail, 80), '') from testkit.results where name not like '%(update attempted)%' order by n;
