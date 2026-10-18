@@ -6,6 +6,7 @@ const quote = require('./quote');
 const backup = require('./backup');
 const { randomBetween, sleep } = require('./util');
 const phones = require('./phones');
+const outbox = require('./outbox');
 
 const arms = new Map(); // arm id -> Arm
 quote.setArmsSource(() => arms);
@@ -641,6 +642,8 @@ async function main() {
   }, 'memory');
   // daily database backup to the server disk (does not fail the loop – errors are logged)
   every(10 * 60_000, () => backup.maybeBackup(), 'backup');
+  // login codes and other system messages to private numbers (wa_outbox)
+  every(4_000, () => outbox.tick(arms, () => shuttingDown), 'outbox', 120_000);
   every(5_000, () => quote.notifyFinished(arms), 'quote-notify', 60_000);
   every(5_000, () => help.reactFinished(arms), 'help-react', 60_000);
   // each arm sends on its own: one slow or stuck send never delays the other arms

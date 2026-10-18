@@ -618,3 +618,139 @@ test('anti-block: 4 refusals in 5 minutes rest only that arm for 10 minutes; few
   await engine.sendTick(arm);
   assert.equal(claimed, 0, 'a resting arm takes no new groups');
 });
+
+// ---------- system messages to private numbers (wa_outbox) ----------
+function waArm(id, stationId, { online = true, onWa = true, sendErr = null } = {}) {
+  const arm = { id, name: id, stationId, online, sent: [], checked: [] };
+  arm.sock = { onWhatsApp: async (jid) => (arm.checked.push(jid), onWa ? [{ exists: true, jid }] : []) };
+  arm.send = async (jid, text) => {
+    if (sendErr) throw new Error(sendErr);
+    arm.sent.push({ jid, text, at: Date.now() });
+    return {};
+  };
+  return arm;
+}
+function outboxDb(msgs, results, extra = () => null) {
+  let taken = false;
+  dbAnswer((op) => {
+    const x = extra(op);
+    if (x) return x;
+    if (op.rpc === 'engine_home_station') return { data: 'home', error: null };
+    if (op.rpc === 'engine_otp_sender') return { data: null, error: null };
+    if (op.rpc === 'engine_outbox_take') {
+      const d = taken ? [] : msgs;
+      taken = true;
+      return { data: d, error: null };
+    }
+    if (op.rpc === 'engine_outbox_done') results.push(op.args);
+    return { data: [], error: null };
+  });
+}
+
+test('outbox: phone numbers become WhatsApp addresses (Israeli 05X, +972, 00972, dashes)', () => {
+  const { phoneJid } = require('../src/outbox');
+  assert.equal(phoneJid('050-123-4567'), '972501234567@s.whatsapp.net');
+  assert.equal(phoneJid('+972 50 123 4567'), '972501234567@s.whatsapp.net');
+  assert.equal(phoneJid('00972501234567'), '972501234567@s.whatsapp.net');
+  assert.equal(phoneJid('972501234567'), '972501234567@s.whatsapp.net');
+  assert.equal(phoneJid('12'), null);
+  assert.equal(phoneJid(''), null);
+});
+
+test('outbox: sent through an online HOME station arm (never a customer station arm), results recorded, ≥1.5s apart', async () => {
+  const outbox = require('../src/outbox');
+  outbox.state.home = null;
+  outbox.state.senderAt = 0;
+  const home = waArm('h1', 'home');
+  const homeOff = waArm('h2', 'home', { online: false });
+  const customer = waArm('c1', 'other');
+  const arms = new Map([['c1', customer], ['h2', homeOff], ['h1', home]]);
+  const results = [];
+  outboxDb([{ id: 1, to_phone: '050-1234567', body: 'קוד: 1234' }, { id: 2, to_phone: '0521112222', body: 'שלום' }], results);
+  const t0 = Date.now();
+  await outbox.tick(arms);
+  assert.equal(customer.sent.length + homeOff.sent.length, 0, 'only the online home arm sends');
+  assert.deepEqual(home.sent.map((s) => s.jid), ['972501234567@s.whatsapp.net', '972521112222@s.whatsapp.net']);
+  assert.equal(home.sent[0].text, 'קוד: 1234');
+  assert.deepEqual(home.checked, ['972501234567@s.whatsapp.net', '972521112222@s.whatsapp.net'], 'checked on WhatsApp first');
+  assert.ok(home.sent[1].at - home.sent[0].at >= 1450, 'paced');
+  assert.ok(Date.now() - t0 >= 1450);
+  assert.deepEqual(results.map((r) => [r.p_id, r.p_ok, r.p_error, r.p_arm]), [[1, true, null, 'h1'], [2, true, null, 'h1']]);
+  assert.equal(outbox.state.busy, false);
+});
+
+test('outbox: nothing is taken while no home arm is online', async () => {
+  const outbox = require('../src/outbox');
+  outbox.state.home = null;
+  outbox.state.senderAt = 0;
+  const arms = new Map([['c1', waArm('c1', 'other')], ['h2', waArm('h2', 'home', { online: false })]]);
+  const results = [];
+  outboxDb([{ id: 1, to_phone: '0501234567', body: 'x' }], results);
+  await outbox.tick(arms);
+  assert.ok(!ops.some((o) => o.rpc === 'engine_outbox_take'), 'queue untouched');
+});
+
+test('outbox: number not on WhatsApp → failed without sending; send error → failed with the error; never throws', async () => {
+  const outbox = require('../src/outbox');
+  outbox.state.home = null;
+  outbox.state.senderAt = 0;
+  const notOnWa = waArm('h1', 'home', { onWa: false });
+  let results = [];
+  outboxDb([{ id: 5, to_phone: '0501234567', body: 'x' }], results);
+  await outbox.tick(new Map([['h1', notOnWa]]));
+  assert.equal(notOnWa.sent.length, 0);
+  assert.deepEqual(results.map((r) => [r.p_id, r.p_ok, r.p_error, r.p_arm]), [[5, false, 'המספר לא בוואטסאפ', 'h1']]);
+
+  const broken = waArm('h1', 'home', { sendErr: 'Connection Closed' });
+  results = [];
+  outboxDb([{ id: 6, to_phone: '0501234567', body: 'x' }], results);
+  await outbox.tick(new Map([['h1', broken]]));
+  assert.deepEqual(results.map((r) => [r.p_id, r.p_ok, r.p_error]), [[6, false, 'Connection Closed']]);
+
+  // database down: the pass ends quietly
+  dbAnswer(() => ({ data: null, error: { message: 'timeout' } }));
+  outbox.state.home = null;
+  outbox.state.senderAt = 0;
+  await outbox.tick(new Map([['h1', waArm('h1', 'home')]]));
+  assert.equal(outbox.state.busy, false);
+});
+
+test('outbox: while shutting down nothing new is taken; messages already taken are closed, not left hanging', async () => {
+  const outbox = require('../src/outbox');
+  outbox.state.home = null;
+  outbox.state.senderAt = 0;
+  const arm = waArm('h1', 'home');
+  const results = [];
+  outboxDb([{ id: 1, to_phone: '0501234567', body: 'a' }], results);
+  await outbox.tick(new Map([['h1', arm]]), () => true);
+  assert.ok(!ops.some((o) => o.rpc === 'engine_outbox_take'), 'nothing taken once shutting down');
+  let stopping = false;
+  outboxDb([{ id: 1, to_phone: '0501234567', body: 'a' }, { id: 2, to_phone: '0501234568', body: 'b' }], results);
+  arm.send = async (jid, text) => {
+    arm.sent.push({ jid, text });
+    stopping = true; // shutdown starts during the first send
+    return {};
+  };
+  await outbox.tick(new Map([['h1', arm]]), () => stopping);
+  assert.equal(arm.sent.length, 1);
+  assert.deepEqual(results.map((r) => [r.p_id, r.p_ok]), [[1, true], [2, false]]);
+});
+
+test('outbox: the dedicated codes number sends when it is connected (even if it is not a home arm); else a home arm', async () => {
+  const outbox = require('../src/outbox');
+  outbox.state.home = null;
+  outbox.state.senderAt = 0;
+  const codes = waArm('k1', 'other');
+  codes.sock.user = { id: '972532306885:12@s.whatsapp.net' };
+  const home = waArm('h1', 'home');
+  const results = [];
+  outboxDb([{ id: 1, to_phone: '050-1234567', body: 'קוד' }], results, (op) => (op.rpc === 'engine_otp_sender' ? { data: '0532306885', error: null } : null));
+  await outbox.tick(new Map([['h1', home], ['k1', codes]]));
+  assert.equal(codes.sent.length, 1, 'the codes number sent it');
+  assert.equal(home.sent.length, 0);
+  codes.online = false;
+  outbox.state.senderAt = 0;
+  outboxDb([{ id: 2, to_phone: '050-1234567', body: 'קוד' }], results, (op) => (op.rpc === 'engine_otp_sender' ? { data: '0532306885', error: null } : null));
+  await outbox.tick(new Map([['h1', home], ['k1', codes]]));
+  assert.equal(home.sent.length, 1, 'codes number offline → a home arm sends, logging in still works');
+});
