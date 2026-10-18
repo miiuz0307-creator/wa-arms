@@ -4,6 +4,23 @@
 const TERMINAL = new Set(['SUCCESS', 'FAILED', 'CRASHED', 'REMOVED', 'SKIPPED']);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// structured log fields (e.g. the engine's arm list) – without the noise every line carries
+const SKIP_ATTR = new Set(['level', 'time', 'pid', 'hostname']);
+function logDetails(attrs) {
+  if (!Array.isArray(attrs)) return '';
+  return attrs
+    .filter((a) => a && !SKIP_ATTR.has(a.key))
+    .map((a) => {
+      let v = a.value;
+      try {
+        v = JSON.parse(v);
+      } catch {}
+      return `${a.key}=${typeof v === 'string' ? v : JSON.stringify(v)}`;
+    })
+    .join(' ')
+    .slice(0, 4000);
+}
+
 function createRailway(cfg, { fetchImpl = fetch, pollMs = 15_000 } = {}) {
   const envs = {
     production: { token: cfg.prodToken, envId: cfg.prodEnvId, projectId: cfg.projectId, services: cfg.services || {} },
@@ -57,10 +74,10 @@ function createRailway(cfg, { fetchImpl = fetch, pollMs = 15_000 } = {}) {
     const d = await gql(
       name,
       `query($deploymentId: String!, $limit: Int${filter ? ', $filter: String' : ''}) {
-        deploymentLogs(deploymentId: $deploymentId, limit: $limit${filter ? ', filter: $filter' : ''}) { timestamp message severity } }`,
+        deploymentLogs(deploymentId: $deploymentId, limit: $limit${filter ? ', filter: $filter' : ''}) { timestamp message severity attributes { key value } } }`,
       vars,
     );
-    return d.deploymentLogs || [];
+    return (d.deploymentLogs || []).map((l) => ({ ...l, details: logDetails(l.attributes) }));
   }
 
   /** Wait until a deployment newer than `since` reaches a final status. */
@@ -111,4 +128,4 @@ async function healthCheck(urls, { fetchImpl = fetch, tries = 3, waitMs = 10_000
   return { ok: results.every((r) => r.ok), results };
 }
 
-module.exports = { createRailway, healthCheck, TERMINAL };
+module.exports = { logDetails, createRailway, healthCheck, TERMINAL };

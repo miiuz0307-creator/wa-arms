@@ -127,6 +127,18 @@ function createPipeline(deps) {
     return questions.length - 1 + (running ? 1 : 0);
   }
 
+  /** The engine's latest status line (every ~5 min): each arm, online or not, groups. Read-only, from logs. */
+  async function liveSnapshot() {
+    if (!railway.ready('production') || !allServices.includes('engine')) return null;
+    try {
+      const [l] = (await railway.logs('production', 'engine', { limit: 1, filter: 'memory' })).slice(-1);
+      if (!l?.details) return null;
+      return clean(`מצב המנוע נכון ל-${l.timestamp} (מתעדכן כל כ-5 דקות):\n${l.details}`);
+    } catch {
+      return null;
+    }
+  }
+
   async function processQuestion(q) {
     let w = null;
     const say = (text) => {
@@ -138,7 +150,9 @@ function createPipeline(deps) {
       w = await ws.prepare(`q${q.id}`, `question-${q.id}`);
       const area = classify(q.text);
       const logsFile = await collectLogs({ id: null }, area, w);
-      const r = await claude.ask({ w, question: q.text, logsFile });
+      const live = await liveSnapshot();
+      if (live) ws.writeContext(w, 'live.txt', live);
+      const r = await claude.ask({ w, question: q.text, logsFile, liveFile: live ? `${w.ctx}/live.txt` : null });
       const answer = clean(r.answer || '').trim() || 'לא מצאתי תשובה.';
       await audit(null, q.actor, 'question_answered', `${q.name || q.actor} שאל: ${q.text.slice(0, 100)}`, { cost: r.cost });
       await say(`💬 *תשובה:*\n${answer}`);
@@ -298,7 +312,7 @@ function createPipeline(deps) {
         let lines = area.logFilter ? await railway.logs('production', svc, { limit: 300, filter: area.logFilter }) : [];
         if (lines.length < 20) lines = await railway.logs('production', svc, { limit: 300 });
         parts.push(`===== ${svc} (${lines.length} lines) =====`);
-        for (const l of lines) parts.push(`${l.timestamp} [${l.severity || ''}] ${l.message}`);
+        for (const l of lines) parts.push(`${l.timestamp} [${l.severity || ''}] ${l.message}${l.details ? ' ' + l.details : ''}`);
       } catch (e) {
         parts.push(`===== ${svc}: logs unavailable (${e.message}) =====`);
       }

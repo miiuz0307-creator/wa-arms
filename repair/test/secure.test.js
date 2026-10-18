@@ -86,3 +86,11 @@ test('phones', () => {
   assert.deepEqual(senderOf({ remoteJid: '123@lid', senderPn: '972501234567@s.whatsapp.net' }), { phone: '972501234567', lid: '123' });
   assert.deepEqual(senderOf({ remoteJid: '972501234567:3@s.whatsapp.net' }), { phone: '972501234567', lid: null });
 });
+
+test('log details keep the engine arm list and drop noise fields', () => {
+  const { logDetails } = require('../src/railway');
+  const d = logDetails([{ key: 'level', value: '"info"' }, { key: 'pid', value: '1' }, { key: 'arms', value: '[{"arm":"זרוע 1","online":true}]' }]);
+  assert.ok(d.startsWith('arms='));
+  assert.ok(d.includes('"online":true'));
+  assert.ok(!d.includes('level'));
+});
