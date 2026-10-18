@@ -58,18 +58,10 @@ function menuRows({ open = 0, waiting = 0, last = null } = {}) {
     'menu:status': open || waiting ? `🟠 ${open} בטיפול · ⏳ ${waiting} ממתינים לאישור שלך` : '🟢 אין פניות פתוחות כרגע',
     'menu:list': last ? `אחרונה: #${last.id} – ${statusLabel(last.status)}` : 'עוד אין פניות',
   };
-  return MENU.map((r) => ({ ...r, description: `${live[r.id] || r.description}\n» קיצור מהיר: כתבו ${r.digit}` }));
+  return MENU.map((r) => ({ ...r, description: live[r.id] || r.description }));
 }
 
-const menu = () =>
-  [
-    '🤖 *BotiX AI Repair*',
-    '',
-    'במה אפשר לעזור? לחצו על *פתיחת תפריט* ובחרו.',
-    '',
-    '_אם התפריט לא מופיע, כתבו את המספר:_',
-    ...MENU.map((b) => `*${b.digit}* – ${b.title.replace(' | ', ' ')}`),
-  ].join('\n');
+const menu = () => ['🤖 *BotiX AI Repair*', '', 'במה אפשר לעזור? לחצו על *פתיחת תפריט* ובחרו.'].join('\n');
 
 const mergedForRelease = (t, sha) =>
   [

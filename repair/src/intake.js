@@ -32,11 +32,6 @@ function parseCommand(raw) {
   if (t === 'menu:status') return { cmd: 'status', button: true };
   if (t === 'menu:list') return { cmd: 'list', button: true };
   if (t === 'menu:commands') return { cmd: 'commands', button: true };
-  // typing a menu number = choosing that menu row (where the menu does not show)
-  if (/^\d$/.test(t)) {
-    const row = M.MENU.find((r) => r.digit === t);
-    if (row) return { ...parseCommand(row.id), button: false };
-  }
   if ((m = /^בדיקת תפריט(?:\s+([\d\s+-]{9,16}))?$/.exec(t))) return { cmd: 'menu_test', to: m[1] ? m[1].replace(/\D/g, '') : null };
   if ((m = /^test:([ABC]\d)$/.exec(t))) return { cmd: 'menu_test_reply', choice: m[1], button: true };
   if (/^(פקודות|commands)$/i.test(t)) return { cmd: 'commands' };

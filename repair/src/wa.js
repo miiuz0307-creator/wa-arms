@@ -467,7 +467,6 @@ function createWhatsApp({ store, secret, log, onMessage, onOpen, onGroupFound, b
     if (!sock || status.state !== 'connected') throw new Error('WhatsApp לא מחובר');
     const jid = to.includes('@') ? to : jidOf(to);
     try {
-      if (!buttonsEnabled) throw new Error('buttons off');
       await relayRaw(jid, {
         interactiveMessage: {
           header: { title: '', subtitle: '', hasMediaAttachment: false },
@@ -480,8 +479,9 @@ function createWhatsApp({ store, secret, log, onMessage, onOpen, onGroupFound, b
         },
       }, [{ tag: 'interactive', attrs: { type: 'native_flow', v: '1' }, content: [{ tag: 'native_flow', attrs: { v: '9', name: 'mixed' } }] }]);
     } catch (e) {
-      if (e.message !== 'buttons off') log.warn({ err: e.message }, 'list menu failed – sending text');
-      await send(to, text);
+      // menu only – no numbered text instead of it
+      log.warn({ err: e.message }, 'list menu failed');
+      await send(to, '⚠️ התפריט לא נשלח הפעם. כתבו *עזרה* שוב בעוד רגע.');
     }
   }
 

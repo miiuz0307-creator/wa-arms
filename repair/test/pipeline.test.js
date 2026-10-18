@@ -393,11 +393,14 @@ test('"עזרה" shows the menu with buttons; "דבר עם נציג" silences th
   assert.equal((await s.store.listTickets()).length, 0);
 });
 
-test('"1" after the menu asks for the problem, then the description opens a ticket', async () => {
+test('menu only: a typed "1" does nothing; tapping "report" asks for the problem, then a ticket opens', async () => {
   const s = await setup();
   const J = `${ASKER}@s.whatsapp.net`;
   await s.say(ASKER, 'עזרה', { raw: true });
+  const before = s.wa.textsTo(J).length;
   await s.say(ASKER, '1', { raw: true });
+  assert.ok(!s.wa.textsTo(J).slice(before).some((t) => t.includes('מה לא עובד')), 'numbers are not a menu choice');
+  await s.say(ASKER, 'menu:report', { raw: true });
   assert.ok(s.wa.textsTo(J).at(-1).includes('מה לא עובד'));
   await s.say(ASKER, 'ההפצה לא עובדת', { raw: true });
   assert.equal((await s.store.listTickets()).length, 1);
