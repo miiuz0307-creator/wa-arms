@@ -95,6 +95,7 @@ function createIntake({ cfg, store, wa, pipeline, log }) {
     const isApprover = sender.role === 'approver';
     const displayName = sender.name || name || formatLocal(actor);
     const c = parseCommand(text);
+    if (c.cmd !== 'text') log.info({ cmd: c.cmd, approver: isApprover, group: jid.endsWith('@g.us'), kind }, 'command');
     if (!ALWAYS.has(c.cmd) && !c.button && !inSession(actor)) return; // not talking to the bot – ignore
     touch(actor);
 

@@ -76,6 +76,8 @@ function load() {
     waButtons: bool('WA_BUTTONS', true),
     // answer only inside the command group; private chats are ignored (default on)
     groupOnly: bool('WA_GROUP_ONLY', true),
+    // numbers that are always kept as approvers (comma separated, e.g. 0532306885)
+    ownerPhones: list('OWNER_PHONES'),
 
     // collect screenshots sent right after a description before starting work
     intakeGraceSec: num('INTAKE_GRACE_SEC', 20),

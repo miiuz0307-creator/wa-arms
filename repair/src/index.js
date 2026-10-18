@@ -76,6 +76,19 @@ async function main() {
   const pipeline = createPipeline({ cfg, store, wa, railway, github, ws, claude, log, onNotify: (p) => intake?.touch(p) });
   intake = createIntake({ cfg, store, wa, pipeline, log });
 
+  // OWNER_PHONES: make sure the owner's numbers are on the list as approvers
+  {
+    const { toIntl } = require('./phones');
+    const existing = await store.listNumbers();
+    for (const raw of cfg.ownerPhones || []) {
+      const phone = toIntl(raw);
+      if (!phone) continue;
+      const n = existing.find((x) => x.phone === phone);
+      if (!n) await store.addNumber({ phone, name: 'בעלים', role: 'approver' });
+      else if (n.role !== 'approver' || !n.active) await store.updateNumber(n.id, { role: 'approver', active: true });
+    }
+  }
+
   for (const t of await store.resetStuck()) {
     const msg =
       t.status === 'deploying'
