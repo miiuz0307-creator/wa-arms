@@ -98,7 +98,7 @@ class Arm {
   async start() {
     const baileys = require('@whiskeysockets/baileys');
     const makeWASocket = baileys.default || baileys.makeWASocket;
-    const { useMultiFileAuthState, DisconnectReason, Browsers, fetchLatestBaileysVersion } = baileys;
+    const { useMultiFileAuthState, DisconnectReason, Browsers, fetchLatestBaileysVersion, makeCacheableSignalKeyStore } = baileys;
     fs.mkdirSync(this.authDir, { recursive: true });
     const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
     let version;
@@ -111,10 +111,13 @@ class Arm {
 
     this.state = 'connecting';
     const sock = makeWASocket({
-      auth: state,
+      // same connection profile as the BotiX arms, which stay linked for weeks: a standard browser name
+      // (a made-up one like "Members" stands out) and cached encryption keys
+      auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, silent) },
       version,
       logger: silent,
-      browser: Browsers.ubuntu('Members'),
+      browser: Browsers.ubuntu('Chrome'),
+      generateHighQualityLinkPreview: false,
       printQRInTerminal: false,
       markOnlineOnConnect: false,
       syncFullHistory: false,
