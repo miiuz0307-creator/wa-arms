@@ -41,7 +41,7 @@ class Jobs {
     return this.settings;
   }
 
-  create({ action, number, groups, makeAdmin }) {
+  create({ action, number, groups, makeAdmin, by }) {
     if (action !== 'remove' && action !== 'add') throw new Error('פעולה לא מוכרת');
     const intl = toIntl(number);
     if (!intl) throw new Error('מספר לא תקין');
@@ -51,6 +51,7 @@ class Jobs {
       id: crypto.randomBytes(6).toString('hex'),
       action,
       makeAdmin: action === 'add' && makeAdmin === true,
+      by: by || null,
       number: intl,
       createdAt: new Date().toISOString(),
       finishedAt: null,

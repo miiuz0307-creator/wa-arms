@@ -224,6 +224,15 @@ main{margin-top:-44px;position:relative;z-index:2;padding-block:0 140px}
 .yn .yes[aria-pressed="true"]{background:var(--rm);color:#fff;border-color:var(--rm)}
 .yn .no[aria-pressed="true"]{background:var(--ad);color:#fff;border-color:var(--ad)}
 .r .adm{color:var(--ad-ink);font-size:12.5px}
+.ush{border-top:1px solid var(--line);padding-top:12px;margin-top:4px}
+.ulist{margin:10px 0;display:flex;flex-direction:column;gap:8px}
+.urow{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;background:var(--soft)}
+.urow .n{flex:1;min-width:0;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.urow .c{font-family:var(--f-display);font-weight:700;letter-spacing:2px;direction:ltr}
+.urow button{border:0;background:transparent;color:var(--rm-ink);font-weight:600;font-size:13.5px;padding:4px 6px}
+.uadd{display:flex;gap:8px}
+.uadd input{flex:1;min-width:0;height:42px;border:1px solid var(--line);border-radius:12px;padding:0 12px;background:var(--card)}
+.sheet{max-height:92vh;overflow:auto}
 .btns{display:flex;gap:10px;margin-top:18px}
 .btns button{flex:1;height:52px;border-radius:14px;border:0;font-weight:700;font-size:16px}
 .b-ghost{background:var(--soft)}
@@ -392,15 +401,21 @@ main{margin-top:-44px;position:relative;z-index:2;padding-block:0 140px}
 
 <div id="settings" class="scrim" aria-hidden="true"><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="setTitle">
   <h3 id="setTitle">הגדרות</h3>
-  <div class="sub">השהיה ארוכה יותר בין פעולות מורידה את הסיכון שהמספר ייחסם.</div>
-  <div style="margin-top:10px">
+  <div class="sub" id="whoLine"></div>
+  <div id="ownerSet" style="margin-top:10px">
     <div class="row"><div class="lbl">השהיה מינימלית<div>שניות בין פעולה לפעולה</div></div>
       <div class="stepper"><button data-step="dMin:-1">−</button><input id="dMin" type="number" min="1" max="120"><button data-step="dMin:1">+</button></div></div>
     <div class="row"><div class="lbl">השהיה מקסימלית</div>
       <div class="stepper"><button data-step="dMax:-1">−</button><input id="dMax" type="number" min="1" max="300"><button data-step="dMax:1">+</button></div></div>
     <div class="row"><div class="lbl">רשימת הקבוצות<div>טעינה מחדש מוואטסאפ</div></div><button class="linkbtn" id="refreshBtn">רענן</button></div>
     <div class="row"><div class="lbl">החלפת מספר הזרוע<div>אחרי ניתוק צריך לסרוק QR מחדש</div></div><button class="linkbtn danger" id="armLogout">נתק</button></div>
+    <div class="ush">
+      <div class="lbl" style="font-weight:700">משתמשים<div style="font-weight:400;font-size:13px;color:var(--muted)">לכל משתמש קוד כניסה משלו. מחיקה מנתקת אותו מיד.</div></div>
+      <div id="userList" class="ulist"></div>
+      <div class="uadd"><input id="newUser" placeholder="שם המשתמש" maxlength="40" aria-label="שם המשתמש"><button class="linkbtn" id="addUser">הוסף</button></div>
+    </div>
   </div>
+  <div class="row" id="logoutRow"><div class="lbl">התנתקות מהאפליקציה</div><button class="linkbtn" id="appLogout">התנתק</button></div>
   <div id="setErr" class="err"></div>
   <div class="btns"><button class="b-ghost" id="setClose">סגור</button><button class="b-main" id="setSave">שמור</button></div>
 </div></div>
@@ -616,7 +631,7 @@ function renderJobs() {
   $('hist').innerHTML = S.jobs.length ? S.jobs.slice(0, 15).map((j) => {
     const ok = j.items.filter((i) => i.status === 'ok').length; const rm = j.action === 'remove';
     return `<div class="h"><div class="hi ${rm ? 'rm' : 'ad'}">${rm ? '−' : '+'}</div>
-      <div class="t">${rm ? 'הוסר' : j.makeAdmin ? 'צורף כמנהל' : 'צורף'} <b class="num-font">${esc(pretty(j.number))}</b><div>${when(j.createdAt)}${j.finishedAt ? '' : ' · רץ עכשיו'}</div></div>
+      <div class="t">${rm ? 'הוסר' : j.makeAdmin ? 'צורף כמנהל' : 'צורף'} <b class="num-font">${esc(pretty(j.number))}</b><div>${when(j.createdAt)}${j.by ? ' · ' + esc(j.by) : ''}${j.finishedAt ? '' : ' · רץ עכשיו'}</div></div>
       <div class="c num-font">${ok}/${j.items.length}</div></div>`;
   }).join('') : '<div class="empty">עדיין לא בוצעו פעולות</div>';
 }
@@ -636,7 +651,31 @@ async function tick() {
 }
 
 // ---- settings ----
-$('openSettings').onclick = () => { $('dMin').value = S.status?.settings.delayMin; $('dMax').value = S.status?.settings.delayMax; $('setErr').textContent = ''; $('armLogout').textContent = 'נתק'; openSheet('settings'); };
+$('openSettings').onclick = () => {
+  const me = S.status?.me || { owner: true, name: 'מנהל' };
+  $('dMin').value = S.status?.settings.delayMin; $('dMax').value = S.status?.settings.delayMax; $('setErr').textContent = ''; $('armLogout').textContent = 'נתק';
+  $('whoLine').textContent = me.owner ? 'מחובר כמנהל. השהיה ארוכה יותר בין פעולות מורידה את הסיכון שהמספר ייחסם.' : `מחובר בתור ${me.name}.`;
+  $('ownerSet').classList.toggle('hidden', !me.owner); $('setSave').classList.toggle('hidden', !me.owner);
+  if (me.owner) loadUsers();
+  openSheet('settings');
+};
+async function loadUsers() {
+  try {
+    const { users } = await api('/users');
+    $('userList').innerHTML = users.length ? users.map((u) => `<div class="urow"><span class="n">${esc(u.name)}</span><span class="c num-font">${esc(u.code)}</span><button data-del="${esc(u.id)}" data-name="${esc(u.name)}">מחק</button></div>`).join('') : '<div class="small2" style="margin:0">אין עדיין משתמשים נוספים</div>';
+  } catch (e) { $('setErr').textContent = e.message; }
+}
+$('userList').onclick = async (e) => {
+  const b = e.target.closest('[data-del]'); if (!b) return;
+  if (b.textContent !== 'בטוח?') { b.textContent = 'בטוח?'; return; }
+  await api(`/users/${b.dataset.del}/delete`, {}); toast(`${b.dataset.name} נמחק`); loadUsers();
+};
+$('addUser').onclick = async () => {
+  const name = $('newUser').value.trim(); if (!name) { $('setErr').textContent = 'צריך שם למשתמש'; return; }
+  try { const { user } = await api('/users', { name }); $('newUser').value = ''; $('setErr').textContent = ''; toast(`הקוד של ${user.name}: ${user.code}`); loadUsers(); }
+  catch (e) { $('setErr').textContent = e.message; }
+};
+$('appLogout').onclick = async () => { await api('/logout', {}).catch(() => {}); location.reload(); };
 document.querySelectorAll('[data-step]').forEach((b) => b.onclick = () => { const [id, d] = b.dataset.step.split(':'); const el = $(id); el.value = Math.max(1, (+el.value || 0) + +d); });
 $('setClose').onclick = () => closeSheet('settings');
 $('setSave').onclick = async () => { try { await api('/settings', { delayMin: +$('dMin').value, delayMax: +$('dMax').value }); closeSheet('settings'); toast('נשמר'); tick(); } catch (e) { $('setErr').textContent = e.message; } };
