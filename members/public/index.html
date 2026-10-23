@@ -258,6 +258,29 @@ button.urow{width:100%;border:0;text-align:right;cursor:pointer}
 .sw i{position:absolute;top:3px;right:3px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2);transition:right .15s}
 .sw.on{background:var(--ad)}.sw.on i{right:21px}
 .danger2{color:var(--rm-ink)}
+.page{position:fixed;inset:0;z-index:12;background:var(--bg);display:flex;flex-direction:column;transform:translateX(-100%);transition:transform .22s ease;visibility:hidden}
+.page.open{transform:none;visibility:visible}
+@media (prefers-reduced-motion:reduce){.page{transition:none}}
+.phead{background:var(--band);color:var(--band-ink);padding-block:calc(12px + env(safe-area-inset-top,0px)) 12px;flex:none}
+.prow{display:flex;align-items:center;gap:12px}
+.prow h2{font-family:var(--f-display);font-size:19px;margin:0;flex:1}
+.pback{width:40px;height:40px;border-radius:12px;border:1px solid var(--band-line);background:rgba(255,255,255,.06);color:var(--band-ink);font-size:20px;flex:none}
+.pcount{font-size:13px;padding:3px 10px;border-radius:999px;background:rgba(255,255,255,.08)}
+.pcount:empty{display:none}
+.pbody{flex:1;overflow:auto;padding-block:16px 24px}
+.pfoot{flex:none;background:var(--card);border-top:1px solid var(--line);padding-block:12px calc(12px + env(safe-area-inset-bottom,0px))}
+.pintro{color:var(--muted);font-size:14px;margin:0 2px 14px;line-height:1.5}
+.padd{padding:14px;margin-bottom:14px}
+.lbl3{font-weight:700;margin-bottom:10px}
+.b-main.sm{height:42px;padding:0 16px;border-radius:12px;border:0;font-weight:700}
+.wide{width:100%;height:52px;border-radius:14px;border:0;font-weight:700;font-size:16px}
+.ulist2{overflow:hidden}
+.ulist2 .urow{border-radius:0;background:transparent;border-top:1px solid var(--line);padding:14px}
+.ulist2 .urow:first-child{border-top:0}
+.ulist2 .urow:hover{background:var(--soft)}
+.navrow{width:100%;border:0;background:transparent;text-align:right;cursor:pointer}
+.navrow .chev{color:var(--muted);font-size:22px}
+#userPage .uhero{margin-top:4px}
 .uadd input{flex:1;min-width:0;height:42px;border:1px solid var(--line);border-radius:12px;padding:0 12px;background:var(--card)}
 .sheet{max-height:92vh;overflow:auto}
 .btns{display:flex;gap:10px;margin-top:18px}
@@ -285,7 +308,7 @@ button.urow{width:100%;border:0;text-align:right;cursor:pointer}
 .login button{width:100%;height:56px;margin-top:12px;border:0;border-radius:16px;background:var(--accent);color:var(--accent-ink);font-weight:700;font-size:17px}
 .login .err{color:#ff9b93}
 
-.toast{position:fixed;left:50%;bottom:calc(90px + env(safe-area-inset-bottom,0px));transform:translate(-50%,20px);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:12px;font-weight:600;font-size:14.5px;opacity:0;transition:all .2s;z-index:20;pointer-events:none;max-width:calc(100% - 32px)}
+.toast{position:fixed;left:50%;bottom:calc(110px + env(safe-area-inset-bottom,0px));transform:translate(-50%,20px);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:12px;font-weight:600;font-size:14.5px;opacity:0;transition:all .2s;z-index:20;pointer-events:none;max-width:calc(100% - 32px)}
 .toast.show{opacity:1;transform:translate(-50%,0)}
 </style>
 </head>
@@ -320,6 +343,7 @@ button.urow{width:100%;border:0;text-align:right;cursor:pointer}
         <div class="logo"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><path d="M17 8.5h5M19.5 6v5"/></svg></div>
         <h1>ניהול חברים<small>הסרה וצירוף לקבוצות</small></h1>
         <span id="armChip" class="chip"><span class="d"></span><span id="armText" class="num-font">…</span></span>
+        <button class="iconbtn hidden" id="openUsers" aria-label="משתמשים"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M3 19c0-3.2 2.7-5.5 6-5.5s6 2.3 6 5.5"/><circle cx="17" cy="9" r="2.5"/><path d="M16 13.6c2.9.2 5 2.3 5 5.4"/></svg></button>
         <button class="iconbtn" id="openSettings" aria-label="הגדרות"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></button>
       </div>
       <div class="stats">
@@ -436,10 +460,7 @@ button.urow{width:100%;border:0;text-align:right;cursor:pointer}
       <div class="stepper"><button data-step="dMax:-1">−</button><input id="dMax" type="number" min="1" max="300"><button data-step="dMax:1">+</button></div></div>
     <div class="row"><div class="lbl">רשימת הקבוצות<div>טעינה מחדש מוואטסאפ</div></div><button class="linkbtn" id="refreshBtn">רענן</button></div>
     <div class="row"><div class="lbl">החלפת מספר הזרוע<div>אחרי ניתוק צריך לסרוק QR מחדש</div></div><button class="linkbtn danger" id="armLogout">נתק</button></div>
-    <div class="ush">
-      <div class="lbl" style="font-weight:700">משתמשים<div style="font-weight:400;font-size:13px;color:var(--muted)">לכל משתמש קוד כניסה משלו. מחיקה מנתקת אותו מיד.</div></div>
-      <div id="userList" class="ulist"></div>
-      <div class="uadd"><input id="newUser" placeholder="שם המשתמש" maxlength="40" aria-label="שם המשתמש"><button class="linkbtn" id="addUser">הוסף</button></div>
+    <button class="row navrow" id="openUsersRow"><div class="lbl">ניהול משתמשים<div>קודים, הרשאות, חסימה ומגבלות</div></div><span class="chev">‹</span></button>
     </div>
   </div>
   <div class="row"><div class="lbl">גרסה<div class="num-font" id="verText">—</div></div><button class="linkbtn" id="checkUpd">בדוק עדכונים</button></div>
@@ -449,10 +470,28 @@ button.urow{width:100%;border:0;text-align:right;cursor:pointer}
   <div class="btns"><button class="b-ghost" id="setClose">סגור</button><button class="b-main" id="setSave">שמור</button></div>
 </div></div>
 
-<div id="userSheet" class="scrim" aria-hidden="true"><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="uTitle">
-  <div class="uhead">
-    <button class="linkbtn" id="uBack" aria-label="חזרה">→ משתמשים</button>
-  </div>
+<section id="usersPage" class="page" aria-hidden="true" aria-labelledby="upTitle">
+  <header class="phead gut"><div class="max prow">
+    <button class="pback" id="usersBack" aria-label="חזרה">→</button>
+    <h2 id="upTitle">משתמשים</h2><span class="pcount num-font" id="usersCount"></span>
+  </div></header>
+  <div class="pbody gut"><div class="max">
+    <p class="pintro">לכל משתמש קוד כניסה משלו, הרשאות ומגבלה יומית. לחיצה על משתמש פותחת את כל ההגדרות שלו.</p>
+    <div class="card padd">
+      <div class="lbl3">משתמש חדש</div>
+      <div class="uadd"><input id="newUser" placeholder="שם המשתמש" maxlength="40" aria-label="שם המשתמש"><button class="b-main sm" id="addUser">+ הוסף</button></div>
+      <div id="addErr" class="err"></div>
+    </div>
+    <div id="userList" class="card ulist2"></div>
+  </div></div>
+</section>
+
+<section id="userPage" class="page" aria-hidden="true" aria-labelledby="uTitle">
+  <header class="phead gut"><div class="max prow">
+    <button class="pback" id="uBack" aria-label="חזרה למשתמשים">→</button>
+    <h2>הגדרות משתמש</h2>
+  </div></header>
+  <div class="pbody gut"><div class="max">
   <div class="uhero"><span class="uav big" id="uAva"></span><div><h3 id="uTitle"></h3><div class="sub" id="uMeta"></div></div></div>
   <div class="ucode">
     <div><span class="lbl2">קוד כניסה</span><b id="uCode" class="num-font"></b></div>
@@ -473,9 +512,10 @@ button.urow{width:100%;border:0;text-align:right;cursor:pointer}
     <label class="uf row2">מגבלת קבוצות ליום<input id="uLimit" type="number" min="0" max="10000" placeholder="ללא הגבלה" class="num-font"></label>
   </div>
   <div class="ugrp"><div class="ush2">פעולות אחרונות</div><div id="uRecent" class="hist" style="padding:0"></div></div>
-  <div id="uErr" class="err"></div>
-  <div class="btns"><button class="b-ghost danger2" id="uDel">מחק משתמש</button><button class="b-main" id="uSave">שמור</button></div>
-</div></div>
+    <div class="ugrp"><button class="b-ghost danger2 wide" id="uDel">מחק משתמש</button></div>
+  </div></div>
+  <footer class="pfoot gut"><div class="max"><div id="uErr" class="err"></div><button class="b-main wide" id="uSave">שמור שינויים</button></div></footer>
+</section>
 
 <div id="toast" class="toast"></div>
 
@@ -521,6 +561,8 @@ $('code').onkeydown = (e) => { if (e.key === 'Enter') $('loginBtn').click(); };
 let qrShown = null;
 function renderStatus() {
   const s = S.status; if (!s) return;
+  $('openUsers').classList.toggle('hidden', !s.me?.owner);
+  $('openUsersRow').classList.toggle('hidden', !s.me?.owner);
   $('demoNote').classList.toggle('hidden', !s.demo);
   const online = s.state === 'online';
   $('armChip').className = 'chip ' + (online ? 'on' : s.state === 'qr' || s.state === 'connecting' ? 'wait' : 'off');
@@ -715,7 +757,6 @@ $('openSettings').onclick = () => {
   $('dMin').value = S.status?.settings.delayMin; $('dMax').value = S.status?.settings.delayMax; $('setErr').textContent = ''; $('armLogout').textContent = 'נתק';
   $('whoLine').textContent = me.owner ? 'מחובר כמנהל. השהיה ארוכה יותר בין פעולות מורידה את הסיכון שהמספר ייחסם.' : `מחובר בתור ${me.name}.`;
   $('ownerSet').classList.toggle('hidden', !me.owner); $('setSave').classList.toggle('hidden', !me.owner);
-  if (me.owner) loadUsers();
   openSheet('settings');
 };
 async function loadUsers() {
@@ -725,10 +766,17 @@ async function loadUsers() {
     $('userList').innerHTML = users.length ? users.map((u) => `<button class="urow" data-open="${esc(u.id)}">
         <span class="uav" style="background:${avaColor(u.name)}">${esc(initials(u.name))}</span>
         <span class="n">${esc(u.name)}<small>${u.active ? (u.lastSeenAt ? 'נראה ' + ago(u.lastSeenAt) : 'עוד לא נכנס') : 'חסום'}</small></span>
-        <span class="dot ${u.active ? 'on' : 'off'}"></span><span class="chev">‹</span></button>`).join('') : '<div class="small2" style="margin:0">אין עדיין משתמשים נוספים</div>';
-  } catch (e) { $('setErr').textContent = e.message; }
+        <span class="dot ${u.active ? 'on' : 'off'}"></span><span class="chev">‹</span></button>`).join('') : '<div class="empty">אין עדיין משתמשים. הוסף משתמש למעלה.</div>';
+    $('usersCount').textContent = users.length ? String(users.length) : '';
+  } catch (e) { $('addErr').textContent = e.message; }
 }
 let USERS = [], CUR = null;
+function openPage(id) { const p = $(id); p.classList.add('open'); p.setAttribute('aria-hidden', 'false'); p.querySelector('.pbody').scrollTop = 0; }
+function closePage(id) { const p = $(id); p.classList.remove('open'); p.setAttribute('aria-hidden', 'true'); }
+async function openUsersPage() { closeSheet('settings'); $('addErr').textContent = ''; openPage('usersPage'); await loadUsers(); }
+$('openUsers').onclick = openUsersPage;
+$('openUsersRow').onclick = openUsersPage;
+$('usersBack').onclick = () => closePage('usersPage');
 $('userList').onclick = (e) => { const b = e.target.closest('[data-open]'); if (b) openUser(b.dataset.open); };
 const tf = (on) => `<span class="sw ${on ? 'on' : ''}"><i></i></span>`;
 function openUser(id) {
@@ -737,7 +785,7 @@ function openUser(id) {
   $('uName').value = u.name; $('uPhone').value = u.phone; $('uNote').value = u.note; $('uLimit').value = u.dailyLimit || '';
   $('uErr').textContent = ''; $('uDel').textContent = 'מחק משתמש';
   renderUser();
-  closeSheet('settings'); openSheet('userSheet');
+  openPage('userPage');
 }
 function renderUser() {
   const u = CUR;
@@ -766,19 +814,19 @@ $('uNewCode').onclick = async () => {
 $('uSave').onclick = async () => {
   try {
     const { user } = await api(`/users/${CUR.id}`, { name: $('uName').value, phone: $('uPhone').value, note: $('uNote').value, active: CUR.active, perms: CUR.perms, dailyLimit: +$('uLimit').value || 0 });
-    CUR = user; await loadUsers(); closeSheet('userSheet'); openSheet('settings'); toast('נשמר');
+    CUR = user; await loadUsers(); closePage('userPage'); toast('נשמר');
   } catch (e) { $('uErr').textContent = e.message; }
 };
-$('uBack').onclick = () => { closeSheet('userSheet'); openSheet('settings'); };
+$('uBack').onclick = () => closePage('userPage');
 $('uDel').onclick = async () => {
   const b = $('uDel');
   if (b.textContent !== 'בטוח? לחץ שוב למחיקה') { b.textContent = 'בטוח? לחץ שוב למחיקה'; return; }
-  await api(`/users/${CUR.id}/delete`, {}); toast(`${CUR.name} נמחק`); await loadUsers(); closeSheet('userSheet'); openSheet('settings');
+  await api(`/users/${CUR.id}/delete`, {}); toast(`${CUR.name} נמחק`); await loadUsers(); closePage('userPage');
 };
 $('addUser').onclick = async () => {
-  const name = $('newUser').value.trim(); if (!name) { $('setErr').textContent = 'צריך שם למשתמש'; return; }
-  try { const { user } = await api('/users', { name }); $('newUser').value = ''; $('setErr').textContent = ''; await loadUsers(); openUser(user.id); toast(`נוצר משתמש. הקוד שלו: ${user.code}`); }
-  catch (e) { $('setErr').textContent = e.message; }
+  const name = $('newUser').value.trim(); if (!name) { $('addErr').textContent = 'צריך שם למשתמש'; return; }
+  try { const { user } = await api('/users', { name }); $('newUser').value = ''; $('addErr').textContent = ''; await loadUsers(); openUser(user.id); toast(`נוצר משתמש. הקוד שלו: ${user.code}`); }
+  catch (e) { $('addErr').textContent = e.message; }
 };
 $('appLogout').onclick = async () => { await api('/logout', {}).catch(() => {}); location.reload(); };
 document.querySelectorAll('[data-step]').forEach((b) => b.onclick = () => { const [id, d] = b.dataset.step.split(':'); const el = $(id); el.value = Math.max(1, (+el.value || 0) + +d); });
@@ -814,7 +862,7 @@ showInstall();
 // Checked every 30s and whenever the app comes back to the screen. Waits while a choice is in progress
 // (groups selected or a window open) and shows a bar instead, so nothing you are doing is lost.
 let myVersion = null, newVersion = false;
-const busyUI = () => S.sel.remove.size || S.sel.add.size || document.querySelector('.scrim.open');
+const busyUI = () => S.sel.remove.size || S.sel.add.size || document.querySelector('.scrim.open, .page.open');
 async function checkVersion() {
   try {
     const r = await fetch('/version', { cache: 'no-store' }); const { version } = await r.json();
