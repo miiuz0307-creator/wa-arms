@@ -231,6 +231,33 @@ main{margin-top:-44px;position:relative;z-index:2;padding-block:0 140px}
 .urow .c{font-family:var(--f-display);font-weight:700;letter-spacing:2px;direction:ltr}
 .urow button{border:0;background:transparent;color:var(--rm-ink);font-weight:600;font-size:13.5px;padding:4px 6px}
 .uadd{display:flex;gap:8px}
+button.urow{width:100%;border:0;text-align:right;cursor:pointer}
+.uav{width:34px;height:34px;border-radius:11px;display:grid;place-items:center;flex:none;color:#fff;font-family:var(--f-display);font-weight:700;font-size:13px}
+.uav.big{width:54px;height:54px;border-radius:16px;font-size:19px}
+.urow .n small{display:block;font-weight:400;font-size:12px;color:var(--muted)}
+.urow .dot{width:9px;height:9px;border-radius:50%;flex:none}.urow .dot.on{background:var(--ad)}.urow .dot.off{background:var(--rm)}
+.urow .chev{color:var(--muted);font-size:20px;line-height:1}
+.uhead{display:flex;justify-content:flex-start;margin-bottom:6px}
+.uhero{display:flex;gap:14px;align-items:center;margin-bottom:14px}
+.uhero h3{margin:0}
+.ucode{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:14px;border-radius:16px;background:var(--soft);margin-bottom:12px}
+.ucode b{display:block;font-family:var(--f-display);font-size:28px;letter-spacing:4px;direction:ltr;text-align:right}
+.lbl2{font-size:12.5px;color:var(--muted)}
+.ucodeb{display:flex;gap:8px}
+.ustats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+.ustats div{padding:10px 12px;border-radius:14px;border:1px solid var(--line)}
+.ustats b{display:block;font-family:var(--f-display);font-size:22px}.ustats span{font-size:12.5px;color:var(--muted)}
+.ugrp{border-top:1px solid var(--line);padding:12px 0}
+.ush2{font-weight:700;margin-bottom:8px}
+.uf{display:flex;flex-direction:column;gap:6px;font-size:13.5px;font-weight:600;color:var(--muted);margin-bottom:10px}
+.uf input,.uf textarea{font:inherit;font-weight:400;color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:var(--card);resize:vertical}
+.uf.row2{flex-direction:row;align-items:center;justify-content:space-between}.uf.row2 input{width:120px;text-align:center}
+.trow{width:100%;display:flex;align-items:center;justify-content:space-between;gap:12px;border:0;background:transparent;padding:10px 0;text-align:right;font-weight:600;cursor:pointer}
+.trow small{display:block;font-weight:400;font-size:12.5px;color:var(--muted)}
+.sw{width:44px;height:26px;border-radius:99px;background:var(--line);position:relative;flex:none;transition:background .15s}
+.sw i{position:absolute;top:3px;right:3px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2);transition:right .15s}
+.sw.on{background:var(--ad)}.sw.on i{right:21px}
+.danger2{color:var(--rm-ink)}
 .uadd input{flex:1;min-width:0;height:42px;border:1px solid var(--line);border-radius:12px;padding:0 12px;background:var(--card)}
 .sheet{max-height:92vh;overflow:auto}
 .btns{display:flex;gap:10px;margin-top:18px}
@@ -420,6 +447,34 @@ main{margin-top:-44px;position:relative;z-index:2;padding-block:0 140px}
   <div class="btns"><button class="b-ghost" id="setClose">סגור</button><button class="b-main" id="setSave">שמור</button></div>
 </div></div>
 
+<div id="userSheet" class="scrim" aria-hidden="true"><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="uTitle">
+  <div class="uhead">
+    <button class="linkbtn" id="uBack" aria-label="חזרה">→ משתמשים</button>
+  </div>
+  <div class="uhero"><span class="uav big" id="uAva"></span><div><h3 id="uTitle"></h3><div class="sub" id="uMeta"></div></div></div>
+  <div class="ucode">
+    <div><span class="lbl2">קוד כניסה</span><b id="uCode" class="num-font"></b></div>
+    <div class="ucodeb"><button class="linkbtn" id="uCopy">העתק</button><button class="linkbtn" id="uNewCode">הנפק קוד חדש</button></div>
+  </div>
+  <div class="ustats" id="uStats"></div>
+  <div class="ugrp">
+    <label class="uf">שם<input id="uName" maxlength="40"></label>
+    <label class="uf">טלפון<input id="uPhone" type="tel" inputmode="tel" maxlength="30" dir="ltr"></label>
+    <label class="uf">הערות<textarea id="uNote" rows="2" maxlength="500"></textarea></label>
+  </div>
+  <div class="ugrp">
+    <div class="ush2">גישה והרשאות</div>
+    <button class="trow" id="uActive" role="switch"><span>משתמש פעיל<small>כשכבוי, המשתמש מנותק ולא יכול להיכנס</small></span></button>
+    <button class="trow" id="pRemove" role="switch"><span>יכול להסיר מקבוצות</span></button>
+    <button class="trow" id="pAdd" role="switch"><span>יכול לצרף לקבוצות</span></button>
+    <button class="trow" id="pAdmin" role="switch"><span>יכול להגדיר מנהלים בקבוצות</span></button>
+    <label class="uf row2">מגבלת קבוצות ליום<input id="uLimit" type="number" min="0" max="10000" placeholder="ללא הגבלה" class="num-font"></label>
+  </div>
+  <div class="ugrp"><div class="ush2">פעולות אחרונות</div><div id="uRecent" class="hist" style="padding:0"></div></div>
+  <div id="uErr" class="err"></div>
+  <div class="btns"><button class="b-ghost danger2" id="uDel">מחק משתמש</button><button class="b-main" id="uSave">שמור</button></div>
+</div></div>
+
 <div id="toast" class="toast"></div>
 
 <script>
@@ -559,8 +614,10 @@ function renderResults() {
   const busy = !!S.status?.running;
   $('bar').classList.toggle('show', sel.size > 0);
   $('actBtn').className = 'act ' + (rm ? 'rm' : 'ad');
-  $('actBtn').disabled = busy;
-  $('actText').textContent = busy ? 'יש פעולה שרצה עכשיו' : rm ? `הסר מ-${sel.size} קבוצות` : `צרף ל-${sel.size} קבוצות`;
+  const perms = S.status?.me?.perms || { remove: true, add: true };
+  const allowed = rm ? perms.remove : perms.add;
+  $('actBtn').disabled = busy || !allowed;
+  $('actText').textContent = !allowed ? (rm ? 'אין לך הרשאה להסיר' : 'אין לך הרשאה לצרף') : busy ? 'יש פעולה שרצה עכשיו' : rm ? `הסר מ-${sel.size} קבוצות` : `צרף ל-${sel.size} קבוצות`;
   $('actTime').textContent = busy ? '' : estimate(sel.size);
 }
 
@@ -594,7 +651,7 @@ $('actBtn').onclick = () => {
     $('admYes').setAttribute('aria-pressed', String(v)); $('admNo').setAttribute('aria-pressed', String(!v));
     $('cfYes').textContent = action === 'remove' ? 'הסר' : v ? 'צרף והגדר כמנהל' : 'צרף';
   };
-  $('cfAdmin').classList.toggle('hidden', action !== 'add');
+  $('cfAdmin').classList.toggle('hidden', action !== 'add' || !(S.status?.me?.perms?.makeAdmin ?? true));
   $('admYes').onclick = () => setAdmin(true);
   $('admNo').onclick = () => setAdmin(false);
   setAdmin(false);
@@ -662,17 +719,63 @@ $('openSettings').onclick = () => {
 async function loadUsers() {
   try {
     const { users } = await api('/users');
-    $('userList').innerHTML = users.length ? users.map((u) => `<div class="urow"><span class="n">${esc(u.name)}</span><span class="c num-font">${esc(u.code)}</span><button data-del="${esc(u.id)}" data-name="${esc(u.name)}">מחק</button></div>`).join('') : '<div class="small2" style="margin:0">אין עדיין משתמשים נוספים</div>';
+    USERS = users;
+    $('userList').innerHTML = users.length ? users.map((u) => `<button class="urow" data-open="${esc(u.id)}">
+        <span class="uav" style="background:${avaColor(u.name)}">${esc(initials(u.name))}</span>
+        <span class="n">${esc(u.name)}<small>${u.active ? (u.lastSeenAt ? 'נראה ' + ago(u.lastSeenAt) : 'עוד לא נכנס') : 'חסום'}</small></span>
+        <span class="dot ${u.active ? 'on' : 'off'}"></span><span class="chev">‹</span></button>`).join('') : '<div class="small2" style="margin:0">אין עדיין משתמשים נוספים</div>';
   } catch (e) { $('setErr').textContent = e.message; }
 }
-$('userList').onclick = async (e) => {
-  const b = e.target.closest('[data-del]'); if (!b) return;
-  if (b.textContent !== 'בטוח?') { b.textContent = 'בטוח?'; return; }
-  await api(`/users/${b.dataset.del}/delete`, {}); toast(`${b.dataset.name} נמחק`); loadUsers();
+let USERS = [], CUR = null;
+$('userList').onclick = (e) => { const b = e.target.closest('[data-open]'); if (b) openUser(b.dataset.open); };
+const tf = (on) => `<span class="sw ${on ? 'on' : ''}"><i></i></span>`;
+function openUser(id) {
+  const u = USERS.find((x) => x.id === id); if (!u) return;
+  CUR = JSON.parse(JSON.stringify(u));
+  $('uName').value = u.name; $('uPhone').value = u.phone; $('uNote').value = u.note; $('uLimit').value = u.dailyLimit || '';
+  $('uErr').textContent = ''; $('uDel').textContent = 'מחק משתמש';
+  renderUser();
+  closeSheet('settings'); openSheet('userSheet');
+}
+function renderUser() {
+  const u = CUR;
+  $('uTitle').textContent = u.name;
+  $('uAva').textContent = initials(u.name); $('uAva').style.background = avaColor(u.name);
+  $('uCode').textContent = u.code;
+  $('uMeta').innerHTML = `נוצר ${when(u.createdAt)} · כניסה אחרונה ${u.lastLoginAt ? when(u.lastLoginAt) : '—'} · פעיל לאחרונה ${u.lastSeenAt ? ago(u.lastSeenAt) : '—'}`;
+  $('uStats').innerHTML = `<div><b class="num-font">${u.usage.today}</b><span>קבוצות היום${u.dailyLimit ? ' מתוך ' + u.dailyLimit : ''}</span></div><div><b class="num-font">${u.usage.total}</b><span>פעולות בסה״כ</span></div>`;
+  for (const [k, el] of [['active', 'uActive'], ['remove', 'pRemove'], ['add', 'pAdd'], ['makeAdmin', 'pAdmin']]) {
+    const on = k === 'active' ? u.active : u.perms[k];
+    $(el).querySelector('.sw')?.remove(); $(el).insertAdjacentHTML('beforeend', tf(on)); $(el).setAttribute('aria-checked', String(on));
+  }
+  $('uRecent').innerHTML = u.usage.recent.length ? u.usage.recent.map((j) => `<div class="h"><div class="hi ${j.action === 'remove' ? 'rm' : 'ad'}">${j.action === 'remove' ? '−' : '+'}</div><div class="t">${j.action === 'remove' ? 'הסיר' : j.makeAdmin ? 'צירף כמנהל' : 'צירף'} <b class="num-font">${esc(pretty(j.number))}</b><div>${when(j.createdAt)}</div></div><div class="c num-font">${j.ok}/${j.groups}</div></div>`).join('') : '<div class="small2" style="margin:6px 0">עוד לא ביצע פעולות</div>';
+}
+for (const [el, k] of [['uActive', 'active'], ['pRemove', 'remove'], ['pAdd', 'add'], ['pAdmin', 'makeAdmin']]) {
+  $(el).onclick = () => { if (k === 'active') CUR.active = !CUR.active; else CUR.perms[k] = !CUR.perms[k]; renderUser(); };
+}
+$('uCopy').onclick = async () => { try { await navigator.clipboard.writeText(CUR.code); toast('הקוד הועתק'); } catch { toast(CUR.code); } };
+$('uNewCode').onclick = async () => {
+  const b = $('uNewCode');
+  if (b.textContent !== 'בטוח? לחץ שוב') { b.textContent = 'בטוח? לחץ שוב'; return; }
+  try { const { user } = await api(`/users/${CUR.id}/code`, {}); CUR.code = user.code; renderUser(); toast('הונפק קוד חדש. הקוד הישן הפסיק לעבוד'); loadUsers(); }
+  catch (e) { $('uErr').textContent = e.message; }
+  b.textContent = 'הנפק קוד חדש';
+};
+$('uSave').onclick = async () => {
+  try {
+    const { user } = await api(`/users/${CUR.id}`, { name: $('uName').value, phone: $('uPhone').value, note: $('uNote').value, active: CUR.active, perms: CUR.perms, dailyLimit: +$('uLimit').value || 0 });
+    CUR = user; await loadUsers(); closeSheet('userSheet'); openSheet('settings'); toast('נשמר');
+  } catch (e) { $('uErr').textContent = e.message; }
+};
+$('uBack').onclick = () => { closeSheet('userSheet'); openSheet('settings'); };
+$('uDel').onclick = async () => {
+  const b = $('uDel');
+  if (b.textContent !== 'בטוח? לחץ שוב למחיקה') { b.textContent = 'בטוח? לחץ שוב למחיקה'; return; }
+  await api(`/users/${CUR.id}/delete`, {}); toast(`${CUR.name} נמחק`); await loadUsers(); closeSheet('userSheet'); openSheet('settings');
 };
 $('addUser').onclick = async () => {
   const name = $('newUser').value.trim(); if (!name) { $('setErr').textContent = 'צריך שם למשתמש'; return; }
-  try { const { user } = await api('/users', { name }); $('newUser').value = ''; $('setErr').textContent = ''; toast(`הקוד של ${user.name}: ${user.code}`); loadUsers(); }
+  try { const { user } = await api('/users', { name }); $('newUser').value = ''; $('setErr').textContent = ''; await loadUsers(); openUser(user.id); toast(`נוצר משתמש. הקוד שלו: ${user.code}`); }
   catch (e) { $('setErr').textContent = e.message; }
 };
 $('appLogout').onclick = async () => { await api('/logout', {}).catch(() => {}); location.reload(); };

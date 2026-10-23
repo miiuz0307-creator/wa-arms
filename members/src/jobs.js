@@ -41,7 +41,7 @@ class Jobs {
     return this.settings;
   }
 
-  create({ action, number, groups, makeAdmin, by }) {
+  create({ action, number, groups, makeAdmin, by, byId }) {
     if (action !== 'remove' && action !== 'add') throw new Error('פעולה לא מוכרת');
     const intl = toIntl(number);
     if (!intl) throw new Error('מספר לא תקין');
@@ -52,6 +52,7 @@ class Jobs {
       action,
       makeAdmin: action === 'add' && makeAdmin === true,
       by: by || null,
+      byId: byId || null,
       number: intl,
       createdAt: new Date().toISOString(),
       finishedAt: null,

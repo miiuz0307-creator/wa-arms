@@ -56,16 +56,50 @@ for (const part of String(process.env.SEED_USERS || '').split(';')) {
 saveUsers();
 
 const same = (a, b) => typeof a === 'string' && a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+// what a user may do; older users (before permissions existed) keep full access
+const DEFAULT_PERMS = { remove: true, add: true, makeAdmin: false };
+const OWNER = { id: 'owner', name: 'מנהל', owner: true, perms: { remove: true, add: true, makeAdmin: true }, dailyLimit: 0 };
+const permsOf = (u) => ({ ...DEFAULT_PERMS, ...(u.perms || {}) });
+const pub = (u) => ({ id: u.id, name: u.name, owner: false, perms: permsOf(u), dailyLimit: Number(u.dailyLimit) || 0 });
 function userByCode(code) {
-  if (same(code, ACCESS_CODE)) return { id: 'owner', name: 'מנהל', owner: true };
+  if (same(code, ACCESS_CODE)) return OWNER;
   const u = users.list.find((x) => same(code, x.code));
-  return u ? { id: u.id, name: u.name, owner: false } : null;
+  if (!u || u.active === false) return null;
+  return pub(u);
 }
 function userById(id) {
-  if (id === 'owner') return { id: 'owner', name: 'מנהל', owner: true };
+  if (id === 'owner') return OWNER;
   const u = users.list.find((x) => x.id === id);
-  return u ? { id: u.id, name: u.name, owner: false } : null;
+  // a blocked user is logged out at once
+  return u && u.active !== false ? pub(u) : null;
 }
+let touchTimer = null;
+function touchUser(id, field) {
+  const u = users.list.find((x) => x.id === id);
+  if (!u) return;
+  u[field] = new Date().toISOString();
+  if (field === 'lastLoginAt') return saveUsers();
+  if (!touchTimer) touchTimer = setTimeout(() => { touchTimer = null; saveUsers(); }, 60_000);
+}
+// actions (one per group) the user started today / ever, from the job history
+function usage(u) {
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jerusalem' });
+  let todayN = 0, total = 0;
+  const recent = [];
+  for (const j of jobs.list) {
+    if (j.byId !== u.id) continue;
+    const n = j.items.filter((i) => i.status === 'ok' || i.status === 'fail').length;
+    total += n;
+    if (new Date(j.createdAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Jerusalem' }) === today) todayN += j.items.length;
+    if (recent.length < 10) recent.push({ action: j.action, number: j.number, groups: j.items.length, ok: j.items.filter((i) => i.status === 'ok').length, createdAt: j.createdAt, makeAdmin: !!j.makeAdmin });
+  }
+  return { today: todayN, total, recent };
+}
+const userView = (u) => ({
+  id: u.id, name: u.name, phone: u.phone || '', note: u.note || '', code: u.code, active: u.active !== false,
+  perms: permsOf(u), dailyLimit: Number(u.dailyLimit) || 0,
+  createdAt: u.createdAt, lastLoginAt: u.lastLoginAt || null, lastSeenAt: u.lastSeenAt || null, usage: usage(u),
+});
 function newCode() {
   for (;;) {
     const c = String(crypto.randomInt(100000, 999999));
@@ -74,19 +108,26 @@ function newCode() {
 }
 
 const sign = (v) => crypto.createHmac('sha256', SECRET).update(v).digest('base64url');
+// cookie = expiry.userId.codeGeneration.signature – issuing a new code bumps the generation,
+// so the user's old sessions stop working at once
+const genOf = (uid) => (uid === 'owner' ? 0 : users.list.find((x) => x.id === uid)?.gen || 0);
 function makeToken(uid) {
   const exp = Date.now() + 30 * 24 * 3600 * 1000;
-  return `${exp}.${uid}.${sign(`${exp}.${uid}`)}`;
+  const g = genOf(uid);
+  return `${exp}.${uid}.${g}.${sign(`${exp}.${uid}.${g}`)}`;
 }
 function authed(req) {
   const m = /(?:^|;\s*)mm=([^;]+)/.exec(req.headers.cookie || '');
   if (!m) return null;
   const parts = decodeURIComponent(m[1]).split('.');
-  // older cookies (before separate users) had no user id: they were the owner's
-  const [exp, uid, sig] = parts.length === 2 ? [parts[0], 'owner', parts[1]] : parts;
+  let exp, uid, g, sig, signed;
+  if (parts.length === 2) [exp, sig, uid, g, signed] = [parts[0], parts[1], 'owner', 0, parts[0]]; // oldest cookies: owner
+  else if (parts.length === 3) [exp, uid, sig, g, signed] = [parts[0], parts[1], parts[2], 0, `${parts[0]}.${parts[1]}`];
+  else [exp, uid, g, sig, signed] = [parts[0], parts[1], Number(parts[2]), parts[3], `${parts[0]}.${parts[1]}.${parts[2]}`];
   if (!exp || !sig || Number(exp) < Date.now()) return null;
-  const good = sign(parts.length === 2 ? exp : `${exp}.${uid}`);
+  const good = sign(signed);
   if (!(sig.length === good.length && crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(good)))) return null;
+  if (Number(g) !== genOf(uid)) return null;
   return userById(uid);
 }
 const attempts = new Map(); // ip -> { n, until }
@@ -144,6 +185,7 @@ const server = http.createServer(async (req, res) => {
         return send(res, 401, { error: 'קוד שגוי' });
       }
       attempts.delete(ip);
+      if (!who.owner) touchUser(who.id, 'lastLoginAt');
       return send(res, 200, { ok: true }, { 'set-cookie': `mm=${makeToken(who.id)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000` });
     }
 
@@ -152,20 +194,49 @@ const server = http.createServer(async (req, res) => {
     if (!me) return send(res, 401, { error: 'צריך להתחבר' });
     const ownerOnly = () => send(res, 403, { error: 'רק המנהל יכול לעשות את זה' });
 
+    if (!me.owner) touchUser(me.id, 'lastSeenAt');
     if (p === '/api/status' && req.method === 'GET') return send(res, 200, { ...arm.status(), running: jobs.running, settings: jobs.settings, me });
     if (p === '/api/logout' && req.method === 'POST') return send(res, 200, { ok: true }, { 'set-cookie': 'mm=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0' });
     if (p === '/api/users' && req.method === 'GET') {
       if (!me.owner) return ownerOnly();
-      return send(res, 200, { users: users.list.map(({ id, name, code, createdAt }) => ({ id, name, code, createdAt })) });
+      return send(res, 200, { users: users.list.map(userView) });
     }
     if (p === '/api/users' && req.method === 'POST') {
       if (!me.owner) return ownerOnly();
-      const name = String((await readBody(req)).name || '').trim().slice(0, 40);
+      const b = await readBody(req);
+      const name = String(b.name || '').trim().slice(0, 40);
       if (!name) throw new Error('צריך שם למשתמש');
-      const u = { id: crypto.randomBytes(6).toString('hex'), name, code: newCode(), createdAt: new Date().toISOString() };
+      const u = { id: crypto.randomBytes(6).toString('hex'), name, code: newCode(), active: true, perms: { ...DEFAULT_PERMS }, dailyLimit: 0, createdAt: new Date().toISOString() };
       users.list.push(u);
       saveUsers();
-      return send(res, 200, { user: u });
+      return send(res, 200, { user: userView(u) });
+    }
+    const updUser = /^\/api\/users\/([a-f0-9]+)$/.exec(p);
+    if (updUser && req.method === 'POST') {
+      if (!me.owner) return ownerOnly();
+      const u = users.list.find((x) => x.id === updUser[1]);
+      if (!u) throw new Error('המשתמש לא נמצא');
+      const b = await readBody(req);
+      if (b.name !== undefined) { const n = String(b.name).trim().slice(0, 40); if (!n) throw new Error('צריך שם למשתמש'); u.name = n; }
+      if (b.phone !== undefined) u.phone = String(b.phone).trim().slice(0, 30);
+      if (b.note !== undefined) u.note = String(b.note).trim().slice(0, 500);
+      if (b.active !== undefined) u.active = !!b.active;
+      if (b.perms) u.perms = { remove: !!b.perms.remove, add: !!b.perms.add, makeAdmin: !!b.perms.makeAdmin };
+      if (b.dailyLimit !== undefined) u.dailyLimit = Math.max(0, Math.min(10000, Math.floor(Number(b.dailyLimit) || 0)));
+      saveUsers();
+      return send(res, 200, { user: userView(u) });
+    }
+    const newCodeFor = /^\/api\/users\/([a-f0-9]+)\/code$/.exec(p);
+    if (newCodeFor && req.method === 'POST') {
+      if (!me.owner) return ownerOnly();
+      const u = users.list.find((x) => x.id === newCodeFor[1]);
+      if (!u) throw new Error('המשתמש לא נמצא');
+      if (u.seed) users.removedSeeds.push(u.code);
+      u.code = newCode();
+      // a new code logs the user out everywhere: cookies carry the id, so bump a key the cookie must match
+      u.gen = (u.gen || 0) + 1;
+      saveUsers();
+      return send(res, 200, { user: userView(u) });
     }
     const delUser = /^\/api\/users\/([a-f0-9]+)\/delete$/.exec(p);
     if (delUser && req.method === 'POST') {
@@ -187,7 +258,18 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, await arm.lookup(number));
     }
     if (p === '/api/jobs' && req.method === 'GET') return send(res, 200, { jobs: jobs.list.slice(0, 30) });
-    if (p === '/api/jobs' && req.method === 'POST') return send(res, 200, { job: jobs.create({ ...(await readBody(req)), by: me.name }) });
+    if (p === '/api/jobs' && req.method === 'POST') {
+      const b = await readBody(req);
+      if (b.action === 'remove' && !me.perms.remove) return send(res, 403, { error: 'אין לך הרשאה להסיר' });
+      if (b.action === 'add' && !me.perms.add) return send(res, 403, { error: 'אין לך הרשאה לצרף' });
+      if (b.makeAdmin && !me.perms.makeAdmin) return send(res, 403, { error: 'אין לך הרשאה להגדיר מנהלים' });
+      if (!me.owner && me.dailyLimit) {
+        const used = usage({ id: me.id }).today;
+        const want = Array.isArray(b.groups) ? b.groups.length : 0;
+        if (used + want > me.dailyLimit) return send(res, 403, { error: `הגעת למגבלה היומית (${me.dailyLimit} קבוצות). נשארו היום ${Math.max(0, me.dailyLimit - used)}` });
+      }
+      return send(res, 200, { job: jobs.create({ ...b, by: me.name, byId: me.id }) });
+    }
     const stop = /^\/api\/jobs\/([a-f0-9]+)\/stop$/.exec(p);
     if (stop && req.method === 'POST') return send(res, 200, { ok: jobs.stop(stop[1]) });
     if (p === '/api/settings' && req.method === 'POST') return me.owner ? send(res, 200, jobs.setSettings(await readBody(req))) : ownerOnly();
