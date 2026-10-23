@@ -41,7 +41,11 @@ export default function CampaignPage() {
 
   const counts = useMemo(() => {
     const r: Record<string, number> = {};
-    for (const t of targets) r[t.status] = (r[t.status] || 0) + 1;
+    for (const t of targets) {
+      // "no connected arm in this group" is shown apart from the real failures
+      const k = t.status === 'skipped' && String(t.error || '').startsWith('אין זרוע זמינה') ? 'unavailable' : t.status;
+      r[k] = (r[k] || 0) + 1;
+    }
     return r;
   }, [targets]);
 
@@ -50,7 +54,8 @@ export default function CampaignPage() {
 
   const sent = counts.sent || 0;
   const failed = counts.failed || 0;
-  const done = sent + failed + (counts.skipped || 0);
+  const unavailable = counts.unavailable || 0;
+  const done = sent + failed + (counts.skipped || 0) + unavailable;
   const inProgress = c.total - done;
   const active = ['queued', 'running'].includes(c.status);
 
@@ -122,13 +127,14 @@ export default function CampaignPage() {
 
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="p-5 lg:col-span-2">
-          <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-5">
             <Big label="נשלחו" value={`${done}/${c.total}`} />
             <Big label="הצליחו" value={sent} cls="text-emerald-600" />
             <Big label="נכשלו" value={failed} cls="text-rose-600" />
+            <Big label="בלי זרוע מחוברת" value={unavailable} cls="text-slate-500" />
             <Big label="בתהליך" value={inProgress} cls="text-violet-600" />
           </div>
-          <Progress sent={sent} failed={failed} total={c.total} />
+          <Progress sent={sent} failed={failed} total={c.total - unavailable} />
           <dl className="mt-5 grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
             {c.kind !== 'manual' && (
               <>

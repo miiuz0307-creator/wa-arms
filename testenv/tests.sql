@@ -160,10 +160,22 @@ insert into campaign_targets (campaign_id, wa_group_id, station_id) values ('000
 update arms set status = 'pending' where id = '00000000-0000-0000-0001-00000000000c';
 update arms set status = 'offline', last_seen_at = now() - interval '10 minutes' where id = '00000000-0000-0000-0002-00000000000c';
 select public.finalize_campaigns();
-select testkit.check((select status from campaign_targets where campaign_id = '00000000-0000-0000-0000-0000000000d5') = 'failed'
+select testkit.check((select status from campaign_targets where campaign_id = '00000000-0000-0000-0000-0000000000d5') = 'skipped'
   and (select status from campaigns where id = '00000000-0000-0000-0000-0000000000d5') = 'completed', 'finish: a ride does not wait for an unlinked arm / one offline for minutes');
+select testkit.check((select failed from campaigns where id = '00000000-0000-0000-0000-0000000000d5') = 0
+  and (select unavailable from campaigns where id = '00000000-0000-0000-0000-0000000000d5') = 1
+  and (select error from campaign_targets where campaign_id = '00000000-0000-0000-0000-0000000000d5') like 'אין זרוע זמינה%',
+  'unavailable: a group with no connected arm is counted as unavailable, not as a failure');
+-- an arm that really tried and failed: still a failure
 update campaigns set status = 'running', finished_at = null where id = '00000000-0000-0000-0000-0000000000d5';
-update campaign_targets set status = 'pending', error = null where campaign_id = '00000000-0000-0000-0000-0000000000d5';
+update campaign_targets set status = 'pending', error = 'נכשל בשליחה', tried_arms = array['00000000-0000-0000-0001-00000000000c'::uuid] where campaign_id = '00000000-0000-0000-0000-0000000000d5';
+select public.finalize_campaigns();
+select testkit.check((select status from campaign_targets where campaign_id = '00000000-0000-0000-0000-0000000000d5') = 'failed'
+  and (select failed from campaigns where id = '00000000-0000-0000-0000-0000000000d5') = 1
+  and (select unavailable from campaigns where id = '00000000-0000-0000-0000-0000000000d5') = 0,
+  'unavailable: a group where an arm tried and failed stays a failure');
+update campaigns set status = 'running', finished_at = null where id = '00000000-0000-0000-0000-0000000000d5';
+update campaign_targets set status = 'pending', error = null, tried_arms = '{}' where campaign_id = '00000000-0000-0000-0000-0000000000d5';
 update arms set last_seen_at = now() - interval '30 seconds' where id = '00000000-0000-0000-0002-00000000000c';
 select public.finalize_campaigns();
 select testkit.check((select status from campaign_targets where campaign_id = '00000000-0000-0000-0000-0000000000d5') = 'pending', 'finish: an arm that dropped a moment ago is still waited for');

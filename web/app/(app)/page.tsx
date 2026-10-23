@@ -31,7 +31,7 @@ export default function Dashboard() {
     const midnight = new Date();
     midnight.setHours(0, 0, 0, 0);
     const todayRides = await allRows(() =>
-      sb().from('campaigns').select('kind,sent,failed,total,status').gte('created_at', midnight.toISOString()).order('created_at'),
+      sb().from('campaigns').select('kind,sent,failed,unavailable,total,status').gte('created_at', midnight.toISOString()).order('created_at'),
     ).catch(() => ({ data: [] as any[] }));
     // owner (own account, not inside a station): stations whose subscription ends this week or already ended
     let stationAlerts: any[] = [];
@@ -88,6 +88,7 @@ export default function Dashboard() {
       rides: tr.length,
       sent: tr.reduce((n: number, c: any) => n + (c.sent || 0), 0),
       failed: tr.reduce((n: number, c: any) => n + (c.failed || 0), 0),
+      unavailable: tr.reduce((n: number, c: any) => n + (c.unavailable || 0), 0),
       total: tr.reduce((n: number, c: any) => n + (c.total || 0), 0),
     };
     setD({
@@ -142,8 +143,10 @@ export default function Dashboard() {
 
   if (!d) return <Spinner />;
 
-  const online = d.arms.filter((a: any) => a.status === 'online').length;
-  const problems = d.arms.filter((a: any) => ['offline', 'error'].includes(a.status) || (a.status === 'pending' && a.last_error));
+  // arms that should work (not stopped on purpose) and are not connected – shown in red, every one of them
+  const working = d.arms.filter((a: any) => a.is_active && a.status !== 'paused');
+  const online = working.filter((a: any) => a.status === 'online').length;
+  const problems = working.filter((a: any) => a.status !== 'online');
   const hour = new Date().getHours();
   const hello = hour < 12 ? 'בוקר טוב' : hour < 18 ? 'צהריים טובים' : 'ערב טוב';
 
@@ -165,7 +168,13 @@ export default function Dashboard() {
       />
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4">
-        <Stat label="זרועות מחוברות" value={`${online}/${d.arms.length}`} icon={<Smartphone className="h-5 w-5" />} tone="green" />
+        <Stat
+          label="זרועות מחוברות"
+          value={`${online}/${working.length}`}
+          sub={problems.length > 0 ? `${problems.length} לא מחוברות` : 'כולן מחוברות'}
+          icon={<Smartphone className="h-5 w-5" />}
+          tone={problems.length > 0 ? 'red' : 'green'}
+        />
         <Stat
           label="קבוצות זמינות"
           value={`${d.groupsReachable}/${d.groupCount}`}
@@ -264,10 +273,11 @@ export default function Dashboard() {
                         {CAMPAIGN_STATUS[c.status]?.label}
                       </Badge>
                     </div>
-                    <Progress sent={c.sent} failed={c.failed} total={c.total} />
-                    <div className="mt-1.5 flex justify-between text-xs text-slate-500">
+                    <Progress sent={c.sent} failed={c.failed} total={c.total - (c.unavailable || 0)} />
+                    <div className="mt-1.5 flex justify-between gap-2 text-xs text-slate-500">
                       <span>
-                        {c.sent + c.failed}/{c.total} · {KIND_LABEL[c.kind] || c.kind}
+                        נשלחו {c.sent} מתוך {c.total - (c.unavailable || 0)} קבוצות זמינות
+                        {c.unavailable > 0 && ` · ${c.unavailable} בלי זרוע מחוברת`} · {KIND_LABEL[c.kind] || c.kind}
                       </span>
                       <span>{fmtTime(c.created_at)}</span>
                     </div>
@@ -344,7 +354,7 @@ export default function Dashboard() {
 }
 
 // Today at a glance: rides, how the sends ended, and the station's subscription
-function TodayStrip({ t, station, isSuper }: { t: { rides: number; sent: number; failed: number; total: number }; station: any; isSuper: boolean }) {
+function TodayStrip({ t, station, isSuper }: { t: { rides: number; sent: number; failed: number; unavailable: number; total: number }; station: any; isSuper: boolean }) {
   const done = t.sent + t.failed;
   const rate = done > 0 ? Math.round((t.sent / done) * 100) : null;
   let sub: { text: string; tone: 'green' | 'amber' | 'red' | 'slate' } | null = null;
@@ -367,9 +377,16 @@ function TodayStrip({ t, station, isSuper }: { t: { rides: number; sent: number;
       <span className="text-emerald-700">
         <b>{t.sent.toLocaleString('he-IL')}</b> נשלחו לקבוצות
       </span>
-      <span className={t.failed > 0 ? 'text-rose-700' : 'text-slate-500'}>
-        <b>{t.failed.toLocaleString('he-IL')}</b> לא נשלחו
-      </span>
+      {t.failed > 0 && (
+        <span className="text-rose-700">
+          <b>{t.failed.toLocaleString('he-IL')}</b> נכשלו
+        </span>
+      )}
+      {t.unavailable > 0 && (
+        <span className="text-slate-500" title="קבוצות שאף זרוע מחוברת לא נמצאת בהן – לא נחשב כישלון">
+          <b>{t.unavailable.toLocaleString('he-IL')}</b> בלי זרוע מחוברת
+        </span>
+      )}
       {rate !== null && <span className="text-slate-500">{rate}% הצלחה</span>}
       {sub && (
         <span className="ms-auto">

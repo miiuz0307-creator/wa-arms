@@ -106,10 +106,11 @@ export default function HistoryPage() {
                   </div>
                   <div className="flex items-center gap-4 md:w-80">
                     <div className="flex-1">
-                      <Progress sent={c.sent} failed={c.failed} total={c.total} />
-                      <div className="mt-1 flex gap-3 text-xs">
+                      <Progress sent={c.sent} failed={c.failed} total={c.total - (c.unavailable || 0)} />
+                      <div className="mt-1 flex flex-wrap gap-x-3 text-xs">
                         <span className="text-emerald-700">הצליח {c.sent}</span>
-                        <span className="text-rose-700">נכשל {c.failed}</span>
+                        {c.failed > 0 && <span className="text-rose-700">נכשל {c.failed}</span>}
+                        {c.unavailable > 0 && <span className="text-slate-500">{c.unavailable} בלי זרוע מחוברת</span>}
                       </div>
                     </div>
                     <Badge tone={CAMPAIGN_STATUS[c.status]?.tone} dot>
