@@ -258,6 +258,8 @@ button.urow{width:100%;border:0;text-align:right;cursor:pointer}
 .sw i{position:absolute;top:3px;right:3px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2);transition:right .15s}
 .sw.on{background:var(--ad)}.sw.on i{right:21px}
 .danger2{color:var(--rm-ink)}
+.top h1{white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis}
+@media (max-width:480px){.top h1 small{display:none}.top{gap:8px}.chip{padding:6px 9px;font-size:12.5px}}
 .page{position:fixed;inset:0;z-index:12;background:var(--bg);display:flex;flex-direction:column;transform:translateX(-100%);transition:transform .22s ease;visibility:hidden}
 .page.open{transform:none;visibility:visible}
 @media (prefers-reduced-motion:reduce){.page{transition:none}}
@@ -461,7 +463,6 @@ button.urow{width:100%;border:0;text-align:right;cursor:pointer}
     <div class="row"><div class="lbl">רשימת הקבוצות<div>טעינה מחדש מוואטסאפ</div></div><button class="linkbtn" id="refreshBtn">רענן</button></div>
     <div class="row"><div class="lbl">החלפת מספר הזרוע<div>אחרי ניתוק צריך לסרוק QR מחדש</div></div><button class="linkbtn danger" id="armLogout">נתק</button></div>
     <button class="row navrow" id="openUsersRow"><div class="lbl">ניהול משתמשים<div>קודים, הרשאות, חסימה ומגבלות</div></div><span class="chev">‹</span></button>
-    </div>
   </div>
   <div class="row"><div class="lbl">גרסה<div class="num-font" id="verText">—</div></div><button class="linkbtn" id="checkUpd">בדוק עדכונים</button></div>
   <div class="row" id="installRow"><div class="lbl">התקנה כאפליקציה<div>אייקון על מסך הבית</div></div><button class="linkbtn" id="installRowBtn">התקן</button></div>
