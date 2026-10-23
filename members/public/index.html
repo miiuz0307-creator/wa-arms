@@ -307,7 +307,7 @@ button.urow{width:100%;border:0;text-align:right;cursor:pointer}
     <div class="max">
       <div id="netBar" class="install hidden"><span>אין חיבור לשרת, מנסה שוב…</span></div>
       <div id="updBar" class="install hidden">
-        <span>יש גרסה חדשה</span>
+        <span id="updText">יש גרסה חדשה</span>
         <button id="updBtn">עדכן עכשיו</button>
       </div>
       <div id="install" class="install hidden">
@@ -442,6 +442,8 @@ button.urow{width:100%;border:0;text-align:right;cursor:pointer}
       <div class="uadd"><input id="newUser" placeholder="שם המשתמש" maxlength="40" aria-label="שם המשתמש"><button class="linkbtn" id="addUser">הוסף</button></div>
     </div>
   </div>
+  <div class="row"><div class="lbl">גרסה<div class="num-font" id="verText">—</div></div><button class="linkbtn" id="checkUpd">בדוק עדכונים</button></div>
+  <div class="row" id="installRow"><div class="lbl">התקנה כאפליקציה<div>אייקון על מסך הבית</div></div><button class="linkbtn" id="installRowBtn">התקן</button></div>
   <div class="row" id="logoutRow"><div class="lbl">התנתקות מהאפליקציה</div><button class="linkbtn" id="appLogout">התנתק</button></div>
   <div id="setErr" class="err"></div>
   <div class="btns"><button class="b-ghost" id="setClose">סגור</button><button class="b-main" id="setSave">שמור</button></div>
@@ -816,16 +818,19 @@ const busyUI = () => S.sel.remove.size || S.sel.add.size || document.querySelect
 async function checkVersion() {
   try {
     const r = await fetch('/version', { cache: 'no-store' }); const { version } = await r.json();
-    if (!myVersion) { myVersion = version; return; }
-    if (version === myVersion) return;
-    if (!busyUI()) return safeReload();
-    if (!newVersion) { newVersion = true; $('updBar').classList.remove('hidden'); }
+    if (!myVersion) { myVersion = version; $('verText').textContent = version.slice(0, 7); return version; }
+    if (version === myVersion) return version;
+    // a new version: the bar stays on screen until the app is updated (it never hides by itself)
+    newVersion = true;
+    $('updBar').classList.remove('hidden');
+    if (!busyUI()) { $('updText').textContent = 'יש גרסה חדשה – מתעדכן…'; setTimeout(() => { if (!busyUI()) safeReload(); else $('updText').textContent = 'יש גרסה חדשה'; }, 4000); }
+    return version;
   } catch {}
 }
 // reload only once the new version actually answers – during the switch-over the server is down for a few seconds
 async function safeReload() {
   for (let i = 0; i < 40; i++) {
-    try { const r = await fetch('/health', { cache: 'no-store' }); if (r.ok) return location.reload(); } catch {}
+    try { const r = await fetch('/health', { cache: 'no-store' }); if (r.ok) { try { sessionStorage.setItem('mm-updated', '1'); } catch {} return location.reload(); } } catch {}
     await new Promise((r) => setTimeout(r, 3000));
   }
 }
@@ -833,6 +838,19 @@ $('updBtn').onclick = () => safeReload();
 setInterval(() => { if (newVersion && !busyUI()) safeReload(); else checkVersion(); }, 30_000);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { checkVersion(); tick(); } });
 checkVersion();
+// after an update: say so, so it's clear the update happened
+try { if (sessionStorage.getItem('mm-updated')) { sessionStorage.removeItem('mm-updated'); setTimeout(() => toast('האפליקציה עודכנה לגרסה החדשה ✓'), 800); } } catch {}
+$('checkUpd').onclick = async () => {
+  $('checkUpd').textContent = '…';
+  const v = await checkVersion();
+  $('checkUpd').textContent = 'בדוק עדכונים';
+  if (v && v === myVersion && !newVersion) toast('יש לך את הגרסה האחרונה');
+};
+$('installRowBtn').onclick = async () => {
+  if (installEvt) { installEvt.prompt(); await installEvt.userChoice.catch(() => {}); installEvt = null; return; }
+  toast(isIOS ? 'לחץ על כפתור השיתוף ⬆︎ ואז "הוסף למסך הבית"' : 'בתפריט ⋮ של הדפדפן: "התקן אפליקציה" או "הוסף למסך הבית"');
+};
+$('installRow').classList.toggle('hidden', !!standalone);
 
 let timer = null;
 async function boot() {
