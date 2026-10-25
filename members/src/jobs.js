@@ -42,7 +42,7 @@ class Jobs {
   }
 
   create({ action, number, groups, makeAdmin, by, byId }) {
-    if (action !== 'remove' && action !== 'add') throw new Error('פעולה לא מוכרת');
+    if (!['remove', 'add', 'promote', 'demote'].includes(action)) throw new Error('פעולה לא מוכרת');
     const intl = toIntl(number);
     if (!intl) throw new Error('מספר לא תקין');
     const uniq = [...new Map((groups || []).map((g) => [g.id, g])).values()];

@@ -308,11 +308,14 @@ class Arm {
     if (!g) return { ok: false, code: 'nogroup', message: 'הזרוע כבר לא בקבוצה' };
     if (!this.iAmAdmin(g)) return { ok: false, code: 'notadmin', message: 'הזרוע לא מנהלת בקבוצה' };
     let target = `${intl}@s.whatsapp.net`;
-    if (action === 'remove' || action === 'promote') {
+    if (action === 'remove' || action === 'promote' || action === 'demote') {
       const { ids } = await this.idsFor(intl);
       const m = g.participants.find((p) => [...p.ids].some((x) => ids.has(x)));
       if (!m && action === 'remove') return { ok: true, code: 'absent', message: 'כבר לא בקבוצה' };
+      if (!m && action !== 'remove') return { ok: false, code: 'absent', message: 'המספר לא נמצא בקבוצה' };
       if (m && action === 'promote' && m.admin) return { ok: true, code: 'already', message: 'כבר מנהל' };
+      if (m && action === 'demote' && !m.admin) return { ok: true, code: 'already', message: 'כבר לא מנהל' };
+      if (m && action === 'demote' && m.admin === 'superadmin') return { ok: false, code: 'owner', message: 'זה יוצר הקבוצה – אי אפשר להוריד לו ניהול' };
       // use the id the group itself knows the member by
       if (m) target = [...m.ids].find((x) => ids.has(x));
     }
@@ -321,7 +324,7 @@ class Arm {
       const status = String(r?.status ?? '200');
       if (status === '200') {
         this.applyParticipantEvent({ id: groupId, participants: [target], action });
-        return { ok: true, code: status, message: { remove: 'הוסר', add: 'צורף', promote: 'הוגדר כמנהל' }[action] };
+        return { ok: true, code: status, message: { remove: 'הוסר', add: 'צורף', promote: 'הוגדר כמנהל', demote: 'הוסר מניהול' }[action] };
       }
       if (action === 'add' && status === '409') return { ok: true, code: status, message: 'כבר בקבוצה' };
       return { ok: false, code: status, message: explain(status, action) };

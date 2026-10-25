@@ -262,7 +262,7 @@ const server = http.createServer(async (req, res) => {
       const b = await readBody(req);
       if (b.action === 'remove' && !me.perms.remove) return send(res, 403, { error: 'אין לך הרשאה להסיר' });
       if (b.action === 'add' && !me.perms.add) return send(res, 403, { error: 'אין לך הרשאה לצרף' });
-      if (b.makeAdmin && !me.perms.makeAdmin) return send(res, 403, { error: 'אין לך הרשאה להגדיר מנהלים' });
+      if ((b.makeAdmin || b.action === 'promote' || b.action === 'demote') && !me.perms.makeAdmin) return send(res, 403, { error: 'אין לך הרשאה לנהל מנהלים' });
       if (!me.owner && me.dailyLimit) {
         const used = usage({ id: me.id }).today;
         const want = Array.isArray(b.groups) ? b.groups.length : 0;

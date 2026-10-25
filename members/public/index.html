@@ -24,6 +24,7 @@
   --rm:#e0453a; --rm-soft:#fdeceb; --rm-ink:#b4271d;
   --ad:#12a37a; --ad-soft:#e3f6ee; --ad-ink:#0b7a5a;
   --warn:#b26a00; --warn-soft:#fff2dc;
+  --mg:#5b5bd6; --mg-soft:#ecebff; --mg-ink:#4040b8;
   --shadow:0 1px 2px rgba(13,43,37,.06),0 8px 24px rgba(13,43,37,.08);
   --f-display:"Rubik",system-ui,sans-serif; --f-body:"Assistant",system-ui,sans-serif;
 }
@@ -35,6 +36,7 @@
     --rm:#ff6b5f; --rm-soft:#2a1513; --rm-ink:#ff8a80;
     --ad:#2cc595; --ad-soft:#0f2a20; --ad-ink:#5fe0b5;
     --warn:#f2b250; --warn-soft:#2a2010;
+    --mg:#8b8bff; --mg-soft:#1d1d3a; --mg-ink:#a9a9ff;
     --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);
     color-scheme:dark;
   }
@@ -46,6 +48,7 @@
   --rm:#ff6b5f; --rm-soft:#2a1513; --rm-ink:#ff8a80;
   --ad:#2cc595; --ad-soft:#0f2a20; --ad-ink:#5fe0b5;
   --warn:#f2b250; --warn-soft:#2a2010;
+  --mg:#8b8bff; --mg-soft:#1d1d3a; --mg-ink:#a9a9ff;
   --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);
   color-scheme:dark;
 }
@@ -130,7 +133,7 @@ main{margin-top:-44px;position:relative;z-index:2;padding-block:0 140px}
 .bad{color:var(--rm-ink);font-weight:600}
 
 /* segmented */
-.seg{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:5px;margin:16px 0 12px;border-radius:16px;background:var(--card);border:1px solid var(--line)}
+.seg{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;padding:5px;margin:16px 0 12px;border-radius:16px;background:var(--card);border:1px solid var(--line)}
 .seg button{border:0;background:transparent;border-radius:12px;padding:11px 8px;font-weight:700;font-size:15.5px;color:var(--muted);display:flex;align-items:center;justify-content:center;gap:8px}
 .seg button .n{font-family:var(--f-display);font-size:13px;min-width:24px;padding:1px 7px;border-radius:999px;background:var(--soft)}
 .seg button.active.rm{background:var(--rm-soft);color:var(--rm-ink)} .seg button.active.rm .n{background:var(--rm);color:#fff}
@@ -144,7 +147,15 @@ main{margin-top:-44px;position:relative;z-index:2;padding-block:0 140px}
 .search input:focus{outline:none;border-color:var(--accent)}
 .all{height:46px;border-radius:14px;border:1px solid var(--line);background:var(--card);padding:0 14px;font-weight:600;font-size:14.5px;white-space:nowrap}
 .all.on{border-color:currentColor}
-.mode-rm .all.on{color:var(--rm-ink)} .mode-ad .all.on{color:var(--ad-ink)}
+.mode-rm .all.on{color:var(--rm-ink)} .mode-ad .all.on{color:var(--ad-ink)} .mode-mg .all.on{color:var(--mg-ink)}
+.seg button.active.mg{background:var(--mg-soft);color:var(--mg-ink)} .seg button.active.mg .n{background:var(--mg);color:#fff}
+.mode-mg .g.sel{background:var(--mg-soft)} .mode-mg .g.sel .tick{background:var(--mg);border-color:var(--mg)}
+.act.mg{background:var(--mg)} .b-mg{background:var(--mg);color:#fff}
+.badge.mg,.hi.mg{background:var(--mg-soft);color:var(--mg-ink)}
+.admmodes{display:flex;gap:8px;margin:-4px 0 12px}
+.admmodes button{flex:1;height:40px;border-radius:12px;border:1px solid var(--line);background:var(--card);font-weight:700;font-size:14px;color:var(--muted)}
+.admmodes button.on{border-color:var(--mg);color:var(--mg-ink);background:var(--mg-soft)}
+.tag.mgr{background:var(--mg-soft);color:var(--mg-ink)}
 
 .list{margin-top:10px;overflow:hidden}
 .g{display:flex;align-items:center;gap:12px;padding:12px 14px;border-top:1px solid var(--line);cursor:pointer;transition:background .12s;user-select:none}
@@ -410,6 +421,11 @@ button.urow{width:100%;border:0;text-align:right;cursor:pointer}
         <div class="seg" role="tablist">
           <button class="rm active" data-tab="remove" role="tab">הסרה <span class="n num-font" id="cntIn">0</span></button>
           <button class="ad" data-tab="add" role="tab">צירוף <span class="n num-font" id="cntOut">0</span></button>
+          <button class="mg" data-tab="admin" role="tab">ניהול <span class="n num-font" id="cntAdm">0</span></button>
+        </div>
+        <div id="admModes" class="admmodes hidden" role="radiogroup">
+          <button data-mode="promote" class="on">הגדרה כמנהל <span class="num-font" id="cntProm"></span></button>
+          <button data-mode="demote">הסרת ניהול <span class="num-font" id="cntDem"></span></button>
         </div>
         <div class="hint" id="hint"></div>
 
@@ -543,7 +559,10 @@ const avaColor = (s) => { let h = 0; for (const c of s) h = (h * 31 + c.charCode
 const initials = (n) => { const w = String(n).replace(/["'״׳]/g, '').trim().split(/\s+/).filter((x) => !/^\d+$/.test(x)); return ((w[0] || '?')[0] + (w[1] ? w[1][0] : '')).toUpperCase(); };
 const CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>';
 
-let S = { status: null, result: null, tab: 'remove', sel: { remove: new Set(), add: new Set() }, q: '', jobs: [] };
+let S = { status: null, result: null, tab: 'remove', sel: { remove: new Set(), add: new Set(), admin: new Set() }, admMode: 'promote', q: '', jobs: [] };
+// how each job type is shown
+const JL = { remove: ['הסרה', 'הוסר', 'הסיר', 'rm', '−'], add: ['צירוף', 'צורף', 'צירף', 'ad', '+'], promote: ['מינוי למנהל', 'הוגדר כמנהל', 'מינה למנהל', 'mg', '★'], demote: ['הסרת ניהול', 'הוסר מניהול', 'הוריד מניהול', 'rm', '☆'] };
+const jl = (j, i) => (j.action === 'add' && j.makeAdmin ? ['צירוף כמנהל', 'צורף כמנהל', 'צירף כמנהל', 'ad', '+'] : JL[j.action] || JL.add)[i];
 
 function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), 2600); }
 function openSheet(id) { $(id).classList.add('open'); $(id).setAttribute('aria-hidden', 'false'); }
@@ -614,7 +633,7 @@ $('lookupBtn').onclick = async () => {
   $('lookupErr').textContent = ''; $('lookupBtn').disabled = true;
   try {
     S.result = await api('/lookup', { number: $('number').value });
-    S.sel.remove.clear(); S.sel.add.clear(); S.q = ''; $('search').value = '';
+    S.sel.remove.clear(); S.sel.add.clear(); S.sel.admin.clear(); S.q = ''; $('search').value = '';
     S.tab = S.result.inGroups.length || !S.result.notIn.length ? 'remove' : 'add';
     renderResults();
   } catch (e) { $('lookupErr').textContent = e.message; }
@@ -624,7 +643,8 @@ $('number').onkeydown = (e) => { if (e.key === 'Enter') $('lookupBtn').click(); 
 
 function rows() {
   const r = S.result; if (!r) return [];
-  const all = S.tab === 'remove' ? r.inGroups : r.notIn;
+  const all = S.tab === 'remove' ? r.inGroups : S.tab === 'add' ? r.notIn
+    : r.inGroups.filter((g) => (S.admMode === 'promote' ? !g.memberAdmin : g.memberAdmin));
   const q = S.q.trim().toLowerCase();
   return q ? all.filter((g) => g.name.toLowerCase().includes(q)) : all;
 }
@@ -638,11 +658,16 @@ function renderResults() {
   $('pNum').textContent = pretty(r.number);
   $('pLine').innerHTML = r.onWhatsApp === false ? '<span class="bad">המספר לא רשום בוואטסאפ</span>' : `נמצא ב-<b>${r.inGroups.length}</b> מתוך ${total} קבוצות`;
   $('pRatio').style.width = total ? (r.inGroups.length / total) * 100 + '%' : '0';
-  $('cntIn').textContent = r.inGroups.length; $('cntOut').textContent = r.notIn.length;
+  const admins = r.inGroups.filter((g) => g.memberAdmin).length;
+  $('cntIn').textContent = r.inGroups.length; $('cntOut').textContent = r.notIn.length; $('cntAdm').textContent = r.inGroups.length;
+  $('cntProm').textContent = `(${r.inGroups.length - admins})`; $('cntDem').textContent = `(${admins})`;
   document.querySelectorAll('.seg button').forEach((b) => b.classList.toggle('active', b.dataset.tab === S.tab));
-  const rm = S.tab === 'remove';
-  $('pick').className = rm ? 'mode-rm' : 'mode-ad';
-  $('hint').textContent = rm ? 'הקבוצות שהמספר נמצא בהן. סמן מאיפה להסיר.' : 'הקבוצות שהמספר לא נמצא בהן. סמן לאן לצרף.';
+  const rm = S.tab === 'remove', mg = S.tab === 'admin';
+  $('admModes').classList.toggle('hidden', !mg);
+  document.querySelectorAll('#admModes button').forEach((b) => b.classList.toggle('on', b.dataset.mode === S.admMode));
+  $('pick').className = rm ? 'mode-rm' : mg ? 'mode-mg' : 'mode-ad';
+  $('hint').textContent = rm ? 'הקבוצות שהמספר נמצא בהן. סמן מאיפה להסיר.' : !mg ? 'הקבוצות שהמספר לא נמצא בהן. סמן לאן לצרף.'
+    : S.admMode === 'promote' ? 'קבוצות שהמספר חבר בהן ועוד לא מנהל. סמן איפה להגדיר אותו כמנהל – בלי להסיר ובלי לצרף.' : 'קבוצות שהמספר מנהל בהן. סמן איפה להוריד לו את הניהול – הוא נשאר חבר בקבוצה.';
   const sel = S.sel[S.tab];
   const list = rows();
   const can = list.filter((g) => g.iAmAdmin);
@@ -650,23 +675,25 @@ function renderResults() {
     <div class="g ${g.iAmAdmin ? '' : 'dis'} ${sel.has(g.id) ? 'sel' : ''}" data-id="${esc(g.id)}" role="checkbox" aria-checked="${sel.has(g.id)}" tabindex="${g.iAmAdmin ? 0 : -1}">
       <div class="gav" style="background:${avaColor(g.name)}">${esc(initials(g.name))}</div>
       <div class="gt"><div class="nm">${esc(g.name)}</div>
-        <div class="sub"><span class="num-font">${g.size} חברים</span>${g.memberAdmin ? '<span class="tag">המספר מנהל כאן</span>' : ''}${g.iAmAdmin ? '' : '<span class="tag">הזרוע לא מנהלת</span>'}</div></div>
+        <div class="sub"><span class="num-font">${g.size} חברים</span>${g.memberAdmin ? '<span class="tag mgr">המספר מנהל כאן</span>' : ''}${g.iAmAdmin ? '' : '<span class="tag">הזרוע לא מנהלת</span>'}</div></div>
       ${g.iAmAdmin ? `<div class="tick">${CHECK}</div>` : ''}
-    </div>`).join('') : `<div class="empty">${S.q ? 'אין קבוצה בשם הזה' : rm ? 'המספר לא נמצא באף קבוצה של הזרוע' : 'המספר כבר נמצא בכל הקבוצות'}</div>`;
+    </div>`).join('') : `<div class="empty">${S.q ? 'אין קבוצה בשם הזה' : rm ? 'המספר לא נמצא באף קבוצה של הזרוע' : !mg ? 'המספר כבר נמצא בכל הקבוצות' : S.admMode === 'promote' ? 'המספר כבר מנהל בכל הקבוצות שהוא נמצא בהן' : 'המספר לא מנהל באף קבוצה'}</div>`;
   const allSel = can.length > 0 && can.every((g) => sel.has(g.id));
   $('selAll').classList.toggle('on', allSel); $('selAll').disabled = !can.length;
   $('selAll').textContent = allSel ? 'נקה בחירה' : S.q ? 'בחר את התוצאות' : 'בחר הכל';
   const busy = !!S.status?.running;
   $('bar').classList.toggle('show', sel.size > 0);
-  $('actBtn').className = 'act ' + (rm ? 'rm' : 'ad');
-  const perms = S.status?.me?.perms || { remove: true, add: true };
-  const allowed = rm ? perms.remove : perms.add;
+  $('actBtn').className = 'act ' + (rm ? 'rm' : mg ? (S.admMode === 'promote' ? 'mg' : 'rm') : 'ad');
+  const perms = S.status?.me?.perms || { remove: true, add: true, makeAdmin: true };
+  const allowed = rm ? perms.remove : mg ? perms.makeAdmin : perms.add;
   $('actBtn').disabled = busy || !allowed;
-  $('actText').textContent = !allowed ? (rm ? 'אין לך הרשאה להסיר' : 'אין לך הרשאה לצרף') : busy ? 'יש פעולה שרצה עכשיו' : rm ? `הסר מ-${sel.size} קבוצות` : `צרף ל-${sel.size} קבוצות`;
+  $('actText').textContent = !allowed ? (rm ? 'אין לך הרשאה להסיר' : mg ? 'אין לך הרשאה לנהל מנהלים' : 'אין לך הרשאה לצרף') : busy ? 'יש פעולה שרצה עכשיו'
+    : rm ? `הסר מ-${sel.size} קבוצות` : !mg ? `צרף ל-${sel.size} קבוצות` : S.admMode === 'promote' ? `הגדר כמנהל ב-${sel.size} קבוצות` : `הסר ניהול ב-${sel.size} קבוצות`;
   $('actTime').textContent = busy ? '' : estimate(sel.size);
 }
 
 document.querySelectorAll('.seg button').forEach((t) => t.onclick = () => { S.tab = t.dataset.tab; renderResults(); });
+document.querySelectorAll('#admModes button').forEach((b) => b.onclick = () => { if (S.admMode !== b.dataset.mode) { S.admMode = b.dataset.mode; S.sel.admin.clear(); } renderResults(); });
 $('search').oninput = (e) => { S.q = e.target.value; renderResults(); };
 function toggle(el) {
   if (!el || el.classList.contains('dis')) return;
@@ -683,18 +710,19 @@ $('selAll').onclick = () => {
 
 // ---- run a job ----
 $('actBtn').onclick = () => {
-  const action = S.tab; const ids = S.sel[action];
-  const src = action === 'remove' ? S.result.inGroups : S.result.notIn;
+  const action = S.tab === 'admin' ? S.admMode : S.tab; const ids = S.sel[S.tab];
+  const src = action === 'add' ? S.result.notIn : S.result.inGroups;
   const groups = src.filter((g) => ids.has(g.id)).map((g) => ({ id: g.id, name: g.name }));
-  $('cfTitle').textContent = action === 'remove' ? `להסיר את ${pretty(S.result.number)} מ-${groups.length} קבוצות?` : `לצרף את ${pretty(S.result.number)} ל-${groups.length} קבוצות?`;
+  const num = pretty(S.result.number), n = groups.length;
+  $('cfTitle').textContent = { remove: `להסיר את ${num} מ-${n} קבוצות?`, add: `לצרף את ${num} ל-${n} קבוצות?`, promote: `להגדיר את ${num} כמנהל ב-${n} קבוצות?`, demote: `להוריד את הניהול של ${num} ב-${n} קבוצות?` }[action];
   $('cfSub').textContent = `זה ייקח ${estimate(groups.length)}. אפשר לעצור באמצע.`;
   $('cfList').innerHTML = groups.map((g) => esc(g.name)).join('<br>');
-  $('cfYes').className = action === 'remove' ? 'b-rm' : 'b-ad';
+  $('cfYes').className = { remove: 'b-rm', add: 'b-ad', promote: 'b-mg', demote: 'b-rm' }[action];
   let makeAdmin = false;
   const setAdmin = (v) => {
     makeAdmin = v;
     $('admYes').setAttribute('aria-pressed', String(v)); $('admNo').setAttribute('aria-pressed', String(!v));
-    $('cfYes').textContent = action === 'remove' ? 'הסר' : v ? 'צרף והגדר כמנהל' : 'צרף';
+    $('cfYes').textContent = { remove: 'הסר', promote: 'הגדר כמנהל', demote: 'הסר ניהול' }[action] || (v ? 'צרף והגדר כמנהל' : 'צרף');
   };
   $('cfAdmin').classList.toggle('hidden', action !== 'add' || !(S.status?.me?.perms?.makeAdmin ?? true));
   $('admYes').onclick = () => setAdmin(true);
@@ -702,7 +730,7 @@ $('actBtn').onclick = () => {
   setAdmin(false);
   $('cfYes').onclick = async () => {
     closeSheet('confirm');
-    try { await api('/jobs', { action, number: S.result.number, groups, makeAdmin }); ids.clear(); renderResults(); await tick(); toast(action === 'remove' ? 'ההסרה התחילה' : 'הצירוף התחיל'); }
+    try { await api('/jobs', { action, number: S.result.number, groups, makeAdmin }); ids.clear(); renderResults(); await tick(); toast({ remove: 'ההסרה התחילה', add: 'הצירוף התחיל', promote: 'המינוי למנהל התחיל', demote: 'הסרת הניהול התחילה' }[action]); }
     catch (e) { toast(e.message); }
   };
   openSheet('confirm');
@@ -718,10 +746,9 @@ function renderJobs() {
     const ok = live.items.filter((i) => i.status === 'ok').length;
     const fail = live.items.filter((i) => i.status === 'fail').length;
     const done = live.items.filter((i) => !['pending', 'running'].includes(i.status)).length;
-    const rm = live.action === 'remove';
     $('jobCard').innerHTML = `
       <div class="hd">
-        <span class="badge ${rm ? 'rm' : 'ad'}">${rm ? 'הסרה' : live.makeAdmin ? 'צירוף כמנהל' : 'צירוף'}</span>
+        <span class="badge ${jl(live, 3)}">${jl(live, 0)}</span>
         <b class="num-font" style="direction:ltr;text-align:right">${esc(pretty(live.number))}</b>
         ${live.finishedAt ? `<span class="pmeta">${live.stopped ? 'נעצר' : 'הסתיים'}</span>` : '<button class="stop" id="stopJob">עצור</button>'}
       </div>
@@ -731,9 +758,9 @@ function renderJobs() {
     const stop = $('stopJob'); if (stop) stop.onclick = async () => { await api(`/jobs/${live.id}/stop`, {}); tick(); };
   }
   $('hist').innerHTML = S.jobs.length ? S.jobs.slice(0, 15).map((j) => {
-    const ok = j.items.filter((i) => i.status === 'ok').length; const rm = j.action === 'remove';
-    return `<div class="h"><div class="hi ${rm ? 'rm' : 'ad'}">${rm ? '−' : '+'}</div>
-      <div class="t">${rm ? 'הוסר' : j.makeAdmin ? 'צורף כמנהל' : 'צורף'} <b class="num-font">${esc(pretty(j.number))}</b><div>${when(j.createdAt)}${j.by ? ' · ' + esc(j.by) : ''}${j.finishedAt ? '' : ' · רץ עכשיו'}</div></div>
+    const ok = j.items.filter((i) => i.status === 'ok').length;
+    return `<div class="h"><div class="hi ${jl(j, 3)}">${jl(j, 4)}</div>
+      <div class="t">${jl(j, 1)} <b class="num-font">${esc(pretty(j.number))}</b><div>${when(j.createdAt)}${j.by ? ' · ' + esc(j.by) : ''}${j.finishedAt ? '' : ' · רץ עכשיו'}</div></div>
       <div class="c num-font">${ok}/${j.items.length}</div></div>`;
   }).join('') : '<div class="empty">עדיין לא בוצעו פעולות</div>';
 }
@@ -799,7 +826,7 @@ function renderUser() {
     const on = k === 'active' ? u.active : u.perms[k];
     $(el).querySelector('.sw')?.remove(); $(el).insertAdjacentHTML('beforeend', tf(on)); $(el).setAttribute('aria-checked', String(on));
   }
-  $('uRecent').innerHTML = u.usage.recent.length ? u.usage.recent.map((j) => `<div class="h"><div class="hi ${j.action === 'remove' ? 'rm' : 'ad'}">${j.action === 'remove' ? '−' : '+'}</div><div class="t">${j.action === 'remove' ? 'הסיר' : j.makeAdmin ? 'צירף כמנהל' : 'צירף'} <b class="num-font">${esc(pretty(j.number))}</b><div>${when(j.createdAt)}</div></div><div class="c num-font">${j.ok}/${j.groups}</div></div>`).join('') : '<div class="small2" style="margin:6px 0">עוד לא ביצע פעולות</div>';
+  $('uRecent').innerHTML = u.usage.recent.length ? u.usage.recent.map((j) => `<div class="h"><div class="hi ${jl(j, 3)}">${jl(j, 4)}</div><div class="t">${jl(j, 2)} <b class="num-font">${esc(pretty(j.number))}</b><div>${when(j.createdAt)}</div></div><div class="c num-font">${j.ok}/${j.groups}</div></div>`).join('') : '<div class="small2" style="margin:6px 0">עוד לא ביצע פעולות</div>';
 }
 for (const [el, k] of [['uActive', 'active'], ['pRemove', 'remove'], ['pAdd', 'add'], ['pAdmin', 'makeAdmin']]) {
   $(el).onclick = () => { if (k === 'active') CUR.active = !CUR.active; else CUR.perms[k] = !CUR.perms[k]; renderUser(); };
@@ -863,7 +890,7 @@ showInstall();
 // Checked every 30s and whenever the app comes back to the screen. Waits while a choice is in progress
 // (groups selected or a window open) and shows a bar instead, so nothing you are doing is lost.
 let myVersion = null, newVersion = false;
-const busyUI = () => S.sel.remove.size || S.sel.add.size || document.querySelector('.scrim.open, .page.open');
+const busyUI = () => S.sel.remove.size || S.sel.add.size || S.sel.admin.size || document.querySelector('.scrim.open, .page.open');
 async function checkVersion() {
   try {
     const r = await fetch('/version', { cache: 'no-store' }); const { version } = await r.json();

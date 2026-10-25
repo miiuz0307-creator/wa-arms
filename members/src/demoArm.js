@@ -46,7 +46,7 @@ class DemoArm {
     const notIn = [];
     for (const g of this.groups.values()) {
       const row = { id: g.id, name: g.name, size: g.members.size, iAmAdmin: g.admin };
-      if (g.members.has(intl)) inGroups.push({ ...row, memberId: intl, memberAdmin: false });
+      if (g.members.has(intl)) inGroups.push({ ...row, memberId: intl, memberAdmin: !!g.admins?.has(intl) });
       else notIn.push(row);
     }
     return { number: intl, onWhatsApp: true, inGroups, notIn };
@@ -58,7 +58,12 @@ class DemoArm {
     if (!g) return { ok: false, code: 'nogroup', message: 'הזרוע כבר לא בקבוצה' };
     if (!g.admin) return { ok: false, code: 'notadmin', message: 'הזרוע לא מנהלת בקבוצה' };
     if (action === 'add' && g.name.includes('VIP')) return { ok: false, code: '403', message: 'הגדרות הפרטיות של המספר חוסמות צירוף – צריך לשלוח לו קישור הזמנה' };
-    if (action === 'promote') return { ok: true, code: '200', message: 'הוגדר כמנהל' };
+    if (action === 'promote' || action === 'demote') {
+      if (!g.members.has(intl)) return { ok: false, code: 'absent', message: 'המספר לא נמצא בקבוצה' };
+      g.admins = g.admins || new Set();
+      action === 'promote' ? g.admins.add(intl) : g.admins.delete(intl);
+      return { ok: true, code: '200', message: action === 'promote' ? 'הוגדר כמנהל' : 'הוסר מניהול' };
+    }
     if (action === 'remove') g.members.delete(intl);
     else g.members.add(intl);
     return { ok: true, code: '200', message: action === 'remove' ? 'הוסר' : 'צורף' };
