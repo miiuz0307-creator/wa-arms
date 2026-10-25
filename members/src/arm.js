@@ -239,6 +239,11 @@ class Arm {
     return g.participants.some((p) => p.admin && [...p.ids].some((x) => this.isMe(x)));
   }
 
+  /** All the arm's groups, for building saved lists. */
+  allGroups() {
+    return [...this.groups.values()].map((g) => ({ id: g.id, name: g.name, size: g.participants.length, iAmAdmin: this.iAmAdmin(g) })).sort((a, b) => a.name.localeCompare(b.name, 'he'));
+  }
+
   /** Re-read every group the arm is in (one WhatsApp request). */
   refreshGroups() {
     if (this.refreshing) return this.refreshing;

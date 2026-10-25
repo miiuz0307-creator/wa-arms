@@ -56,6 +56,17 @@ for (const part of String(process.env.SEED_USERS || '').split(';')) {
 saveUsers();
 
 const same = (a, b) => typeof a === 'string' && a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+// ---- saved group lists ("stations"): pick a list instead of choosing groups one by one ----
+const LISTS_FILE = path.join(DATA_DIR, 'lists.json');
+let lists = [];
+try { lists = JSON.parse(fs.readFileSync(LISTS_FILE, 'utf8')); } catch {}
+const saveLists = () => { fs.writeFileSync(LISTS_FILE + '.tmp', JSON.stringify(lists)); fs.renameSync(LISTS_FILE + '.tmp', LISTS_FILE); };
+function cleanGroups(gs) {
+  const seen = new Map();
+  for (const g of Array.isArray(gs) ? gs : []) if (g && typeof g.id === 'string' && g.id.endsWith('@g.us')) seen.set(g.id, { id: g.id, name: String(g.name || g.id).slice(0, 200) });
+  return [...seen.values()];
+}
+
 // what a user may do; older users (before permissions existed) keep full access
 const DEFAULT_PERMS = { remove: true, add: true, makeAdmin: false };
 const OWNER = { id: 'owner', name: 'מנהל', owner: true, perms: { remove: true, add: true, makeAdmin: true }, dailyLimit: 0 };
@@ -247,6 +258,36 @@ const server = http.createServer(async (req, res) => {
         if (u.seed) users.removedSeeds.push(u.code);
         saveUsers();
       }
+      return send(res, 200, { ok: true });
+    }
+    if (p === '/api/groups' && req.method === 'GET') return send(res, 200, { groups: arm.allGroups() });
+    if (p === '/api/lists' && req.method === 'GET') return send(res, 200, { lists });
+    if (p === '/api/lists' && req.method === 'POST') {
+      if (!me.owner) return ownerOnly();
+      const b = await readBody(req);
+      const name = String(b.name || '').trim().slice(0, 40);
+      if (!name) throw new Error('צריך שם לרשימה');
+      const l = { id: crypto.randomBytes(5).toString('hex'), name, groups: cleanGroups(b.groups), createdAt: new Date().toISOString() };
+      lists.push(l);
+      saveLists();
+      return send(res, 200, { list: l });
+    }
+    const lUpd = /^\/api\/lists\/([a-f0-9]+)$/.exec(p);
+    if (lUpd && req.method === 'POST') {
+      if (!me.owner) return ownerOnly();
+      const l = lists.find((x) => x.id === lUpd[1]);
+      if (!l) throw new Error('הרשימה לא נמצאה');
+      const b = await readBody(req);
+      if (b.name !== undefined) { const n = String(b.name).trim().slice(0, 40); if (!n) throw new Error('צריך שם לרשימה'); l.name = n; }
+      if (b.groups !== undefined) l.groups = cleanGroups(b.groups);
+      saveLists();
+      return send(res, 200, { list: l });
+    }
+    const lDel = /^\/api\/lists\/([a-f0-9]+)\/delete$/.exec(p);
+    if (lDel && req.method === 'POST') {
+      if (!me.owner) return ownerOnly();
+      lists = lists.filter((x) => x.id !== lDel[1]);
+      saveLists();
       return send(res, 200, { ok: true });
     }
     if (p === '/api/refresh' && req.method === 'POST') {

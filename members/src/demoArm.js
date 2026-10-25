@@ -35,6 +35,10 @@ class DemoArm {
     };
   }
 
+  allGroups() {
+    return [...this.groups.values()].map((g) => ({ id: g.id, name: g.name, size: g.members.size, iAmAdmin: g.admin }));
+  }
+
   async refreshGroups() {
     this.groupsAt = new Date().toISOString();
   }

@@ -269,6 +269,14 @@ button.urow{width:100%;border:0;text-align:right;cursor:pointer}
 .sw i{position:absolute;top:3px;right:3px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2);transition:right .15s}
 .sw.on{background:var(--ad)}.sw.on i{right:21px}
 .danger2{color:var(--rm-ink)}
+.chips{display:flex;gap:8px;overflow-x:auto;padding:2px 2px 10px;margin:0 -2px;scrollbar-width:none}
+.chips::-webkit-scrollbar{display:none}
+.chip2{flex:none;display:inline-flex;align-items:center;gap:6px;height:38px;padding:0 14px;border-radius:999px;border:1px solid var(--line);background:var(--card);font-weight:700;font-size:14px;white-space:nowrap;color:var(--ink)}
+.chip2 .k{font-family:var(--f-display);font-size:12px;font-weight:600;padding:1px 7px;border-radius:999px;background:var(--soft);color:var(--muted)}
+.chip2.save{border-style:dashed;color:var(--accent)}
+.chip2.edit{color:var(--muted)}
+.mode-rm .chip2.list:active,.mode-rm .chip2.list:hover{border-color:var(--rm)} .mode-ad .chip2.list:hover{border-color:var(--ad)} .mode-mg .chip2.list:hover{border-color:var(--mg)}
+.lrow .n small{display:block;font-weight:400;font-size:12px;color:var(--muted)}
 .top h1{white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis}
 @media (max-width:480px){.top h1 small{display:none}.top{gap:8px}.chip{padding:6px 9px;font-size:12.5px}}
 .page{position:fixed;inset:0;z-index:12;background:var(--bg);display:flex;flex-direction:column;transform:translateX(-100%);transition:transform .22s ease;visibility:hidden}
@@ -430,6 +438,7 @@ button.urow{width:100%;border:0;text-align:right;cursor:pointer}
         <div class="hint" id="hint"></div>
 
         <div id="pick" class="mode-rm">
+          <div id="listChips" class="chips" aria-label="רשימות שמורות"></div>
           <div class="tools">
             <div class="search">
               <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4-4"/></svg>
@@ -478,6 +487,7 @@ button.urow{width:100%;border:0;text-align:right;cursor:pointer}
       <div class="stepper"><button data-step="dMax:-1">−</button><input id="dMax" type="number" min="1" max="300"><button data-step="dMax:1">+</button></div></div>
     <div class="row"><div class="lbl">רשימת הקבוצות<div>טעינה מחדש מוואטסאפ</div></div><button class="linkbtn" id="refreshBtn">רענן</button></div>
     <div class="row"><div class="lbl">החלפת מספר הזרוע<div>אחרי ניתוק צריך לסרוק QR מחדש</div></div><button class="linkbtn danger" id="armLogout">נתק</button></div>
+    <button class="row navrow" id="openListsRow"><div class="lbl">רשימות קבוצות<div>תחנות שמורות לבחירה מהירה</div></div><span class="chev">‹</span></button>
     <button class="row navrow" id="openUsersRow"><div class="lbl">ניהול משתמשים<div>קודים, הרשאות, חסימה ומגבלות</div></div><span class="chev">‹</span></button>
   </div>
   <div class="row"><div class="lbl">גרסה<div class="num-font" id="verText">—</div></div><button class="linkbtn" id="checkUpd">בדוק עדכונים</button></div>
@@ -486,6 +496,53 @@ button.urow{width:100%;border:0;text-align:right;cursor:pointer}
   <div id="setErr" class="err"></div>
   <div class="btns"><button class="b-ghost" id="setClose">סגור</button><button class="b-main" id="setSave">שמור</button></div>
 </div></div>
+
+<div id="saveList" class="scrim" aria-hidden="true"><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="slTitle">
+  <h3 id="slTitle">שמירת הקבוצות כרשימה</h3>
+  <div class="sub" id="slSub"></div>
+  <div class="ugrp" style="border:0">
+    <label class="uf">שם הרשימה (למשל שם התחנה)<input id="slName" maxlength="40" placeholder="תחנה צפון"></label>
+    <div id="slExisting"></div>
+  </div>
+  <div id="slErr" class="err"></div>
+  <div class="btns"><button class="b-ghost" id="slCancel">ביטול</button><button class="b-main" id="slSave">שמור רשימה</button></div>
+</div></div>
+
+<section id="listsPage" class="page" aria-hidden="true" aria-labelledby="lpTitle">
+  <header class="phead gut"><div class="max prow">
+    <button class="pback" id="listsBack" aria-label="חזרה">→</button>
+    <h2 id="lpTitle">רשימות קבוצות</h2><span class="pcount num-font" id="listsCount"></span>
+  </div></header>
+  <div class="pbody gut"><div class="max">
+    <p class="pintro">שמור כל תחנה כרשימת קבוצות. בכל פעם שתכניס מספר, לחיצה על שם הרשימה תבחר את כל הקבוצות שלה.</p>
+    <div class="card padd">
+      <div class="lbl3">רשימה חדשה</div>
+      <div class="uadd"><input id="newList" placeholder="שם הרשימה" maxlength="40" aria-label="שם הרשימה"><button class="b-main sm" id="addList">+ צור</button></div>
+      <div id="listErr" class="err"></div>
+    </div>
+    <div id="listsList" class="card ulist2"></div>
+  </div></div>
+</section>
+
+<section id="listPage" class="page" aria-hidden="true" aria-labelledby="leTitle">
+  <header class="phead gut"><div class="max prow">
+    <button class="pback" id="leBack" aria-label="חזרה לרשימות">→</button>
+    <h2 id="leTitle">עריכת רשימה</h2><span class="pcount num-font" id="leCount"></span>
+  </div></header>
+  <div class="pbody gut"><div class="max">
+    <label class="uf">שם הרשימה<input id="leName" maxlength="40"></label>
+    <div class="tools" style="margin-bottom:10px">
+      <div class="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4-4"/></svg>
+        <input id="leSearch" type="search" placeholder="חיפוש קבוצה" aria-label="חיפוש קבוצה">
+      </div>
+      <button id="leAll" class="all">בחר הכל</button>
+    </div>
+    <div id="leGroups" class="card list mode-ad"></div>
+    <div class="ugrp"><button class="b-ghost danger2 wide" id="leDel">מחק רשימה</button></div>
+  </div></div>
+  <footer class="pfoot gut"><div class="max"><div id="leErr" class="err"></div><button class="b-main wide" id="leSave">שמור רשימה</button></div></footer>
+</section>
 
 <section id="usersPage" class="page" aria-hidden="true" aria-labelledby="upTitle">
   <header class="phead gut"><div class="max prow">
@@ -583,6 +640,7 @@ function renderStatus() {
   const s = S.status; if (!s) return;
   $('openUsers').classList.toggle('hidden', !s.me?.owner);
   $('openUsersRow').classList.toggle('hidden', !s.me?.owner);
+  $('openListsRow').classList.toggle('hidden', !s.me?.owner);
   $('demoNote').classList.toggle('hidden', !s.demo);
   const online = s.state === 'online';
   $('armChip').className = 'chip ' + (online ? 'on' : s.state === 'qr' || s.state === 'connecting' ? 'wait' : 'off');
@@ -690,6 +748,7 @@ function renderResults() {
   $('actText').textContent = !allowed ? (rm ? 'אין לך הרשאה להסיר' : mg ? 'אין לך הרשאה לנהל מנהלים' : 'אין לך הרשאה לצרף') : busy ? 'יש פעולה שרצה עכשיו'
     : rm ? `הסר מ-${sel.size} קבוצות` : !mg ? `צרף ל-${sel.size} קבוצות` : S.admMode === 'promote' ? `הגדר כמנהל ב-${sel.size} קבוצות` : `הסר ניהול ב-${sel.size} קבוצות`;
   $('actTime').textContent = busy ? '' : estimate(sel.size);
+  renderChips();
 }
 
 document.querySelectorAll('.seg button').forEach((t) => t.onclick = () => { S.tab = t.dataset.tab; renderResults(); });
@@ -706,6 +765,108 @@ $('selAll').onclick = () => {
   const all = can.every((g) => sel.has(g.id));
   for (const g of can) all ? sel.delete(g.id) : sel.add(g.id);
   renderResults();
+};
+
+// ---- saved group lists ----
+S.lists = [];
+async function loadLists() { try { S.lists = (await api('/lists')).lists; } catch {} renderChips(); }
+const isOwner = () => !!S.status?.me?.owner;
+function srcFor() { return S.tab === 'add' ? S.result?.notIn || [] : S.result?.inGroups || []; }
+function renderChips() {
+  const box = $('listChips'); if (!box) return;
+  const sel = S.sel[S.tab] || new Set();
+  const chips = S.lists.map((l) => `<button class="chip2 list" data-list="${esc(l.id)}">${esc(l.name)} <span class="k num-font">${l.groups.length}</span></button>`);
+  if (isOwner() && sel.size) chips.push('<button class="chip2 save" id="chipSave">+ שמור בחירה כרשימה</button>');
+  if (isOwner()) chips.push(`<button class="chip2 edit" id="chipEdit">${S.lists.length ? '✎ ניהול רשימות' : '+ צור רשימת קבוצות'}</button>`);
+  box.innerHTML = chips.join('');
+  box.classList.toggle('hidden', !chips.length);
+}
+$('listChips').onclick = (e) => {
+  if (e.target.closest('#chipSave')) return openSaveList();
+  if (e.target.closest('#chipEdit')) return openListsPage();
+  const c = e.target.closest('[data-list]'); if (!c) return;
+  const l = S.lists.find((x) => x.id === c.dataset.list); if (!l) return;
+  const want = new Set(l.groups.map((g) => g.id));
+  const avail = rows().filter((g) => want.has(g.id) && g.iAmAdmin);
+  const sel = S.sel[S.tab]; sel.clear(); for (const g of avail) sel.add(g.id);
+  renderResults();
+  const miss = want.size - avail.length;
+  const why = S.tab === 'add' ? 'כבר בקבוצה או שהזרוע לא מנהלת' : S.tab === 'remove' ? 'המספר לא בקבוצה או שהזרוע לא מנהלת' : 'לא רלוונטי לפעולה הזו';
+  toast(`נבחרו ${avail.length} קבוצות מ"${l.name}"${miss ? ` · ${miss} דולגו (${why})` : ''}`);
+};
+let SL_TARGET = null;
+function openSaveList() {
+  const ids = S.sel[S.tab];
+  const groups = srcFor().filter((g) => ids.has(g.id)).map((g) => ({ id: g.id, name: g.name }));
+  SL_TARGET = groups;
+  $('slSub').textContent = `${groups.length} קבוצות נבחרו. תן לרשימה שם, ובפעם הבאה תבחר אותן בלחיצה אחת.`;
+  $('slName').value = ''; $('slErr').textContent = '';
+  $('slExisting').innerHTML = S.lists.length ? `<div class="small2" style="margin:4px 0 8px">או הוסף לרשימה קיימת:</div><div class="chips">${S.lists.map((l) => `<button class="chip2" data-addto="${esc(l.id)}">${esc(l.name)}</button>`).join('')}</div>` : '';
+  openSheet('saveList'); setTimeout(() => $('slName').focus(), 200);
+}
+$('slCancel').onclick = () => closeSheet('saveList');
+$('slSave').onclick = async () => {
+  try { const { list } = await api('/lists', { name: $('slName').value, groups: SL_TARGET }); closeSheet('saveList'); await loadLists(); toast(`נשמרה הרשימה "${list.name}"`); }
+  catch (e) { $('slErr').textContent = e.message; }
+};
+$('slExisting').onclick = async (e) => {
+  const b = e.target.closest('[data-addto]'); if (!b) return;
+  const l = S.lists.find((x) => x.id === b.dataset.addto); if (!l) return;
+  try { await api(`/lists/${l.id}`, { groups: [...l.groups, ...SL_TARGET] }); closeSheet('saveList'); await loadLists(); toast(`הקבוצות נוספו ל"${l.name}"`); }
+  catch (err) { $('slErr').textContent = err.message; }
+};
+// lists page + editor
+async function openListsPage() { closeSheet('settings'); $('listErr').textContent = ''; openPage('listsPage'); await loadLists(); renderListsPage(); }
+function renderListsPage() {
+  $('listsCount').textContent = S.lists.length || '';
+  $('listsList').innerHTML = S.lists.length ? S.lists.map((l) => `<button class="urow lrow" data-edit="${esc(l.id)}">
+      <span class="uav" style="background:${avaColor(l.name)}">${esc(initials(l.name))}</span>
+      <span class="n">${esc(l.name)}<small>${l.groups.length} קבוצות</small></span><span class="chev">‹</span></button>`).join('')
+    : '<div class="empty">אין עדיין רשימות. צור רשימה למעלה, או סמן קבוצות במסך הראשי ולחץ "שמור בחירה כרשימה".</div>';
+}
+$('openListsRow').onclick = openListsPage;
+$('listsBack').onclick = () => closePage('listsPage');
+$('addList').onclick = async () => {
+  const name = $('newList').value.trim(); if (!name) { $('listErr').textContent = 'צריך שם לרשימה'; return; }
+  try { const { list } = await api('/lists', { name, groups: [] }); $('newList').value = ''; await loadLists(); renderListsPage(); openListEditor(list.id); }
+  catch (e) { $('listErr').textContent = e.message; }
+};
+$('listsList').onclick = (e) => { const b = e.target.closest('[data-edit]'); if (b) openListEditor(b.dataset.edit); };
+let LE = null, LE_ALL = [], LE_Q = '';
+async function openListEditor(id) {
+  const l = S.lists.find((x) => x.id === id); if (!l) return;
+  LE = { id: l.id, name: l.name, sel: new Set(l.groups.map((g) => g.id)), names: Object.fromEntries(l.groups.map((g) => [g.id, g.name])) };
+  $('leName').value = l.name; $('leSearch').value = ''; LE_Q = ''; $('leErr').textContent = ''; $('leDel').textContent = 'מחק רשימה';
+  openPage('listPage');
+  $('leGroups').innerHTML = '<div class="empty">טוען קבוצות…</div>';
+  try { LE_ALL = (await api('/groups')).groups; } catch { LE_ALL = []; }
+  // groups saved in the list that the arm no longer sees still show (so they aren't lost silently)
+  for (const gid of LE.sel) if (!LE_ALL.some((g) => g.id === gid)) LE_ALL.push({ id: gid, name: LE.names[gid] || gid, size: 0, missing: true });
+  renderListEditor();
+}
+function renderListEditor() {
+  const q = LE_Q.trim().toLowerCase();
+  const list = q ? LE_ALL.filter((g) => g.name.toLowerCase().includes(q)) : LE_ALL;
+  $('leCount').textContent = `${LE.sel.size} נבחרו`;
+  $('leGroups').innerHTML = list.length ? list.map((g) => `<div class="g ${LE.sel.has(g.id) ? 'sel' : ''}" data-id="${esc(g.id)}" role="checkbox" aria-checked="${LE.sel.has(g.id)}" tabindex="0">
+      <div class="gav" style="background:${avaColor(g.name)}">${esc(initials(g.name))}</div>
+      <div class="gt"><div class="nm">${esc(g.name)}</div><div class="sub">${g.missing ? '<span class="tag">הזרוע כבר לא בקבוצה</span>' : `<span class="num-font">${g.size} חברים</span>${g.iAmAdmin ? '' : '<span class="tag">הזרוע לא מנהלת</span>'}`}</div></div>
+      <div class="tick">${CHECK}</div></div>`).join('') : `<div class="empty">${LE_ALL.length ? 'אין קבוצה בשם הזה' : 'הזרוע לא מחוברת או שאין לה קבוצות'}</div>`;
+  const all = list.length && list.every((g) => LE.sel.has(g.id));
+  $('leAll').textContent = all ? 'נקה בחירה' : q ? 'בחר את התוצאות' : 'בחר הכל';
+}
+$('leSearch').oninput = (e) => { LE_Q = e.target.value; renderListEditor(); };
+$('leGroups').onclick = (e) => { const el = e.target.closest('.g'); if (!el) return; const id = el.dataset.id; LE.sel.has(id) ? LE.sel.delete(id) : LE.sel.add(id); renderListEditor(); };
+$('leAll').onclick = () => { const q = LE_Q.trim().toLowerCase(); const list = q ? LE_ALL.filter((g) => g.name.toLowerCase().includes(q)) : LE_ALL; const all = list.every((g) => LE.sel.has(g.id)); for (const g of list) all ? LE.sel.delete(g.id) : LE.sel.add(g.id); renderListEditor(); };
+$('leBack').onclick = () => closePage('listPage');
+$('leSave').onclick = async () => {
+  const groups = LE_ALL.filter((g) => LE.sel.has(g.id)).map((g) => ({ id: g.id, name: g.name }));
+  try { await api(`/lists/${LE.id}`, { name: $('leName').value, groups }); await loadLists(); renderListsPage(); closePage('listPage'); toast('הרשימה נשמרה'); }
+  catch (e) { $('leErr').textContent = e.message; }
+};
+$('leDel').onclick = async () => {
+  const b = $('leDel'); if (b.textContent !== 'בטוח? לחץ שוב למחיקה') { b.textContent = 'בטוח? לחץ שוב למחיקה'; return; }
+  await api(`/lists/${LE.id}/delete`, {}); await loadLists(); renderListsPage(); closePage('listPage'); toast('הרשימה נמחקה');
 };
 
 // ---- run a job ----
@@ -933,6 +1094,7 @@ async function boot() {
   try { await api('/status'); } catch { return; }
   $('app').classList.remove('hidden');
   await tick();
+  loadLists();
   clearInterval(timer);
   timer = setInterval(tick, 2500);
 }
