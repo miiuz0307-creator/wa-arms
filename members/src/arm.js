@@ -4,7 +4,14 @@ const fs = require('fs');
 const path = require('path');
 const { toIntl, bareJid, jidUser } = require('./phone');
 
-const log = (...a) => console.log(new Date().toISOString(), ...a);
+// recent log lines are kept in memory for the support diagnostics (the VM console log isn't reliable)
+const LOG = [];
+const log = (...a) => {
+  const line = `${new Date().toISOString()} ${a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' ')}`;
+  console.log(line);
+  LOG.push(line.slice(0, 400));
+  if (LOG.length > 120) LOG.shift();
+};
 
 // Baileys wants a pino-style logger; keep it quiet
 const silent = {
@@ -43,6 +50,40 @@ class Arm {
     this.refreshing = null;
     try { this.lastPhone = fs.readFileSync(path.join(dataDir, 'last-phone'), 'utf8').trim(); } catch {}
     try { this.lastLogout = JSON.parse(fs.readFileSync(path.join(dataDir, 'last-logout'), 'utf8')); } catch {}
+  }
+
+  ownJids() {
+    const norm = (j) => (j ? String(j).replace(/:\d+(?=@)/, '') : null);
+    const c = this.sock?.authState?.creds;
+    return [this.sock?.user?.id, this.sock?.user?.lid, c?.me?.id, c?.me?.lid].map(norm).filter(Boolean);
+  }
+
+  /** true = a message this tool doesn't need: confirm it without decrypting. */
+  skipIncoming(node) {
+    const a = node?.attrs || {};
+    const from = a.from || '';
+    if (!a.id) return false;
+    if (a.category === 'peer') return false; // the arm's own phone talking to this device
+    const f = from.replace(/:\d+(?=@)/, '');
+    const own = this.ownJids();
+    if (own.includes(f)) return false; // messages from the arm's own number
+    if (from.endsWith('@g.us')) {
+      const p = String(a.participant || '').replace(/:\d+(?=@)/, '');
+      return !(p && own.includes(p)); // group messages – unless written from the arm's own phone
+    }
+    return from.endsWith('@s.whatsapp.net') || from.endsWith('@lid') || from === 'status@broadcast' || from.endsWith('@newsletter');
+  }
+
+  confirmSkipped(sock, node) {
+    const a = node.attrs;
+    const receipt = { tag: 'receipt', attrs: { id: a.id, to: a.from } };
+    if (a.participant) receipt.attrs.participant = a.participant;
+    const ack = { tag: 'ack', attrs: { id: a.id, to: a.from, class: 'message' } };
+    if (a.participant) ack.attrs.participant = a.participant;
+    if (a.recipient) ack.attrs.recipient = a.recipient;
+    if (a.type) ack.attrs.type = a.type;
+    Promise.resolve(sock.sendNode?.(receipt)).then(() => sock.sendNode?.(ack)).catch(() => {});
+    this.skipped = (this.skipped || 0) + 1;
   }
 
   status() {
@@ -131,6 +172,40 @@ class Arm {
     });
     this.sock = sock;
     sock.ev.on('creds.update', saveCreds);
+
+    // ---- same protections as the BotiX arms, which stay linked for weeks on this library ----
+    // 1) This tool never reads messages. Decrypting the traffic of ~30 busy groups made the linked device
+    //    exchange keys and send "retry" requests for every message it couldn't decrypt – heavy, abnormal
+    //    traffic. Now group/private messages are only confirmed (receipt + ack), not decrypted.
+    //    Messages from the arm's own phone (key sharing, sync) still go through – ignoring those
+    //    got the device logged out before.
+    const baileysMessage = sock.ws.listeners('CB:message');
+    if (baileysMessage.length) {
+      sock.ws.removeAllListeners('CB:message');
+      sock.ws.on('CB:message', (node) => {
+        if (this.skipIncoming(node)) return this.confirmSkipped(sock, node);
+        for (const fn of baileysMessage) {
+          try { fn(node); } catch (e) { log('message handler failed', e.message); }
+        }
+      });
+    } else log('could not find the message handler – messages are decrypted');
+    // 2) Baileys 6.7.24 can leave its event buffer on, so later events (like member changes) never arrive
+    clearInterval(this.flushTimer);
+    this.flushTimer = setInterval(() => {
+      if (this.sock !== sock) return clearInterval(this.flushTimer);
+      try { if (sock.ev.isBuffering?.()) sock.ev.flush(); } catch {}
+    }, 200);
+    // 3) messages waiting from while the arm was away arrive in batches – keep asking until WhatsApp is done
+    clearInterval(this.batchPump);
+    sock.ws.on('CB:ib,,offline_preview', () => {
+      clearInterval(this.batchPump);
+      this.batchPump = setInterval(() => {
+        if (this.sock !== sock) return clearInterval(this.batchPump);
+        Promise.resolve(sock.sendNode?.({ tag: 'ib', attrs: {}, content: [{ tag: 'offline_batch', attrs: { count: '100' } }] })).catch(() => {});
+      }, 1500);
+    });
+    sock.ws.on('CB:ib,,offline', () => clearInterval(this.batchPump));
+    this.skipped = 0;
 
     sock.ev.on('connection.update', async (u) => {
       if (sock !== this.sock) return;
@@ -344,6 +419,7 @@ class Arm {
       }
       this._altTarget = null;
       const status = String(r?.status ?? '200');
+      log('group action', action, g.name, '→', status);
       if (status === '200') {
         this.applyParticipantEvent({ id: groupId, participants: [target], action });
         return { ok: true, code: status, message: { remove: 'הוסר', add: 'צורף', promote: 'הוגדר כמנהל', demote: 'הוסר מניהול' }[action] };
@@ -352,6 +428,7 @@ class Arm {
       return { ok: false, code: status, message: explain(status, action) };
     } catch (e) {
       const msg = String(e?.message || '');
+      log('group action failed', action, g.name, '→', msg, String(e?.output?.statusCode || ''));
       const code = e?.output?.statusCode || e?.data;
       // WhatsApp is limiting this number's group actions for a while – the job runner waits and retries
       if (/rate-overlimit/i.test(msg) || String(code) === '429') return { ok: false, code: 'rate', message: 'וואטסאפ הגביל זמנית את קצב הפעולות' };
@@ -382,4 +459,4 @@ function explain(status, action) {
   return m[status] || `וואטסאפ סירב (${status})`;
 }
 
-module.exports = { Arm, participantIds };
+module.exports = { Arm, participantIds, LOG };

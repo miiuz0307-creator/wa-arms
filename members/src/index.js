@@ -342,7 +342,7 @@ function diagnostics() {
     }
     return { at: j.createdAt, action: j.action, makeAdmin: !!j.makeAdmin, by: j.by, n: j.items.length, status: by, why };
   });
-  return { at: new Date().toISOString(), arm: { state: st.state, phone: st.phone, groups: st.groups, adminOf: st.adminOf, lastError: st.lastError, wasLoggedOut: st.wasLoggedOut }, settings: jobs.settings, recent };
+  return { at: new Date().toISOString(), skipped: arm.skipped || 0, log: (DEMO ? [] : require('./arm').LOG).slice(-60), arm: { state: st.state, phone: st.phone, groups: st.groups, adminOf: st.adminOf, lastError: st.lastError, wasLoggedOut: st.wasLoggedOut }, settings: jobs.settings, recent };
 }
 if (!DEMO) {
   const put = (k, v) => fetch(`http://metadata.google.internal/computeMetadata/v1/instance/guest-attributes/members/${k}`, { method: 'PUT', headers: { 'Metadata-Flavor': 'Google' }, body: v, signal: AbortSignal.timeout(3000) }).catch(() => {});
