@@ -174,7 +174,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   const p = url.pathname;
   try {
-    if (p === '/health') return send(res, 200, { ok: true, arm: arm.status().state });
+    if (p === '/health') return send(res, 200, { ok: true, arm: arm.status().state, running: jobs.running });
     if (p === '/version') return send(res, 200, { version: VERSION });
     if (req.method === 'GET' && (p === '/' || p === '/index.html')) return send(res, 200, INDEX);
     if (req.method === 'GET' && staticFiles[p]) {

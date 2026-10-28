@@ -653,7 +653,7 @@ function renderStatus() {
   if (!online) {
     $('connectTitle').textContent = s.wasLoggedOut ? 'הזרוע נותקה מוואטסאפ' : s.state === 'qr' ? 'חבר את הזרוע' : 'מחבר את הזרוע…';
     $('connectText').textContent = s.wasLoggedOut
-      ? 'וואטסאפ ניתק את המכשיר המקושר (למשל אם הוסר ב"מכשירים מקושרים" בטלפון). צריך לחבר שוב: סרוק QR או קבל קוד.'
+      ? `וואטסאפ ניתק את המכשיר המקושר${s.lastLogout?.at ? ' ב-' + when(s.lastLogout.at) : ''}. זה קורה כשהוא מוסר ב"מכשירים מקושרים" בטלפון, או כשוואטסאפ מגביל מספר שמבצע הרבה פעולות ניהול מהר. צריך לחבר שוב: סרוק QR או קבל קוד.`
       : 'פתח את וואטסאפ במספר שיהיה הזרוע וחבר אותו.';
     if (s.lastPhone && !$('pairPhone').value) $('pairPhone').value = pretty(s.lastPhone);
     if (s.pairCode) { $('pairCode').textContent = s.pairCode; $('pairBox').classList.remove('hidden'); if (!connectMode) setMode('code'); }
@@ -915,7 +915,7 @@ function renderJobs() {
       </div>
       <div class="prog"><i class="ok" style="width:${ok / n * 100}%"></i><i class="bad" style="width:${fail / n * 100}%"></i></div>
       <div class="pmeta num-font">${done} מתוך ${n} · ${ok} הצליחו${fail ? ` · ${fail} נכשלו` : ''}</div>
-      <div class="rs">${live.items.map((i) => `<div class="r"><span class="ri ${i.status}">${RI[i.status] ?? ''}</span><div><div>${esc(i.name)}</div>${i.status === 'fail' || i.status === 'skipped' ? `<div class="why">${esc(i.message)}</div>` : i.admin ? '<div class="adm">הוגדר כמנהל</div>' : ''}</div></div>`).join('')}</div>`;
+      <div class="rs">${live.items.map((i) => `<div class="r"><span class="ri ${i.status}">${RI[i.status] ?? ''}</span><div><div>${esc(i.name)}</div>${i.status === 'fail' || i.status === 'skipped' || (i.status === 'running' && i.message) ? `<div class="why">${esc(i.message)}</div>` : i.admin ? '<div class="adm">הוגדר כמנהל</div>' : ''}</div></div>`).join('')}</div>`;
     const stop = $('stopJob'); if (stop) stop.onclick = async () => { await api(`/jobs/${live.id}/stop`, {}); tick(); };
   }
   $('hist').innerHTML = S.jobs.length ? S.jobs.slice(0, 15).map((j) => {

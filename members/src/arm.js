@@ -42,6 +42,7 @@ class Arm {
     this.retry = 0;
     this.refreshing = null;
     try { this.lastPhone = fs.readFileSync(path.join(dataDir, 'last-phone'), 'utf8').trim(); } catch {}
+    try { this.lastLogout = JSON.parse(fs.readFileSync(path.join(dataDir, 'last-logout'), 'utf8')); } catch {}
   }
 
   status() {
@@ -58,7 +59,8 @@ class Arm {
       pairCode: this.state !== 'online' ? this.pairCode || null : null,
       pairPhone: this.state !== 'online' ? this.pairPhone || null : null,
       pairError: this.state !== 'online' ? this.pairError || null : null,
-      wasLoggedOut: !!this.wasLoggedOut,
+      wasLoggedOut: !!this.wasLoggedOut || !!this.lastLogout,
+      lastLogout: this.lastLogout || null,
       lastPhone: this.lastPhone || null,
     };
   }
@@ -157,6 +159,8 @@ class Arm {
         this.pairCode = null;
         this.pairError = null;
         this.wasLoggedOut = false;
+        this.lastLogout = null;
+        try { fs.rmSync(path.join(path.dirname(this.authDir), 'last-logout'), { force: true }); } catch {}
         this.retry = 0;
         this.lastError = null;
         this.me = { pn: bareJid(sock.user?.id), lid: sock.user?.lid ? bareJid(sock.user.lid) : null };
@@ -175,6 +179,7 @@ class Arm {
           log('arm logged out – needs a new QR');
           this.state = 'logged_out';
           this.wasLoggedOut = true;
+          try { fs.writeFileSync(path.join(path.dirname(this.authDir), 'last-logout'), JSON.stringify({ at: new Date().toISOString(), reason: this.lastError })); } catch {}
           this.me = null;
           fs.rmSync(this.authDir, { recursive: true, force: true });
           this.groups.clear();
@@ -255,6 +260,7 @@ class Arm {
         next.set(g.id, {
           id: g.id,
           name: g.subject || g.id,
+          addressingMode: g.addressingMode || null,
           participants: (g.participants || []).map((p) => ({ ids: participantIds(p), admin: p.admin || null })),
         });
       }
@@ -321,11 +327,22 @@ class Arm {
       if (m && action === 'promote' && m.admin) return { ok: true, code: 'already', message: 'כבר מנהל' };
       if (m && action === 'demote' && !m.admin) return { ok: true, code: 'already', message: 'כבר לא מנהל' };
       if (m && action === 'demote' && m.admin === 'superadmin') return { ok: false, code: 'owner', message: 'זה יוצר הקבוצה – אי אפשר להוריד לו ניהול' };
-      // use the id the group itself knows the member by
-      if (m) target = [...m.ids].find((x) => ids.has(x));
+      // use the id the group itself knows the member by – in groups that address members by LID, the LID
+      if (m) {
+        const known = [...m.ids].filter((x) => ids.has(x));
+        const lid = known.find((x) => x.endsWith('@lid'));
+        target = (g.addressingMode === 'lid' && lid) || known.find((x) => x.endsWith('@s.whatsapp.net')) || known[0];
+        this._altTarget = known.find((x) => x !== target) || [...m.ids].find((x) => x !== target) || null;
+      }
     }
     try {
-      const [r] = (await this.sock.groupParticipantsUpdate(groupId, [target], action)) || [];
+      let [r] = (await this.sock.groupParticipantsUpdate(groupId, [target], action)) || [];
+      // 404 = WhatsApp didn't find the member by that id: try the member's other id (phone ↔ LID) once
+      if (String(r?.status) === '404' && action !== 'add' && this._altTarget) {
+        target = this._altTarget;
+        [r] = (await this.sock.groupParticipantsUpdate(groupId, [target], action)) || [];
+      }
+      this._altTarget = null;
       const status = String(r?.status ?? '200');
       if (status === '200') {
         this.applyParticipantEvent({ id: groupId, participants: [target], action });
@@ -334,7 +351,13 @@ class Arm {
       if (action === 'add' && status === '409') return { ok: true, code: status, message: 'כבר בקבוצה' };
       return { ok: false, code: status, message: explain(status, action) };
     } catch (e) {
-      return { ok: false, code: 'error', message: e?.message || 'שגיאה' };
+      const msg = String(e?.message || '');
+      const code = e?.output?.statusCode || e?.data;
+      // WhatsApp is limiting this number's group actions for a while – the job runner waits and retries
+      if (/rate-overlimit/i.test(msg) || String(code) === '429') return { ok: false, code: 'rate', message: 'וואטסאפ הגביל זמנית את קצב הפעולות' };
+      if (/not-authorized|forbidden/i.test(msg)) return { ok: false, code: '401', message: 'אין הרשאה – הזרוע לא מנהלת' };
+      if (/timed? ?out/i.test(msg)) return { ok: false, code: 'timeout', message: 'וואטסאפ לא ענה בזמן' };
+      return { ok: false, code: 'error', message: msg || 'שגיאה' };
     }
   }
 
@@ -349,11 +372,12 @@ function explain(status, action) {
   const m = {
     401: 'אין הרשאה – הזרוע לא מנהלת',
     403: action === 'add' ? 'הגדרות הפרטיות של המספר חוסמות צירוף – צריך לשלוח לו קישור הזמנה' : 'אין הרשאה',
-    404: 'המספר לא קיים בוואטסאפ',
+    404: action === 'add' ? 'המספר לא קיים בוואטסאפ' : 'וואטסאפ לא מצא את המספר בקבוצה',
     406: 'לא ניתן לצרף – המספר יצא מהקבוצה לאחרונה או נחסם',
     408: 'המספר יצא מהקבוצה לאחרונה – וואטסאפ לא מאפשר לצרף אותו שוב כרגע',
     409: action === 'add' ? 'כבר בקבוצה' : 'התנגשות',
     500: 'הקבוצה מלאה',
+    429: 'וואטסאפ הגביל זמנית את קצב הפעולות',
   };
   return m[status] || `וואטסאפ סירב (${status})`;
 }

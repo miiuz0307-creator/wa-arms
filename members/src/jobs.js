@@ -13,7 +13,7 @@ class Jobs {
     this.file = path.join(dataDir, 'jobs.json');
     this.settingsFile = path.join(dataDir, 'settings.json');
     this.list = load(this.file, []);
-    this.settings = { delayMin: 3, delayMax: 7, ...load(this.settingsFile, {}) };
+    this.settings = { delayMin: 10, delayMax: 20, ...load(this.settingsFile, {}) };
     // a job cut off by a restart: what wasn't done stays undone
     for (const j of this.list) {
       if (!j.finishedAt) {
@@ -26,6 +26,12 @@ class Jobs {
       }
     }
     this.running = false;
+    // one-time move to a safer pace: 3–7 s between group actions led WhatsApp to rate-limit the number
+    if (!this.settings.paced) {
+      if (this.settings.delayMin < 10) this.settings = { ...this.settings, delayMin: 10, delayMax: Math.max(20, this.settings.delayMax) };
+      this.settings.paced = true;
+      save(this.settingsFile, this.settings);
+    }
     this.save();
   }
 
@@ -36,7 +42,7 @@ class Jobs {
   setSettings(s) {
     const min = clamp(Number(s.delayMin), 1, 120);
     const max = clamp(Number(s.delayMax), min, 300);
-    this.settings = { delayMin: min, delayMax: max };
+    this.settings = { delayMin: min, delayMax: max, paced: true };
     save(this.settingsFile, this.settings);
     return this.settings;
   }
@@ -87,11 +93,33 @@ class Jobs {
         let first = true;
         for (const it of job.items) {
           if (job.stopped || it.status !== 'pending') continue;
-          if (!first) await sleep(1000 * rand(this.settings.delayMin, this.settings.delayMax));
+          // after a rate limit the pace slows down (x2, x4) until the job ends
+          if (!first) await sleep(1000 * rand(this.settings.delayMin, this.settings.delayMax) * (this.slow || 1));
           if (job.stopped) break;
           first = false;
           it.status = 'running';
-          const r = await this.arm.change(job.action, it.groupId, job.number);
+          let r = await this.arm.change(job.action, it.groupId, job.number);
+          // WhatsApp rate limit: pause (2, 5, then 10 minutes), retry the same group, and go slower afterwards
+          for (const wait of [2, 5, 10]) {
+            if (r.code !== 'rate' || job.stopped) break;
+            it.message = `וואטסאפ הגביל זמנית – ממתין ${wait} דקות וממשיך לבד`;
+            job.pausedUntil = new Date(Date.now() + wait * 60_000).toISOString();
+            this.save();
+            await sleep(wait * 60_000);
+            job.pausedUntil = null;
+            this.slow = Math.min(4, (this.slow || 1) * 2);
+            if (job.stopped) break;
+            r = await this.arm.change(job.action, it.groupId, job.number);
+          }
+          if (r.code === 'rate') r.message = 'וואטסאפ הגביל את קצב הפעולות – נסה שוב מאוחר יותר';
+          // the arm got disconnected mid-job: stop instead of failing every remaining group
+          if (r.code === 'offline') {
+            it.status = 'fail'; it.message = r.message;
+            for (const rest of job.items) if (rest.status === 'pending') { rest.status = 'skipped'; rest.message = 'נעצר – הזרוע התנתקה'; }
+            job.stopped = true;
+            this.save();
+            break;
+          }
           it.status = r.ok ? 'ok' : 'fail';
           it.message = r.message;
           if (r.ok && job.makeAdmin && !job.stopped) {
@@ -105,6 +133,7 @@ class Jobs {
           this.save();
         }
         job.finishedAt = new Date().toISOString();
+        this.slow = 1;
         this.save();
       }
     } finally {
