@@ -329,4 +329,25 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+// Diagnostics for the support side (no personal data beyond what the owner sees): arm state and a summary of
+// recent jobs, written every minute to the VM's guest attributes. Only works on Google Cloud; ignored elsewhere.
+function diagnostics() {
+  const st = arm.status();
+  const recent = jobs.list.slice(0, 12).map((j) => {
+    const by = {};
+    const why = {};
+    for (const it of j.items) {
+      by[it.status] = (by[it.status] || 0) + 1;
+      if (it.status === 'fail' || it.status === 'skipped') why[it.message] = (why[it.message] || 0) + 1;
+    }
+    return { at: j.createdAt, action: j.action, makeAdmin: !!j.makeAdmin, by: j.by, n: j.items.length, status: by, why };
+  });
+  return { at: new Date().toISOString(), arm: { state: st.state, phone: st.phone, groups: st.groups, adminOf: st.adminOf, lastError: st.lastError, wasLoggedOut: st.wasLoggedOut }, settings: jobs.settings, recent };
+}
+if (!DEMO) {
+  const put = (k, v) => fetch(`http://metadata.google.internal/computeMetadata/v1/instance/guest-attributes/members/${k}`, { method: 'PUT', headers: { 'Metadata-Flavor': 'Google' }, body: v, signal: AbortSignal.timeout(3000) }).catch(() => {});
+  setInterval(() => put('diag', JSON.stringify(diagnostics()).slice(0, 200000)), 60_000).unref();
+  setTimeout(() => put('diag', JSON.stringify(diagnostics()).slice(0, 200000)), 15_000).unref();
+}
+
 server.listen(PORT, () => console.log(`members tool on :${PORT}${DEMO ? ' (demo)' : ''}`));
