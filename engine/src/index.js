@@ -455,6 +455,16 @@ async function sendTick(arm) {
   }
 }
 
+// Per arm, per minute: members who could not decrypt our messages, repairs, re-sends, losses (log only;
+// also empties the per-minute counters in arm.js).
+function logDelivery() {
+  for (const a of arms.values()) {
+    const d = a.takeDelivery?.();
+    if (!d || !(d.retryReceipts || d.undecryptedIn || d.resent)) continue;
+    log.info({ arm: a.name, ...d, queue: a.resendQueue?.length || 0 }, 'delivery (last minute)');
+  }
+}
+
 async function heartbeat() {
   const online = [...arms.values()].filter((a) => a.online).map((a) => a.id);
   if (online.length) {
@@ -629,6 +639,7 @@ async function main() {
     if (error) throw error;
   }, 'finalize');
   every(30_000, heartbeat, 'heartbeat');
+  every(60_000, logDelivery, 'delivery');
   // disk picture every hour (first one 2 minutes after start)
   setTimeout(() => every(60 * 60_000, diskReport, 'disk'), 120_000);
   // memory picture every 5 minutes (to size servers by measurement, not guesses)
