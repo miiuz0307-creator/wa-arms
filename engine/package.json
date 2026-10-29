@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
-    "@whiskeysockets/baileys": "6.7.24",
+    "baileys": "7.0.0-rc14",
     "pino": "^9.4.0"
   }
 }

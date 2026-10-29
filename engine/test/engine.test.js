@@ -560,6 +560,13 @@ test('members joining/leaving update the kept member list at once', () => {
   assert.equal(arm.groupMeta.has('other@g.us'), false);
 });
 
+test('device cache: Baileys 7 writes { key, value } – the devices are kept, not lost', () => {
+  const { __longCache } = require('../src/arm.js');
+  const c = __longCache();
+  c.mset([{ key: 'u1', value: [{ device: 0 }] }, { key: 'u2', val: [{ device: 1 }] }]);
+  assert.deepEqual(c.mget(['u1', 'u2']), { u1: [{ device: 0 }], u2: [{ device: 1 }] });
+});
+
 test('device cache: a big cache stays fast (no full scan on every write)', () => {
   const arm = new Arm({ id: 'dc', name: 'd', station_id: 'st' }, () => {});
   // build the cache the way connect() does

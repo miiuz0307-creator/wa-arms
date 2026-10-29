@@ -1,5 +1,5 @@
 // One WhatsApp "arm": its own socket, its own session, its own failures.
-const baileys = require('@whiskeysockets/baileys');
+const baileys = require('baileys');
 const { db, log, waLogger, SESSION_SECRET } = require('./config');
 const { useDbAuthState } = require('./authState');
 const { jidUser, formatPhone, fetchAll } = require('./util');
@@ -39,7 +39,8 @@ function longCache(ttlMs = 60 * 60 * 1000) {
     get: (k) => live(k),
     set: (k, v) => (sweep(), m.set(k, { v, exp: Date.now() + ttlMs }), true),
     mget: (ks) => Object.fromEntries(ks.map((k) => [k, live(k)]).filter(([, v]) => v !== undefined)),
-    mset: (list) => (sweep(), list.forEach(({ key, val }) => m.set(key, { v: val, exp: Date.now() + ttlMs })), true),
+    // Baileys 7 passes { key, value }, 6.x / node-cache style { key, val }
+    mset: (list) => (sweep(), list.forEach(({ key, val, value }) => m.set(key, { v: value !== undefined ? value : val, exp: Date.now() + ttlMs })), true),
     del: (k) => (Array.isArray(k) ? k.forEach((x) => m.delete(x)) : m.delete(k), true),
     take: (k) => {
       const v = live(k);
