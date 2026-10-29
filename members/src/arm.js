@@ -5,13 +5,28 @@ const path = require('path');
 const { toIntl, bareJid, jidUser } = require('./phone');
 
 // recent log lines are kept in memory for the support diagnostics (the VM console log isn't reliable)
+// and in a file on disk, so the moments before a disconnect are still there after a restart
 const LOG = [];
+let LOG_FILE = null;
 const log = (...a) => {
   const line = `${new Date().toISOString()} ${a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' ')}`;
   console.log(line);
   LOG.push(line.slice(0, 400));
   if (LOG.length > 120) LOG.shift();
+  if (LOG_FILE) {
+    try {
+      if ((fs.statSync(LOG_FILE, { throwIfNoEntry: false })?.size || 0) > 1_000_000) fs.renameSync(LOG_FILE, `${LOG_FILE}.1`);
+      fs.appendFileSync(LOG_FILE, `${line.slice(0, 1000)}\n`);
+    } catch {}
+  }
 };
+
+// a WhatsApp protocol node, short enough for the log
+function nodeText(n) {
+  if (!n) return '';
+  const kids = Array.isArray(n.content) ? n.content.map((c) => `${c.tag}${Object.keys(c.attrs || {}).length ? JSON.stringify(c.attrs) : ''}`).join(',') : '';
+  return `${n.tag}${JSON.stringify(n.attrs || {})}${kids ? `[${kids}]` : ''}`.slice(0, 500);
+}
 
 // Baileys wants a pino-style logger; keep it quiet
 const silent = {
@@ -39,6 +54,9 @@ function participantIds(p) {
 class Arm {
   constructor(dataDir) {
     this.authDir = path.join(dataDir, 'auth');
+    this.dataDir = dataDir;
+    LOG_FILE = path.join(dataDir, 'arm.log');
+    try { this.logouts = JSON.parse(fs.readFileSync(path.join(dataDir, 'logouts.json'), 'utf8')); } catch { this.logouts = []; }
     this.sock = null;
     this.state = 'stopped'; // stopped | connecting | qr | online | logged_out
     this.qr = null;
@@ -101,9 +119,19 @@ class Arm {
       pairPhone: this.state !== 'online' ? this.pairPhone || null : null,
       pairError: this.state !== 'online' ? this.pairError || null : null,
       wasLoggedOut: !!this.wasLoggedOut || !!this.lastLogout,
-      lastLogout: this.lastLogout || null,
+      lastLogout: this.lastLogout ? { at: this.lastLogout.at, reason: this.lastLogout.reason, kind: this.lastLogout.kind || null, afterAction: this.lastLogout.lastAction || null } : null,
       lastPhone: this.lastPhone || null,
     };
+  }
+
+  /** Someone has the app open: if a QR is wanted and the arm stopped renewing it, start again. */
+  wake() {
+    this.viewedAt = Date.now();
+    if (this.idle) {
+      this.idle = false;
+      log('app opened – new QR');
+      this.later(0);
+    }
   }
 
   // one pending reconnect at a time (a second one would replace a socket that is mid-link)
@@ -207,9 +235,41 @@ class Arm {
     sock.ws.on('CB:ib,,offline', () => clearInterval(this.batchPump));
     this.skipped = 0;
 
+    // exactly what WhatsApp says when it closes the connection (the reason behind a logout)
+    sock.ws.on('CB:stream:error', (n) => log('whatsapp stream error', nodeText(n)));
+    sock.ws.on('CB:failure', (n) => log('whatsapp failure', nodeText(n)));
+
+    // A socket that neither opens nor closes would leave the arm stuck on "connecting" (as in BotiX)
+    clearTimeout(this.connectGuard);
+    const connectStart = Date.now();
+    this.connectGuard = setTimeout(() => {
+      if (this.sock !== sock || this.state === 'online' || (this.qrAt || 0) > connectStart) return;
+      log('still not connected after 90s – retrying');
+      try { sock.end(new Error('connect stuck')); } catch {}
+    }, 90_000);
+    // Watchdog: a connection that went dead without closing. Ask WhatsApp for a ping every 2 minutes;
+    // no answer in 20 s → reconnect (takes a few seconds, no QR).
+    clearInterval(this.watchdog);
+    this.watchdog = setInterval(() => {
+      if (this.sock !== sock) return clearInterval(this.watchdog);
+      if (this.state !== 'online' || this.pinging) return;
+      this.pinging = true;
+      Promise.race([
+        sock.query({ tag: 'iq', attrs: { to: 's.whatsapp.net', type: 'get', xmlns: 'w:p', id: sock.generateMessageTag() }, content: [{ tag: 'ping', attrs: {} }] }),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('ping timeout')), 20_000)),
+      ])
+        .catch((e) => {
+          if (this.sock !== sock) return;
+          log('no answer from WhatsApp – reconnecting', e.message);
+          try { sock.end(new Error('stalled')); } catch {}
+        })
+        .finally(() => { this.pinging = false; });
+    }, 120_000);
+
     sock.ev.on('connection.update', async (u) => {
       if (sock !== this.sock) return;
       if (u.qr) {
+        this.qrAt = Date.now();
         this.qr = u.qr;
         this.state = 'qr';
         // linking with a code instead of a QR (the phone can't scan its own screen): ask once per connection
@@ -238,6 +298,7 @@ class Arm {
         try { fs.rmSync(path.join(path.dirname(this.authDir), 'last-logout'), { force: true }); } catch {}
         this.retry = 0;
         this.lastError = null;
+        this.onlineAt = new Date().toISOString();
         this.me = { pn: bareJid(sock.user?.id), lid: sock.user?.lid ? bareJid(sock.user.lid) : null };
         log('arm online', jidUser(this.me.pn));
         this.lastPhone = jidUser(this.me.pn);
@@ -254,7 +315,12 @@ class Arm {
           log('arm logged out – needs a new QR');
           this.state = 'logged_out';
           this.wasLoggedOut = true;
-          try { fs.writeFileSync(path.join(path.dirname(this.authDir), 'last-logout'), JSON.stringify({ at: new Date().toISOString(), reason: this.lastError })); } catch {}
+          // keep the whole picture: what WhatsApp said, the last group action, and the log just before it
+          const kind = /device_removed/.test(LOG.slice(-10).join(' ') + detail) ? 'device_removed' : null;
+          this.lastLogout = { at: new Date().toISOString(), reason: this.lastError, kind, detail, lastAction: this.lastAction || null, onlineSince: this.onlineAt || null, log: LOG.slice(-40) };
+          this.logouts = [this.lastLogout, ...(this.logouts || [])].slice(0, 20);
+          try { fs.writeFileSync(path.join(this.dataDir, 'last-logout'), JSON.stringify(this.lastLogout)); } catch {}
+          try { fs.writeFileSync(path.join(this.dataDir, 'logouts.json'), JSON.stringify(this.logouts)); } catch {}
           this.me = null;
           fs.rmSync(this.authDir, { recursive: true, force: true });
           this.groups.clear();
@@ -271,8 +337,16 @@ class Arm {
           }
           this.pairAsked = false;
           this.state = 'qr';
-          log('waiting for link, new QR', code);
-          this.later(1000);
+          // Renew the QR only while someone has the app open. Renewing it all night long (a new
+          // unlinked session every ~3 minutes) is useless and is unusual traffic for the number's IP.
+          if (Date.now() - (this.viewedAt || 0) < 3 * 60_000 || this.pairPhone) {
+            log('waiting for link, new QR', code);
+            this.later(1000);
+          } else {
+            this.qr = null;
+            this.idle = true;
+            log('waiting for link – QR paused until the app is opened');
+          }
           return;
         }
         this.state = 'connecting';
@@ -420,6 +494,7 @@ class Arm {
       this._altTarget = null;
       const status = String(r?.status ?? '200');
       log('group action', action, g.name, '→', status);
+      this.lastAction = { at: new Date().toISOString(), action, group: g.name, status };
       if (status === '200') {
         this.applyParticipantEvent({ id: groupId, participants: [target], action });
         return { ok: true, code: status, message: { remove: 'הוסר', add: 'צורף', promote: 'הוגדר כמנהל', demote: 'הוסר מניהול' }[action] };
@@ -429,6 +504,7 @@ class Arm {
     } catch (e) {
       const msg = String(e?.message || '');
       log('group action failed', action, g.name, '→', msg, String(e?.output?.statusCode || ''));
+      this.lastAction = { at: new Date().toISOString(), action, group: g.name, status: msg.slice(0, 80) };
       const code = e?.output?.statusCode || e?.data;
       // WhatsApp is limiting this number's group actions for a while – the job runner waits and retries
       if (/rate-overlimit/i.test(msg) || String(code) === '429') return { ok: false, code: 'rate', message: 'וואטסאפ הגביל זמנית את קצב הפעולות' };

@@ -653,7 +653,7 @@ function renderStatus() {
   if (!online) {
     $('connectTitle').textContent = s.wasLoggedOut ? 'הזרוע נותקה מוואטסאפ' : s.state === 'qr' ? 'חבר את הזרוע' : 'מחבר את הזרוע…';
     $('connectText').textContent = s.wasLoggedOut
-      ? `וואטסאפ ניתק את המכשיר המקושר${s.lastLogout?.at ? ' ב-' + when(s.lastLogout.at) : ''}. זה קורה כשהוא מוסר ב"מכשירים מקושרים" בטלפון, או כשוואטסאפ מגביל מספר שמבצע הרבה פעולות ניהול מהר. צריך לחבר שוב: סרוק QR או קבל קוד.`
+      ? `וואטסאפ ניתק את המכשיר המקושר${s.lastLogout?.at ? ' ב-' + when(s.lastLogout.at) : ''}. זה קורה כשהוא מוסר ב"מכשירים מקושרים" בטלפון, או כשוואטסאפ מגביל מספר שמבצע הרבה פעולות ניהול מהר.${s.lastLogout?.afterAction ? ` הפעולה האחרונה לפני הניתוק: ${({ add: 'צירוף', remove: 'הסרה', promote: 'הגדרת מנהל', demote: 'הסרת ניהול' })[s.lastLogout.afterAction.action] || ''} בקבוצה "${s.lastLogout.afterAction.group}" ב-${when(s.lastLogout.afterAction.at)}.` : ''} צריך לחבר שוב: סרוק QR או קבל קוד.`
       : 'פתח את וואטסאפ במספר שיהיה הזרוע וחבר אותו.';
     if (s.lastPhone && !$('pairPhone').value) $('pairPhone').value = pretty(s.lastPhone);
     if (s.pairCode) { $('pairCode').textContent = s.pairCode; $('pairBox').classList.remove('hidden'); if (!connectMode) setMode('code'); }

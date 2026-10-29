@@ -206,6 +206,7 @@ const server = http.createServer(async (req, res) => {
     const ownerOnly = () => send(res, 403, { error: 'רק המנהל יכול לעשות את זה' });
 
     if (!me.owner) touchUser(me.id, 'lastSeenAt');
+    if (p === '/api/status' && req.method === 'GET') arm.wake?.();
     if (p === '/api/status' && req.method === 'GET') return send(res, 200, { ...arm.status(), running: jobs.running, settings: jobs.settings, me });
     if (p === '/api/logout' && req.method === 'POST') return send(res, 200, { ok: true }, { 'set-cookie': 'mm=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0' });
     if (p === '/api/users' && req.method === 'GET') {
@@ -340,9 +341,9 @@ function diagnostics() {
       by[it.status] = (by[it.status] || 0) + 1;
       if (it.status === 'fail' || it.status === 'skipped') why[it.message] = (why[it.message] || 0) + 1;
     }
-    return { at: j.createdAt, action: j.action, makeAdmin: !!j.makeAdmin, by: j.by, n: j.items.length, status: by, why };
+    return { at: j.createdAt, action: j.action, makeAdmin: !!j.makeAdmin, by: j.by, n: j.items.length, status: by, why, steps: j.items.filter((it) => it.at).map((it) => `${it.at.slice(11, 19)} ${it.status}`).slice(0, 15) };
   });
-  return { at: new Date().toISOString(), skipped: arm.skipped || 0, log: (DEMO ? [] : require('./arm').LOG).slice(-60), arm: { state: st.state, phone: st.phone, groups: st.groups, adminOf: st.adminOf, lastError: st.lastError, wasLoggedOut: st.wasLoggedOut }, settings: jobs.settings, recent };
+  return { at: new Date().toISOString(), skipped: arm.skipped || 0, log: (DEMO ? [] : require('./arm').LOG).slice(-60), arm: { state: st.state, phone: st.phone, groups: st.groups, adminOf: st.adminOf, lastError: st.lastError, wasLoggedOut: st.wasLoggedOut }, logouts: (arm.logouts || []).map((l, i) => (i === 0 ? l : { ...l, log: undefined })), settings: jobs.settings, recent };
 }
 if (!DEMO) {
   const put = (k, v) => fetch(`http://metadata.google.internal/computeMetadata/v1/instance/guest-attributes/members/${k}`, { method: 'PUT', headers: { 'Metadata-Flavor': 'Google' }, body: v, signal: AbortSignal.timeout(3000) }).catch(() => {});
