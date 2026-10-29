@@ -560,6 +560,12 @@ test('members joining/leaving update the kept member list at once', () => {
   assert.equal(arm.groupMeta.has('other@g.us'), false);
 });
 
+test('baileys 7 only for the listed arms (050-410-7826), every other arm stays on 6', () => {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '../src/arm.js'), 'utf8');
+  assert.ok(src.includes("c453d363-7717-410b-98f8-f10e6896cfcf"));
+  assert.ok(/libFor\(this\.id\)/.test(src));
+});
+
 test('device cache: Baileys 7 writes { key, value } – the devices are kept, not lost', () => {
   const { __longCache } = require('../src/arm.js');
   const c = __longCache();

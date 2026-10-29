@@ -1,5 +1,20 @@
 // One WhatsApp "arm": its own socket, its own session, its own failures.
-const baileys = require('baileys');
+// Two WhatsApp libraries side by side: 6.7.24 for every arm, 7 (full LID support) only for the arms
+// listed in BAILEYS7_ARMS – so a number can move to 7 without touching the others.
+const baileys = require('@whiskeysockets/baileys');
+let baileys7 = null;
+try {
+  baileys7 = require('baileys');
+} catch {
+  baileys7 = null;
+}
+const B7_ARMS = new Set(
+  String(process.env.BAILEYS7_ARMS ?? 'c453d363-7717-410b-98f8-f10e6896cfcf')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean),
+);
+const libFor = (armId) => (baileys7 && B7_ARMS.has(armId) ? baileys7 : baileys);
 const { db, log, waLogger, SESSION_SECRET } = require('./config');
 const { useDbAuthState } = require('./authState');
 const { jidUser, formatPhone, fetchAll } = require('./util');
@@ -393,11 +408,14 @@ class Arm {
     this.creds = state.creds;
     this.wasLinked = !!state.creds?.me; // false = a QR scan is about to link a new number
 
-    const sock = makeWASocket({
+    const lib = libFor(this.id);
+    this.libVersion = lib === baileys ? '6' : '7';
+    const mk = lib.default || lib.makeWASocket;
+    const sock = mk({
       version: await waVersion(),
-      auth: { creds: state.creds, keys: (this.signalKeys = makeCacheableSignalKeyStore(state.keys, waLogger)) },
+      auth: { creds: state.creds, keys: (this.signalKeys = lib.makeCacheableSignalKeyStore(state.keys, waLogger)) },
       logger: waLogger,
-      browser: Browsers.ubuntu('Chrome'),
+      browser: lib.Browsers.ubuntu('Chrome'),
       printQRInTerminal: false,
       markOnlineOnConnect: false,
       syncFullHistory: false,
@@ -708,6 +726,7 @@ class Arm {
     }
 
     if (u.connection === 'open') {
+      log.info({ arm: this.name, baileys: this.libVersion }, 'arm connected');
       this.pairPhone = null;
       this.pairCodeAt = null;
       await this.markOnline(sock, 'open');

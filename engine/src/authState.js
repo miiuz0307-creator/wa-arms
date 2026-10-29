@@ -4,13 +4,13 @@ const crypto = require('crypto');
 const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
-const { initAuthCreds, BufferJSON, proto } = require('baileys');
+const { initAuthCreds, BufferJSON, proto } = require('@whiskeysockets/baileys');
 const { db, log } = require('./config');
 
 // Baileys after 6.7.16 keeps sender keys as raw JSON bytes
 const WANTS_BYTES = (() => {
   try {
-    const [a, b, c] = require('baileys/package.json').version.split('.').map(Number);
+    const [a, b, c] = require('@whiskeysockets/baileys/package.json').version.split('.').map(Number);
     return a > 6 || (a === 6 && (b > 7 || (b === 7 && c > 16)));
   } catch {
     return true;

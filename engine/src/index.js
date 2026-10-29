@@ -603,7 +603,7 @@ async function acquireLock() {
 async function main() {
   let bv = '?';
   try {
-    bv = require('baileys/package.json').version;
+    bv = require('@whiskeysockets/baileys/package.json').version;
   } catch {}
   log.info({ baileys: bv, node: process.version }, 'arms engine starting');
   await acquireLock();
