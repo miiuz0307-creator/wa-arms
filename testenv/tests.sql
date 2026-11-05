@@ -80,6 +80,19 @@ select wa_group_id as p1 from public.claim_target_engine('00000000-0000-0000-000
 select wa_group_id as p2 from public.claim_target_engine('00000000-0000-0000-0001-00000000000b') \gset
 select testkit.check(:'p1' = '0000000b-0000-0000-0000-000000000000-17@g.us' and :'p2' = '0000000b-0000-0000-0000-000000000000-15@g.us', 'priority: priority groups get the ride first, in their order');
 reset role;
+-- priority groups split equally per day: the arm that sent fewer rides there today gets it (first 10 seconds)
+update campaign_targets set status = 'sent', sent_at = now(), arm_id = '00000000-0000-0000-0001-00000000000b'
+where campaign_id = :'rp' and wa_group_id = '0000000b-0000-0000-0000-000000000000-17@g.us';
+update campaigns set status = 'completed' where id = :'rp';
+update app_settings set priority_groups = array['0000000b-0000-0000-0000-000000000000-17@g.us'] where station_id = '0000000b-0000-0000-0000-000000000000';
+update arms set sent_today = 0 where station_id = '0000000b-0000-0000-0000-000000000000';
+set role anon; select testkit.as_station('tok-b');
+select public.create_manual_campaign('ride q', null, array(select '0000000b-0000-0000-0000-000000000000-' || g || '@g.us' from generate_series(14, 18) g)) as rq \gset
+select testkit.as_engine();
+select wa_group_id as q1 from public.claim_target_engine('00000000-0000-0000-0001-00000000000b') \gset
+select wa_group_id as q2 from public.claim_target_engine('00000000-0000-0000-0002-00000000000b') \gset
+select testkit.check(:'q1' <> '0000000b-0000-0000-0000-000000000000-17@g.us' and :'q2' = '0000000b-0000-0000-0000-000000000000-17@g.us', 'priority split: the arm that sent less to the priority group today gets it, the other leaves it');
+reset role;
 update app_settings set priority_groups = '{}' where station_id = '0000000b-0000-0000-0000-000000000000';
 update campaigns set status = 'completed' where station_id = '0000000b-0000-0000-0000-000000000000';
 
