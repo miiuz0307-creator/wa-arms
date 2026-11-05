@@ -556,8 +556,9 @@ function AddToList({
     if (!open) return;
     setListId(defaultList || lists[0]?.id || 'new');
     setName('');
-    setAddArms(true);
-    setShare(true);
+    // the owner's last choice is kept (per browser); adding other arms is off until he turns it on
+    setAddArms(readChoice('lists.addArms', true));
+    setShare(readChoice('lists.share', false));
     // only when the window opens – the screen refreshes every few seconds and must not reset the choice
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -572,7 +573,7 @@ function AddToList({
   const otherArms = chosenArms.length
     ? ([...new Set(groups.flatMap((g) => g.armIds))].filter((a) => armById[a]?.is_active && !chosenArms.includes(a) && !missingArms.includes(a)) as string[])
     : [];
-  const [share, setShare] = useState(true);
+  const [share, setShare] = useState(false);
 
   async function save() {
     setBusy(true);
@@ -649,7 +650,10 @@ function AddToList({
         {otherArms.length > 0 && (
           <Checkbox
             checked={share}
-            onChange={setShare}
+            onChange={(v: boolean) => {
+              setShare(v);
+              saveChoice('lists.share', v);
+            }}
             label={
               <span className="text-sm">
                 <b>חלוקת עבודה בין הזרועות:</b> בקבוצות שבחרת נמצאות גם הזרועות {otherArms.map((a) => armById[a]?.name).join(', ')}. הן יצטרפו לזרועות השולחות של הרשימה והעבודה תתחלק ביניהן (כל קבוצה מקבלת כל נסיעה פעם אחת).
@@ -660,7 +664,10 @@ function AddToList({
         {missingArms.length > 0 && (
           <Checkbox
             checked={addArms}
-            onChange={setAddArms}
+            onChange={(v: boolean) => {
+              setAddArms(v);
+              saveChoice('lists.addArms', v);
+            }}
             label={
               <span className="text-sm">
                 {unreachable.length} קבוצות שאין בהן זרוע של הרשימה – הוסף לרשימה את הזרועות שנמצאות בהן: {missingArms.map((a) => armById[a]?.name).join(', ')}
@@ -845,4 +852,19 @@ function ListArmsEditor({ list, arms, listArms, onClose, onSaved }: { list: any;
       </div>
     </Modal>
   );
+}
+
+// remembered choices of the list window (browser storage may be blocked – then the defaults apply)
+function readChoice(key: string, fallback: boolean): boolean {
+  try {
+    const v = window.localStorage.getItem(key);
+    return v === null ? fallback : v === '1';
+  } catch {
+    return fallback;
+  }
+}
+function saveChoice(key: string, v: boolean) {
+  try {
+    window.localStorage.setItem(key, v ? '1' : '0');
+  } catch {}
 }
