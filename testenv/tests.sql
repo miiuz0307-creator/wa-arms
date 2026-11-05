@@ -39,6 +39,8 @@ set role anon;
 select testkit.as_station('tok-a');
 select public.create_manual_campaign('נסיעה של א', null, array['shared@g.us', '0000000a-0000-0000-0000-000000000000-1@g.us']) as camp_a \gset
 reset role;
+-- past the first 45 seconds: any arm of the station may take any group (no turns) – keeps this test about stations only
+update campaigns set started_at = now() - interval '2 minutes' where id = :'camp_a';
 set role anon;
 select testkit.as_engine();
 -- arms of B try to claim: must get nothing from A's distribution (even for the shared group)
@@ -64,6 +66,22 @@ reset role;
 select testkit.check((select count(distinct arm_id) from campaign_targets where campaign_id in (:'r1', :'r2') and arm_id is not null) = 2, 'turns: both arms got groups of the two rides');
 
 reset role;
+
+-- priority groups: a ride goes to the station's priority groups first, in their order
+reset role;
+update campaigns set status = 'completed' where station_id = '0000000b-0000-0000-0000-000000000000';
+update app_settings set priority_groups = array['0000000b-0000-0000-0000-000000000000-17@g.us', '0000000b-0000-0000-0000-000000000000-15@g.us'] where station_id = '0000000b-0000-0000-0000-000000000000';
+set role anon; select testkit.as_station('tok-b');
+select public.create_manual_campaign('ride p', null, array(select '0000000b-0000-0000-0000-000000000000-' || g || '@g.us' from generate_series(14, 18) g)) as rp \gset
+reset role;
+update campaigns set started_at = now() - interval '2 minutes' where id = :'rp';
+set role anon; select testkit.as_engine();
+select wa_group_id as p1 from public.claim_target_engine('00000000-0000-0000-0001-00000000000b') \gset
+select wa_group_id as p2 from public.claim_target_engine('00000000-0000-0000-0001-00000000000b') \gset
+select testkit.check(:'p1' = '0000000b-0000-0000-0000-000000000000-17@g.us' and :'p2' = '0000000b-0000-0000-0000-000000000000-15@g.us', 'priority: priority groups get the ride first, in their order');
+reset role;
+update app_settings set priority_groups = '{}' where station_id = '0000000b-0000-0000-0000-000000000000';
+update campaigns set status = 'completed' where station_id = '0000000b-0000-0000-0000-000000000000';
 
 -- even sharing: a busy arm leaves a shared group to a much less busy arm for the first 45 seconds
 reset role;

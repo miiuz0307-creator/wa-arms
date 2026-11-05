@@ -3,7 +3,11 @@
 -- group first always sent there. Now, during the first 45 seconds of a ride, each shared group has a
 -- "turn" arm per ride (rendezvous hash of ride + group + arm, so it changes from ride to ride and
 -- splits about evenly); only that arm takes it. After 45 seconds any arm may take it, so no ride waits.
--- Only claim_target changes (same signature). Additive.
+-- Also: priority groups (app_settings.priority_groups, in order) – every ride goes to them first
+-- (the owner: first סיירת VIP, then סיירת בעל עגולה, then the rest).
+-- claim_target keeps its signature. Additive: one new column.
+alter table public.app_settings add column if not exists priority_groups text[] not null default '{}';
+
 create or replace function public.claim_target(p_arm uuid)
  returns table(target_id bigint, campaign_id uuid, wa_group_id text, final_text text)
  language plpgsql security definer set search_path to 'public'
@@ -64,7 +68,7 @@ begin
               and (case when b2.sent_day = current_date then b2.sent_today else 0 end) < b2.daily_limit)
         order by md5(c_id::text || t.wa_group_id || b.id::text)
         limit 1))
-    order by t.id
+    order by coalesce(array_position(s.priority_groups, t.wa_group_id), 1000000), t.id
     for update of t skip locked
     limit 1;
     exit when t_id is not null;
@@ -79,3 +83,7 @@ begin
   return query select t.id, t.campaign_id, t.wa_group_id, c.final_text
   from public.campaign_targets t join public.campaigns c on c.id = t.campaign_id where t.id = t_id;
 end $function$;
+
+-- the owner's priority groups for his station (8080*): סיירת VIP first, then סיירת בעל עגולה
+update public.app_settings set priority_groups = array['120363420060606873@g.us', '972539236511-1567164800@g.us']
+where station_id = 'b6b4d2f9-30fa-475a-86e2-de26002504de';
