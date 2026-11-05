@@ -58,7 +58,11 @@ select testkit.as_engine();
 select campaign_id as c1 from public.claim_target_engine('00000000-0000-0000-0001-00000000000b') \gset
 select campaign_id as c2 from public.claim_target_engine('00000000-0000-0000-0002-00000000000b') \gset
 select campaign_id as c3 from public.claim_target_engine('00000000-0000-0000-0001-00000000000b') \gset
-select testkit.check(:'c1' = :'r1' and :'c2' = :'r2' and :'c3' = :'r1', 'distribution: each arm keeps its own ride, the free ride gets the other arm');
+select testkit.check(:'c1' <> '' and :'c2' <> '' and :'c3' <> '' and :'c1' in (:'r1', :'r2') and :'c2' in (:'r1', :'r2'), 'distribution: two arms on two rides both get work at once (shared groups take turns)');
+-- turns: in a ride's first 45 seconds each shared group goes only to its turn arm, and the turns split between the arms
+reset role;
+select testkit.check((select count(distinct arm_id) from campaign_targets where campaign_id in (:'r1', :'r2') and arm_id is not null) = 2, 'turns: both arms got groups of the two rides');
+
 reset role;
 
 -- even sharing: a busy arm leaves a shared group to a much less busy arm for the first 45 seconds
