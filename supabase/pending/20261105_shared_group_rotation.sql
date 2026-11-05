@@ -49,7 +49,8 @@ begin
           and (case when b.sent_day = current_date then b.sent_today else 0 end) <= v_mine - 1000
           and (case when b.sent_day = current_date then b.sent_today else 0 end) < b.daily_limit))
       -- turn: in a shared group, during the first 45 seconds only this ride's turn arm takes it
-      and (not c_young or p_arm = (
+      -- (priority groups are exempt: they go to the first free arm at once, so they really come first)
+      and (not c_young or t.wa_group_id = any (coalesce(s.priority_groups, '{}')) or p_arm = (
         select b.id
         from public.groups g3
         join public.arms b on b.id = g3.arm_id
