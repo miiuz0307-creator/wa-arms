@@ -121,7 +121,24 @@ class Arm {
       wasLoggedOut: !!this.wasLoggedOut || !!this.lastLogout,
       lastLogout: this.lastLogout ? { at: this.lastLogout.at, reason: this.lastLogout.reason, kind: this.lastLogout.kind || null, afterAction: this.lastLogout.lastAction || null } : null,
       lastPhone: this.lastPhone || null,
+      linked: this.linked(),
+      reconnecting: this.state === 'connecting' && this.linked(),
     };
+  }
+
+  /** Linked to WhatsApp (even while reconnecting for a few seconds). */
+  linked() {
+    return !!this.sock?.authState?.creds?.me?.id && !this.wasLoggedOut;
+  }
+
+  /** Wait until the arm is online again (WhatsApp drops the connection now and then; it's back in seconds). */
+  async waitOnline(ms) {
+    const end = Date.now() + ms;
+    while (this.state !== 'online' && Date.now() < end) {
+      if (!this.linked()) return false;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    return this.state === 'online';
   }
 
   /** Someone has the app open: if a QR is wanted and the arm stopped renewing it, start again. */

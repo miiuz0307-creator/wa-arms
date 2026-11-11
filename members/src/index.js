@@ -150,8 +150,12 @@ function send(res, code, body, headers = {}) {
     'cache-control': 'no-store',
     ...headers,
   });
+  if (code >= 400 && body?.error) res.errText = String(body.error).slice(0, 160);
   res.end(isBuf ? body : JSON.stringify(body));
 }
+
+// what people did in the app (not the every-few-seconds polling), for the support diagnostics
+const API_LOG = [];
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -173,6 +177,13 @@ function readBody(req) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   const p = url.pathname;
+  const t0 = Date.now();
+  if (p.startsWith('/api/') && !(req.method === 'GET' && (p === '/api/status' || p === '/api/jobs'))) {
+    res.on('finish', () => {
+      API_LOG.push(`${new Date(t0).toISOString().slice(5, 19)} ${req.method} ${p} → ${res.statusCode} ${Date.now() - t0}ms arm=${arm.status().state}${res.errText ? ` "${res.errText}"` : ''}`);
+      if (API_LOG.length > 80) API_LOG.shift();
+    });
+  }
   try {
     if (p === '/health') return send(res, 200, { ok: true, arm: arm.status().state, running: jobs.running });
     if (p === '/version') return send(res, 200, { version: VERSION });
@@ -297,6 +308,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/lookup' && req.method === 'POST') {
       const { number } = await readBody(req);
+      await arm.waitOnline?.(20_000); // a reconnect of a few seconds shouldn't fail the search
       return send(res, 200, await arm.lookup(number));
     }
     if (p === '/api/jobs' && req.method === 'GET') return send(res, 200, { jobs: jobs.list.slice(0, 30) });
@@ -343,7 +355,7 @@ function diagnostics() {
     }
     return { at: j.createdAt, action: j.action, makeAdmin: !!j.makeAdmin, by: j.by, n: j.items.length, status: by, why, steps: j.items.filter((it) => it.at).map((it) => `${it.at.slice(11, 19)} ${it.status}`).slice(0, 15) };
   });
-  return { at: new Date().toISOString(), skipped: arm.skipped || 0, log: (DEMO ? [] : require('./arm').LOG).slice(-60), arm: { state: st.state, phone: st.phone, groups: st.groups, adminOf: st.adminOf, lastError: st.lastError, wasLoggedOut: st.wasLoggedOut }, logouts: (arm.logouts || []).map((l, i) => (i === 0 ? l : { ...l, log: undefined })), settings: jobs.settings, recent };
+  return { at: new Date().toISOString(), skipped: arm.skipped || 0, log: (DEMO ? [] : require('./arm').LOG).slice(-60), arm: { state: st.state, phone: st.phone, groups: st.groups, adminOf: st.adminOf, lastError: st.lastError, wasLoggedOut: st.wasLoggedOut }, api: API_LOG.slice(-40), logouts: (arm.logouts || []).map((l, i) => (i === 0 ? l : { ...l, log: undefined })), settings: jobs.settings, recent };
 }
 if (!DEMO) {
   const put = (k, v) => fetch(`http://metadata.google.internal/computeMetadata/v1/instance/guest-attributes/members/${k}`, { method: 'PUT', headers: { 'Metadata-Flavor': 'Google' }, body: v, signal: AbortSignal.timeout(3000) }).catch(() => {});

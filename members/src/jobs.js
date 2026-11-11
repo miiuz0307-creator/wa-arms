@@ -112,6 +112,16 @@ class Jobs {
             r = await this.arm.change(job.action, it.groupId, job.number);
           }
           if (r.code === 'rate') r.message = 'וואטסאפ הגביל את קצב הפעולות – נסה שוב מאוחר יותר';
+          // WhatsApp dropped the connection for a moment (happens every hour or two, back in ~5 s):
+          // wait for it and do the same group again instead of stopping the job
+          if (r.code === 'offline' && !job.stopped && this.arm.waitOnline) {
+            it.message = 'מתחבר מחדש לוואטסאפ – ממשיך מיד';
+            this.save();
+            if (await this.arm.waitOnline(3 * 60_000)) {
+              await sleep(3000);
+              r = await this.arm.change(job.action, it.groupId, job.number);
+            }
+          }
           // the arm got disconnected mid-job: stop instead of failing every remaining group
           if (r.code === 'offline') {
             it.status = 'fail'; it.message = r.message;
@@ -124,7 +134,8 @@ class Jobs {
           it.message = r.message;
           if (r.ok && job.makeAdmin && !job.stopped) {
             await sleep(1500); // WhatsApp needs a moment before the new member can be promoted
-            const p = await this.arm.change('promote', it.groupId, job.number);
+            let p = await this.arm.change('promote', it.groupId, job.number);
+            if (p.code === 'offline' && this.arm.waitOnline && (await this.arm.waitOnline(3 * 60_000))) p = await this.arm.change('promote', it.groupId, job.number);
             it.admin = p.ok;
             it.message = p.ok ? `${r.message} והוגדר כמנהל` : `${r.message}, אבל לא הוגדר כמנהל: ${p.message}`;
             if (!p.ok) it.status = 'fail';

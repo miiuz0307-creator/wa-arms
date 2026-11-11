@@ -642,9 +642,10 @@ function renderStatus() {
   $('openUsersRow').classList.toggle('hidden', !s.me?.owner);
   $('openListsRow').classList.toggle('hidden', !s.me?.owner);
   $('demoNote').classList.toggle('hidden', !s.demo);
-  const online = s.state === 'online';
-  $('armChip').className = 'chip ' + (online ? 'on' : s.state === 'qr' || s.state === 'connecting' ? 'wait' : 'off');
-  $('armText').textContent = online ? pretty(s.phone) : s.state === 'qr' ? 'ממתין לסריקה' : s.state === 'connecting' ? 'מתחבר…' : 'מנותק';
+  // a reconnect of a few seconds (WhatsApp does it every hour or two) is not a disconnect: keep the app usable
+  const online = s.state === 'online' || !!s.reconnecting;
+  $('armChip').className = 'chip ' + (s.state === 'online' ? 'on' : online || s.state === 'qr' || s.state === 'connecting' ? 'wait' : 'off');
+  $('armText').textContent = s.state === 'online' ? pretty(s.phone) : s.reconnecting ? 'מתחבר מחדש…' : s.state === 'qr' ? 'ממתין לסריקה' : s.state === 'connecting' ? 'מתחבר…' : 'מנותק';
   $('stGroups').textContent = online ? s.groups : '–';
   $('stAdmin').textContent = online ? s.adminOf : '–';
   $('stAt').textContent = online ? ago(s.groupsAt) : '–';
@@ -695,7 +696,7 @@ $('lookupBtn').onclick = async () => {
     S.tab = S.result.inGroups.length || !S.result.notIn.length ? 'remove' : 'add';
     renderResults();
   } catch (e) { $('lookupErr').textContent = e.message; }
-  finally { $('lookupBtn').disabled = S.status?.state !== 'online'; }
+  finally { $('lookupBtn').disabled = !(S.status?.state === 'online' || S.status?.reconnecting); }
 };
 $('number').onkeydown = (e) => { if (e.key === 'Enter') $('lookupBtn').click(); };
 
