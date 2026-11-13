@@ -80,41 +80,43 @@ select wa_group_id as p1 from public.claim_target_engine('00000000-0000-0000-000
 select wa_group_id as p2 from public.claim_target_engine('00000000-0000-0000-0001-00000000000b') \gset
 select testkit.check(:'p1' = '0000000b-0000-0000-0000-000000000000-17@g.us' and :'p2' = '0000000b-0000-0000-0000-000000000000-15@g.us', 'priority: priority groups get the ride first, in their order');
 reset role;
--- priority groups split equally per day: the arm that sent fewer rides there today gets it (first 10 seconds)
-update campaign_targets set status = 'sent', sent_at = now(), arm_id = '00000000-0000-0000-0001-00000000000b'
-where campaign_id = :'rp' and wa_group_id = '0000000b-0000-0000-0000-000000000000-17@g.us';
-update campaigns set status = 'completed' where id = :'rp';
-update app_settings set priority_groups = array['0000000b-0000-0000-0000-000000000000-17@g.us'] where station_id = '0000000b-0000-0000-0000-000000000000';
-update arms set sent_today = 0 where station_id = '0000000b-0000-0000-0000-000000000000';
-set role anon; select testkit.as_station('tok-b');
-select public.create_manual_campaign('ride q', null, array(select '0000000b-0000-0000-0000-000000000000-' || g || '@g.us' from generate_series(14, 18) g)) as rq \gset
-select testkit.as_engine();
-select wa_group_id as q1 from public.claim_target_engine('00000000-0000-0000-0001-00000000000b') \gset
-select wa_group_id as q2 from public.claim_target_engine('00000000-0000-0000-0002-00000000000b') \gset
-select testkit.check(:'q1' <> '0000000b-0000-0000-0000-000000000000-17@g.us' and :'q2' = '0000000b-0000-0000-0000-000000000000-17@g.us', 'priority split: the arm that sent less to the priority group today gets it, the other leaves it');
-reset role;
 update app_settings set priority_groups = '{}' where station_id = '0000000b-0000-0000-0000-000000000000';
 update campaigns set status = 'completed' where station_id = '0000000b-0000-0000-0000-000000000000';
 
--- even sharing: a busy arm leaves a shared group to a much less busy arm for the first 45 seconds
+-- one arm per ride: the first arm owns a new ride; a second arm leaves the owner's groups alone and takes the
+-- next new ride instead; only later (no new ride / ride over 60 seconds) does it complete the owner's ride
 reset role;
 update campaigns set status = 'completed' where station_id = '0000000b-0000-0000-0000-000000000000';
-update arms set sent_today = 5000, sent_day = current_date where id = '00000000-0000-0000-0001-00000000000b';
-update arms set sent_today = 100, sent_day = current_date where id = '00000000-0000-0000-0002-00000000000b';
+update arms set sent_today = 0 where station_id = '0000000b-0000-0000-0000-000000000000';
 set role anon; select testkit.as_station('tok-b');
-select public.create_manual_campaign('ride 3', null, array(select '0000000b-0000-0000-0000-000000000000-' || g || '@g.us' from generate_series(11, 13) g)) as r3 \gset
+select public.create_manual_campaign('ride o1', null, array(select '0000000b-0000-0000-0000-000000000000-' || g || '@g.us' from generate_series(11, 13) g)) as o1 \gset
 select testkit.as_engine();
-select testkit.check((select count(*) from public.claim_target_engine('00000000-0000-0000-0001-00000000000b')) = 0, 'sharing: busy arm leaves a shared group to the less busy arm');
-select testkit.check((select count(*) from public.claim_target_engine('00000000-0000-0000-0002-00000000000b')) = 1, 'sharing: less busy arm takes it');
+select campaign_id as oa from public.claim_target_engine('00000000-0000-0000-0001-00000000000b') \gset
+select testkit.check(:'oa' = :'o1', 'owner: the first free arm takes the new ride');
+select testkit.check((select count(*) from public.claim_target_engine('00000000-0000-0000-0002-00000000000b')) = 0, 'owner: a second arm leaves the owner''s groups of a young ride');
+set role anon; select testkit.as_station('tok-b');
+select public.create_manual_campaign('ride o2', null, array(select '0000000b-0000-0000-0000-000000000000-' || g || '@g.us' from generate_series(14, 16) g)) as o2 \gset
+select testkit.as_engine();
+select campaign_id as ob from public.claim_target_engine('00000000-0000-0000-0002-00000000000b') \gset
+select testkit.check(:'ob' = :'o2', 'owner: a free arm takes the next new ride at once (rides run in parallel)');
+select campaign_id as oc from public.claim_target_engine('00000000-0000-0000-0001-00000000000b') \gset
+select testkit.check(:'oc' = :'o1', 'owner: the owner stays on its own ride');
 reset role;
-update campaigns set started_at = now() - interval '2 minutes' where id = :'r3';
+select testkit.check((select owner_arm from campaigns where id = :'o1') = '00000000-0000-0000-0001-00000000000b'
+  and (select owner_arm from campaigns where id = :'o2') = '00000000-0000-0000-0002-00000000000b', 'owner: each ride records its owner');
+-- completing: when the ride is over 60 seconds old, a free arm helps with the owner's groups too
+update campaign_targets set status = 'sent', sent_at = now() where campaign_id = :'o2' and status in ('pending', 'sending');
+update campaigns set started_at = now() - interval '2 minutes' where id = :'o1';
 set role anon; select testkit.as_engine();
-select testkit.check((select count(*) from public.claim_target_engine('00000000-0000-0000-0001-00000000000b')) = 1, 'sharing: after 45 seconds the busy arm takes it too (no ride waits)');
+select campaign_id as od from public.claim_target_engine('00000000-0000-0000-0002-00000000000b') \gset
+select testkit.check(:'od' = :'o1', 'owner: after 60 seconds a free arm completes another arm''s ride (nothing waits)');
 reset role;
-update arms set status = 'offline' where id = '00000000-0000-0000-0002-00000000000b';
-update campaigns set started_at = now() where id = :'r3';
+-- the owner disconnected: another arm completes its ride at once
+update campaigns set started_at = now() where id = :'o1';
+update campaign_targets set status = 'pending', arm_id = null where campaign_id = :'o1';
+update arms set status = 'offline' where id = '00000000-0000-0000-0001-00000000000b';
 set role anon; select testkit.as_engine();
-select testkit.check((select count(*) from public.claim_target_engine('00000000-0000-0000-0001-00000000000b')) = 1, 'sharing: other arm not connected – busy arm sends at once');
+select testkit.check((select count(*) from public.claim_target_engine('00000000-0000-0000-0002-00000000000b')) = 1, 'owner: owner not connected – another arm sends its groups at once');
 reset role;
 update arms set status = 'online', sent_today = 0 where station_id = '0000000b-0000-0000-0000-000000000000';
 update campaigns set status = 'completed' where station_id = '0000000b-0000-0000-0000-000000000000';

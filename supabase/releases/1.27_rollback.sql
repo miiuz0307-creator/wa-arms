@@ -1,0 +1,2 @@
+-- rollback of 1.27: the claim_target of 1.25 (live before 13 Nov) = the migration_sql of release 1.25 (id 26).
+-- campaigns.owner_arm stays (harmless).
