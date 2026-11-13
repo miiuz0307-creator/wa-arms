@@ -118,6 +118,18 @@ update arms set status = 'offline' where id = '00000000-0000-0000-0001-000000000
 set role anon; select testkit.as_engine();
 select testkit.check((select count(*) from public.claim_target_engine('00000000-0000-0000-0002-00000000000b')) = 1, 'owner: owner not connected – another arm sends its groups at once');
 reset role;
+-- an arm limited to some groups sends only there
+update arms set status = 'online', sent_today = 0 where station_id = '0000000b-0000-0000-0000-000000000000';
+update campaigns set status = 'completed' where station_id = '0000000b-0000-0000-0000-000000000000';
+update arms set only_groups = array['0000000b-0000-0000-0000-000000000000-12@g.us'] where id = '00000000-0000-0000-0001-00000000000b';
+set role anon; select testkit.as_station('tok-b');
+select public.create_manual_campaign('ride l', null, array(select '0000000b-0000-0000-0000-000000000000-' || g || '@g.us' from generate_series(11, 13) g)) as rl \gset
+select testkit.as_engine();
+select wa_group_id as l1 from public.claim_target_engine('00000000-0000-0000-0001-00000000000b') \gset
+select testkit.check(:'l1' = '0000000b-0000-0000-0000-000000000000-12@g.us' and (select count(*) from public.claim_target_engine('00000000-0000-0000-0001-00000000000b')) = 0, 'only groups: a limited arm sends only to its groups');
+select testkit.check((select count(*) from public.claim_target_engine('00000000-0000-0000-0002-00000000000b')) = 1, 'only groups: the other arms send the rest of its ride at once');
+reset role;
+update arms set only_groups = '{}' where station_id = '0000000b-0000-0000-0000-000000000000';
 update arms set status = 'online', sent_today = 0 where station_id = '0000000b-0000-0000-0000-000000000000';
 update campaigns set status = 'completed' where station_id = '0000000b-0000-0000-0000-000000000000';
 
