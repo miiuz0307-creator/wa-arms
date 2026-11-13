@@ -1,7 +1,5 @@
--- 13 Nov (2): an arm can be limited to a few groups only (arms.only_groups). The owner's 050-410-7826
--- ("מיכאל הפצה אישי") sends only to סיירת VIP and סיירת בעל עגולה: with one arm per ride it takes every new
--- ride at once and posts it there within seconds (2 messages a ride – low block risk), while the other
--- arms send the rest. Empty = no limit (every other arm). Additive: one column + one condition.
+-- 13 Nov (2): an arm can be limited to a few groups only (arms.only_groups). No arm is limited yet (the owner will pick a
+-- dedicated number for סיירת VIP + סיירת בעל עגולה); the other arms send the rest of its rides at once. Empty = no limit (every other arm). Additive: one column + one condition.
 alter table public.arms add column if not exists only_groups text[] not null default '{}';
 
 create or replace function public.claim_target(p_arm uuid)
@@ -59,6 +57,3 @@ begin
   from public.campaign_targets t join public.campaigns c on c.id = t.campaign_id where t.id = t_id;
 end $function$;
 
--- 050-410-7826 = סיירת VIP + סיירת בעל עגולה only (no-op where that arm does not exist, e.g. the test DB)
-update public.arms set only_groups = array['120363420060606873@g.us', '972539236511-1567164800@g.us']
-where id = 'c453d363-7717-410b-98f8-f10e6896cfcf';
