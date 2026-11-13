@@ -129,6 +129,28 @@ select wa_group_id as l1 from public.claim_target_engine('00000000-0000-0000-000
 select testkit.check(:'l1' = '0000000b-0000-0000-0000-000000000000-12@g.us' and (select count(*) from public.claim_target_engine('00000000-0000-0000-0001-00000000000b')) = 0, 'only groups: a limited arm sends only to its groups');
 select testkit.check((select count(*) from public.claim_target_engine('00000000-0000-0000-0002-00000000000b')) = 1, 'only groups: the other arms send the rest of its ride at once');
 reset role;
+-- the limited arm's groups are reserved for it: the others leave them, it sends there at once in any ride
+update campaigns set status = 'completed' where id = :'rl';
+set role anon; select testkit.as_station('tok-b');
+select public.create_manual_campaign('ride r', null, array(select '0000000b-0000-0000-0000-000000000000-' || g || '@g.us' from generate_series(11, 13) g)) as rr \gset
+select testkit.as_engine();
+create temp table got_r as select wa_group_id from public.claim_target_engine('00000000-0000-0000-0002-00000000000b');
+insert into got_r select wa_group_id from public.claim_target_engine('00000000-0000-0000-0002-00000000000b');
+insert into got_r select wa_group_id from public.claim_target_engine('00000000-0000-0000-0002-00000000000b');
+select testkit.check((select count(*) from got_r) = 2 and not exists (select 1 from got_r where wa_group_id = '0000000b-0000-0000-0000-000000000000-12@g.us'), 'reserved group: the other arms leave it to the limited arm');
+select testkit.check((select wa_group_id from public.claim_target_engine('00000000-0000-0000-0001-00000000000b')) = '0000000b-0000-0000-0000-000000000000-12@g.us', 'reserved group: the limited arm sends it at once in another arm''s ride');
+reset role;
+select testkit.check((select owner_arm from campaigns where id = :'rr') = '00000000-0000-0000-0002-00000000000b', 'reserved group: the limited arm does not take the ride');
+update campaigns set status = 'completed' where id = :'rr';
+update arms set status = 'offline' where id = '00000000-0000-0000-0001-00000000000b';
+set role anon; select testkit.as_station('tok-b');
+select public.create_manual_campaign('ride r2', null, array(select '0000000b-0000-0000-0000-000000000000-' || g || '@g.us' from generate_series(11, 13) g)) as rr2 \gset
+select testkit.as_engine();
+create temp table got_r2 as select wa_group_id from public.claim_target_engine('00000000-0000-0000-0002-00000000000b');
+insert into got_r2 select wa_group_id from public.claim_target_engine('00000000-0000-0000-0002-00000000000b');
+insert into got_r2 select wa_group_id from public.claim_target_engine('00000000-0000-0000-0002-00000000000b');
+select testkit.check((select count(*) from got_r2) = 3, 'reserved group: limited arm not connected – the others send there');
+reset role;
 update arms set only_groups = '{}' where station_id = '0000000b-0000-0000-0000-000000000000';
 update arms set status = 'online', sent_today = 0 where station_id = '0000000b-0000-0000-0000-000000000000';
 update campaigns set status = 'completed' where station_id = '0000000b-0000-0000-0000-000000000000';
