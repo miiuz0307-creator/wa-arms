@@ -57,3 +57,7 @@ begin
   from public.campaign_targets t join public.campaigns c on c.id = t.campaign_id where t.id = t_id;
 end $function$;
 
+
+-- 055-441-5398 ("סיירת VIP 5398") = סיירת בעל עגולה only (no-op where that arm does not exist, e.g. the test DB)
+update public.arms set only_groups = array['972539236511-1567164800@g.us']
+where id = '90225f8c-8042-46a1-ae82-c14cc8b2ad90';
