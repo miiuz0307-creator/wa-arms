@@ -151,6 +151,22 @@ insert into got_r2 select wa_group_id from public.claim_target_engine('00000000-
 insert into got_r2 select wa_group_id from public.claim_target_engine('00000000-0000-0000-0002-00000000000b');
 select testkit.check((select count(*) from got_r2) = 3, 'reserved group: limited arm not connected – the others send there');
 reset role;
+-- switched off by its schedule: it sends nothing, the others send its group
+update campaigns set status = 'completed' where id = :'rr2';
+update arms set status = 'online', only_groups = array['schedule-off'] where id = '00000000-0000-0000-0001-00000000000b';
+set role anon; select testkit.as_station('tok-b');
+select public.create_manual_campaign('ride s', null, array(select '0000000b-0000-0000-0000-000000000000-' || g || '@g.us' from generate_series(11, 13) g)) as rs \gset
+select testkit.as_engine();
+select testkit.check((select count(*) from public.claim_target_engine('00000000-0000-0000-0001-00000000000b')) = 0, 'schedule off: the limited arm sends nothing');
+create temp table got_s as select wa_group_id from public.claim_target_engine('00000000-0000-0000-0002-00000000000b');
+insert into got_s select wa_group_id from public.claim_target_engine('00000000-0000-0000-0002-00000000000b');
+insert into got_s select wa_group_id from public.claim_target_engine('00000000-0000-0000-0002-00000000000b');
+select testkit.check((select count(*) from got_s) = 3, 'schedule off: the others send its group too');
+reset role;
+-- 055-441-5398's schedule (Israel time; Nov = UTC+2)
+select testkit.check(public.arm_schedule_on('2026-11-13 10:30+00') and not public.arm_schedule_on('2026-11-13 09:59+00') and not public.arm_schedule_on('2026-11-13 15:00+00'), 'schedule: Friday 12:00–17:00 only');
+select testkit.check(public.arm_schedule_on('2026-11-14 15:00+00') and not public.arm_schedule_on('2026-11-14 14:59+00') and public.arm_schedule_on('2026-11-15 00:59+00') and not public.arm_schedule_on('2026-11-15 01:00+00'), 'schedule: מוצ"ש 17:00 – Sunday 03:00');
+select testkit.check(not public.arm_schedule_on('2026-11-16 10:00+00') and not public.arm_schedule_on('2026-11-12 18:00+00'), 'schedule: off on weekdays');
 update arms set only_groups = '{}' where station_id = '0000000b-0000-0000-0000-000000000000';
 update arms set status = 'online', sent_today = 0 where station_id = '0000000b-0000-0000-0000-000000000000';
 update campaigns set status = 'completed' where station_id = '0000000b-0000-0000-0000-000000000000';
