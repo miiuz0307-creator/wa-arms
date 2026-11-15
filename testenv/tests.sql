@@ -163,6 +163,22 @@ insert into got_s select wa_group_id from public.claim_target_engine('00000000-0
 insert into got_s select wa_group_id from public.claim_target_engine('00000000-0000-0000-0002-00000000000b');
 select testkit.check((select count(*) from got_s) = 3, 'schedule off: the others send its group too');
 reset role;
+-- rush mode (Monday 12:00 Israel = outside the Friday / מוצ"ש hours)
+update campaigns set status = 'completed' where station_id = '0000000b-0000-0000-0000-000000000000';
+update arms set only_groups = array['schedule-off'] where id = '00000000-0000-0000-0001-00000000000b';
+set role anon; select testkit.as_station('tok-b');
+create temp table rush_ids as select public.create_manual_campaign('rush ' || g, null, array['0000000b-0000-0000-0000-000000000000-12@g.us']) as id from generate_series(1, 7) g;
+reset role;
+update campaigns set created_at = '2026-11-16 09:55+00', status = 'completed' where id in (select id from rush_ids);
+select testkit.check(not public.apply_arm_schedule('00000000-0000-0000-0001-00000000000b', array['0000000b-0000-0000-0000-000000000000-12@g.us'], '2026-11-16 12:00+00'), 'rush: quiet time – the limited arm stays off');
+select public.apply_arm_schedule('00000000-0000-0000-0001-00000000000b', array['0000000b-0000-0000-0000-000000000000-12@g.us'], '2026-11-16 10:00+00');
+select testkit.check((select only_groups from arms where id = '00000000-0000-0000-0001-00000000000b') = array['0000000b-0000-0000-0000-000000000000-12@g.us'], 'rush: 7 rides in 10 minutes – it turns on');
+update campaigns set created_at = '2026-11-16 09:40+00' where id in (select id from rush_ids offset 4);
+select testkit.check(public.apply_arm_schedule('00000000-0000-0000-0001-00000000000b', array['0000000b-0000-0000-0000-000000000000-12@g.us'], '2026-11-16 10:00+00'), 'rush: still 4 rides – it stays on');
+update campaigns set created_at = '2026-11-16 09:40+00' where id in (select id from rush_ids);
+select public.apply_arm_schedule('00000000-0000-0000-0001-00000000000b', array['0000000b-0000-0000-0000-000000000000-12@g.us'], '2026-11-16 10:00+00');
+select testkit.check((select only_groups from arms where id = '00000000-0000-0000-0001-00000000000b') = array['schedule-off'], 'rush: calm again – it turns off by itself');
+select testkit.check(public.apply_arm_schedule('00000000-0000-0000-0001-00000000000b', array['0000000b-0000-0000-0000-000000000000-12@g.us'], '2026-11-13 11:00+00'), 'rush: Friday hours – on even without rush');
 -- 055-441-5398's schedule (Israel time; Nov = UTC+2)
 select testkit.check(public.arm_schedule_on('2026-11-13 10:30+00') and not public.arm_schedule_on('2026-11-13 09:59+00') and not public.arm_schedule_on('2026-11-13 15:00+00'), 'schedule: Friday 12:00–17:00 only');
 select testkit.check(public.arm_schedule_on('2026-11-14 15:00+00') and not public.arm_schedule_on('2026-11-14 14:59+00') and public.arm_schedule_on('2026-11-15 00:59+00') and not public.arm_schedule_on('2026-11-15 01:00+00'), 'schedule: מוצ"ש 17:00 – Sunday 03:00');
