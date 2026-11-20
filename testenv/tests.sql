@@ -179,6 +179,31 @@ update campaigns set created_at = '2026-11-16 09:40+00' where id in (select id f
 select public.apply_arm_schedule('00000000-0000-0000-0001-00000000000b', array['0000000b-0000-0000-0000-000000000000-12@g.us'], '2026-11-16 10:00+00');
 select testkit.check((select only_groups from arms where id = '00000000-0000-0000-0001-00000000000b') = array['schedule-off'], 'rush: calm again – it turns off by itself');
 select testkit.check(public.apply_arm_schedule('00000000-0000-0000-0001-00000000000b', array['0000000b-0000-0000-0000-000000000000-12@g.us'], '2026-11-13 11:00+00'), 'rush: Friday hours – on even without rush');
+-- rush: every ride gets at most 3 minutes, then the arms move on and its remaining groups are skipped
+update campaigns set status = 'completed' where station_id = '0000000b-0000-0000-0000-000000000000';
+update arms set status = 'online', sent_today = 0, only_groups = '{}' where station_id = '0000000b-0000-0000-0000-000000000000';
+set role anon; select testkit.as_station('tok-b');
+select public.create_manual_campaign('slow', null, array(select '0000000b-0000-0000-0000-000000000000-' || g || '@g.us' from generate_series(11, 13) g)) as slow \gset
+create temp table rush2 as select public.create_manual_campaign('busy ' || g, null, array['0000000b-0000-0000-0000-000000000000-11@g.us']) as id from generate_series(1, 6) g;
+reset role;
+update campaigns set status = 'completed' where id in (select id from rush2);
+update campaigns set kind = 'quote', status = 'running', started_at = now() - interval '4 minutes' where id = :'slow';
+select public.update_rush();
+select testkit.check((select rush from app_settings where station_id = '0000000b-0000-0000-0000-000000000000'), 'rush 3 min: 7 rides in 10 minutes – the station is in rush');
+select testkit.as_engine();
+select testkit.check((select count(*) from public.claim_target_engine('00000000-0000-0000-0002-00000000000b')) = 0, 'rush 3 min: a ride older than 3 minutes is not taken any more');
+reset role;
+select public.close_slow_rides() as closed \gset
+select testkit.check(:closed = 3 and (select count(*) from campaign_targets where campaign_id = :'slow' and status = 'skipped') = 3, 'rush 3 min: its groups not sent yet are skipped');
+update campaign_targets set status = 'pending', error = null where campaign_id = :'slow';
+update campaigns set created_at = now() - interval '1 hour' where station_id = '0000000b-0000-0000-0000-000000000000';
+select public.update_rush();
+select testkit.check(not (select rush from app_settings where station_id = '0000000b-0000-0000-0000-000000000000'), 'rush 3 min: calm again – rush is off by itself');
+select testkit.check(public.close_slow_rides() = 0, 'rush 3 min: in quiet hours nothing is skipped');
+select testkit.as_engine();
+select testkit.check((select count(*) from public.claim_target_engine('00000000-0000-0000-0002-00000000000b')) = 1, 'rush 3 min: in quiet hours an old ride still goes to all its groups');
+reset role;
+update campaigns set status = 'completed' where station_id = '0000000b-0000-0000-0000-000000000000';
 -- 055-441-5398's schedule (Israel time; Nov = UTC+2)
 select testkit.check(public.arm_schedule_on('2026-11-13 10:30+00') and not public.arm_schedule_on('2026-11-13 09:59+00') and not public.arm_schedule_on('2026-11-13 15:00+00'), 'schedule: Friday 12:00–17:00 only');
 select testkit.check(public.arm_schedule_on('2026-11-14 15:00+00') and not public.arm_schedule_on('2026-11-14 14:59+00') and public.arm_schedule_on('2026-11-15 00:59+00') and not public.arm_schedule_on('2026-11-15 01:00+00'), 'schedule: מוצ"ש 17:00 – Sunday 03:00');
