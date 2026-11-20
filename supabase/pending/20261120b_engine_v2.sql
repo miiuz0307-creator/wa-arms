@@ -6,6 +6,8 @@
 --     without waiting for the handler to finish (disjoint groups – no group is ever sent twice).
 --   * Free arms take new rides before follow-ups, but a follow-up that waits 60 seconds longer than a new ride
 --     goes first (no task starves).
+--   * Idle help: an arm with nothing else to do helps with a handler's groups once the ride is 30 seconds into
+--     sending – free arms never stand idle while a ride is still going out.
 --   * A ride that started over 4 minutes ago is late: free arms then help with the handler's groups too, so it
 --     is not cut by the 15-minute rule while arms stand idle.
 --   * If the handler disconnects / stops / reaches its limit, the next free arm becomes the handler and sends only
@@ -190,6 +192,29 @@ begin
     limit 1;
     exit when t_id is not null;
   end loop;
+  end if;
+
+  -- idle help: nothing else to do – help with a handler's groups once its ride is 30 seconds into sending
+  -- (so free arms never stand idle while a ride is still going out)
+  if t_id is null and not limited then
+    select t.id, t.campaign_id into t_id, c_id
+    from public.campaign_targets t
+    join public.campaigns c on c.id = t.campaign_id
+    join public.campaign_arms ca on ca.campaign_id = c.id and ca.arm_id = p_arm
+    join public.groups g on g.arm_id = p_arm and g.wa_group_id = t.wa_group_id
+    where c.status in ('queued', 'running') and c.final_text is not null and c.station_id = a.station_id
+      and c.started_at < now() - interval '30 seconds'
+      and t.status = 'pending' and not (p_arm = any (t.tried_arms))
+      and (c.started_at < now() - interval '60 seconds' or not exists (
+        select 1 from public.arms r
+        join public.groups gr on gr.arm_id = r.id and gr.wa_group_id = t.wa_group_id
+        join public.campaign_arms rca on rca.campaign_id = c.id and rca.arm_id = r.id
+        where r.id <> p_arm and r.station_id = a.station_id and t.wa_group_id = any (r.only_groups)
+          and r.is_active and r.status = 'online' and not (r.id = any (t.tried_arms))
+          and (case when r.sent_day = current_date then r.sent_today else 0 end) < r.daily_limit))
+    order by c.created_at, coalesce(array_position(s.priority_groups, t.wa_group_id), 1000000), t.id
+    for update of t skip locked
+    limit 1;
   end if;
   if t_id is null then return; end if;
   update public.campaign_targets set status = 'sending', arm_id = p_arm, attempts = attempts + 1, claimed_at = now()

@@ -108,7 +108,12 @@ select testkit.check((select owner_arm from campaigns where id = :'o1') = '00000
 update campaign_targets set status = 'sent', sent_at = now() where campaign_id = :'o2' and status in ('pending', 'sending');
 update campaigns set started_at = now() - interval '2 minutes' where id = :'o1';
 set role anon; select testkit.as_engine();
-select testkit.check((select count(*) from public.claim_target_engine('00000000-0000-0000-0002-00000000000b')) = 0, 'v2: a free arm leaves the handler''s groups (2 minutes – not late)');
+select testkit.check((select count(*) from public.claim_target_engine('00000000-0000-0000-0002-00000000000b')) = 1, 'v2: idle help – an arm with nothing else to do helps with a ride that is 30 s into sending');
+reset role;
+update campaign_targets set status = 'pending', arm_id = null where campaign_id = :'o1' and arm_id = '00000000-0000-0000-0002-00000000000b';
+update campaigns set started_at = now() - interval '10 seconds' where id = :'o1';
+set role anon; select testkit.as_engine();
+select testkit.check((select count(*) from public.claim_target_engine('00000000-0000-0000-0002-00000000000b')) = 0, 'v2: … but not in the ride''s first 30 seconds (the handler''s groups are its own)');
 reset role;
 -- late (over 4 minutes): a free arm helps with the handler's groups too, so nothing is cut by the 15-minute rule
 update campaigns set started_at = now() - interval '5 minutes' where id = :'o1';
