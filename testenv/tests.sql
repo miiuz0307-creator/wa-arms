@@ -104,12 +104,17 @@ select testkit.check(:'oc' = :'o1', 'owner: the owner stays on its own ride');
 reset role;
 select testkit.check((select owner_arm from campaigns where id = :'o1') = '00000000-0000-0000-0001-00000000000b'
   and (select owner_arm from campaigns where id = :'o2') = '00000000-0000-0000-0002-00000000000b', 'owner: each ride records its owner');
--- completing: when the ride is over 60 seconds old, a free arm helps with the owner's groups too
+-- a free arm leaves the handler's groups of a ride that is not late
 update campaign_targets set status = 'sent', sent_at = now() where campaign_id = :'o2' and status in ('pending', 'sending');
 update campaigns set started_at = now() - interval '2 minutes' where id = :'o1';
 set role anon; select testkit.as_engine();
+select testkit.check((select count(*) from public.claim_target_engine('00000000-0000-0000-0002-00000000000b')) = 0, 'v2: a free arm leaves the handler''s groups (2 minutes – not late)');
+reset role;
+-- late (over 4 minutes): a free arm helps with the handler's groups too, so nothing is cut by the 15-minute rule
+update campaigns set started_at = now() - interval '5 minutes' where id = :'o1';
+set role anon; select testkit.as_engine();
 select campaign_id as od from public.claim_target_engine('00000000-0000-0000-0002-00000000000b') \gset
-select testkit.check(:'od' = :'o1', 'owner: after 60 seconds a free arm completes another arm''s ride (nothing waits)');
+select testkit.check(:'od' = :'o1', 'v2: a late ride (4+ minutes) – a free arm helps with the handler''s groups');
 reset role;
 -- the owner disconnected: another arm completes its ride at once
 update campaigns set started_at = now() where id = :'o1';
@@ -118,6 +123,93 @@ update arms set status = 'offline' where id = '00000000-0000-0000-0001-000000000
 set role anon; select testkit.as_engine();
 select testkit.check((select count(*) from public.claim_target_engine('00000000-0000-0000-0002-00000000000b')) = 1, 'owner: owner not connected – another arm sends its groups at once');
 reset role;
+-- ===== engine v2: one handler per ride, follow-up at once, no double sends =====
+update arms set status = 'online', sent_today = 0, only_groups = '{}', rate_per_min = null where station_id = '0000000b-0000-0000-0000-000000000000';
+update campaigns set status = 'completed' where station_id = '0000000b-0000-0000-0000-000000000000';
+-- group 31 only arm 2 is in, group 32 only arm 1 is in
+insert into groups (arm_id, wa_group_id, name, station_id) values
+ ('00000000-0000-0000-0002-00000000000b', '0000000b-0000-0000-0000-000000000000-31@g.us', 'רק זרוע 2', '0000000b-0000-0000-0000-000000000000'),
+ ('00000000-0000-0000-0001-00000000000b', '0000000b-0000-0000-0000-000000000000-32@g.us', 'רק זרוע 1', '0000000b-0000-0000-0000-000000000000');
+set role anon; select testkit.as_station('tok-b');
+select public.create_manual_campaign('v2 a', null, array['0000000b-0000-0000-0000-000000000000-1@g.us', '0000000b-0000-0000-0000-000000000000-2@g.us', '0000000b-0000-0000-0000-000000000000-3@g.us', '0000000b-0000-0000-0000-000000000000-31@g.us']) as va \gset
+reset role;
+update campaigns set created_at = now() - interval '10 seconds' where id = :'va';
+set role anon; select testkit.as_engine();
+select campaign_id as va1 from public.claim_target_engine('00000000-0000-0000-0001-00000000000b') \gset
+reset role;
+select testkit.check(:'va1' = :'va' and (select handler_arm from campaigns where id = :'va') = '00000000-0000-0000-0001-00000000000b', 'v2: the first free arm becomes the ride''s handler');
+set role anon; select testkit.as_engine();
+select wa_group_id as vf from public.claim_target_engine('00000000-0000-0000-0002-00000000000b') \gset
+select testkit.check(:'vf' = '0000000b-0000-0000-0000-000000000000-31@g.us', 'v2: follow-up at once – a free arm sends the group the handler is not in, without waiting');
+select testkit.check((select count(*) from public.claim_target_engine('00000000-0000-0000-0002-00000000000b')) = 0, 'v2: the helper does not touch the handler''s groups');
+-- a second ride comes: the handler (still busy) stays on its ride, the free arm takes the new ride
+set role anon; select testkit.as_station('tok-b');
+select public.create_manual_campaign('v2 b', null, array['0000000b-0000-0000-0000-000000000000-4@g.us', '0000000b-0000-0000-0000-000000000000-5@g.us']) as vb \gset
+reset role;
+update campaigns set created_at = now() - interval '10 seconds' where id = :'vb';
+set role anon; select testkit.as_engine();
+select campaign_id as vh from public.claim_target_engine('00000000-0000-0000-0001-00000000000b') \gset
+select campaign_id as vn from public.claim_target_engine('00000000-0000-0000-0002-00000000000b') \gset
+select testkit.check(:'vh' = :'va', 'v2: a busy handler does not take another ride until its own is done');
+select testkit.check(:'vn' = :'vb', 'v2: the new ride goes to the free arm');
+reset role;
+select testkit.check((select handler_arm from campaigns where id = :'vb') = '00000000-0000-0000-0002-00000000000b', 'v2: each ride has one handler');
+-- the handler disconnects mid-ride: the next free arm becomes the handler and sends only what was not sent
+update campaign_targets set status = 'sent', sent_at = now() where campaign_id = :'vb' and status in ('pending', 'sending');
+update arms set status = 'offline' where id = '00000000-0000-0000-0001-00000000000b';
+set role anon; select testkit.as_engine();
+select campaign_id as vt from public.claim_target_engine('00000000-0000-0000-0002-00000000000b') \gset
+reset role;
+select testkit.check(:'vt' = :'va' and (select handler_arm from campaigns where id = :'va') = '00000000-0000-0000-0002-00000000000b', 'v2: handler disconnected – the free arm takes over the ride');
+select testkit.check((select count(*) from campaign_targets where campaign_id = :'va' and status in ('sent', 'sending') group by wa_group_id order by 1 desc limit 1) = 1, 'v2: no group got the ride twice after the takeover');
+-- a send with an unknown result is not retried
+update campaign_targets set claimed_at = now() - interval '10 minutes' where campaign_id = :'va' and status = 'sending';
+select public.finalize_campaigns();
+select testkit.check((select count(*) from campaign_targets where campaign_id = :'va' and status = 'failed' and error like '%ייתכן שנשלחה%') >= 1
+  and not exists (select 1 from campaign_targets where campaign_id = :'va' and status = 'pending' and error like '%ייתכן שנשלחה%'), 'v2: unknown result – marked, never sent again');
+-- best arm: a new ride (under 3 s) waits for the free arm that does clearly more of it
+update arms set status = 'online' where station_id = '0000000b-0000-0000-0000-000000000000';
+update campaigns set status = 'completed' where station_id = '0000000b-0000-0000-0000-000000000000';
+set role anon; select testkit.as_station('tok-b');
+select public.create_manual_campaign('v2 c', null, array['0000000b-0000-0000-0000-000000000000-6@g.us', '0000000b-0000-0000-0000-000000000000-32@g.us']) as vc \gset
+reset role;
+update arms set rate_per_min = 10 where id = '00000000-0000-0000-0002-00000000000b';
+update arms set rate_per_min = 70 where id = '00000000-0000-0000-0001-00000000000b';
+set role anon; select testkit.as_engine();
+select testkit.check((select count(*) from public.claim_target_engine('00000000-0000-0000-0002-00000000000b')) = 0, 'v2: a brand-new ride waits a moment for the arm that does more of it (groups × speed)');
+reset role;
+update campaigns set created_at = now() - interval '5 seconds' where id = :'vc';
+set role anon; select testkit.as_engine();
+select testkit.check((select count(*) from public.claim_target_engine('00000000-0000-0000-0002-00000000000b')) = 1, 'v2: … but never more than 3 seconds – then any free arm takes it');
+reset role;
+-- fast start: a busy handler first sends the new ride's fast-start group, then goes back to its own ride
+update campaigns set status = 'completed' where station_id = '0000000b-0000-0000-0000-000000000000';
+update arms set rate_per_min = null where station_id = '0000000b-0000-0000-0000-000000000000';
+update app_settings set fast_start_groups = array['0000000b-0000-0000-0000-000000000000-9@g.us'] where station_id = '0000000b-0000-0000-0000-000000000000';
+set role anon; select testkit.as_station('tok-b');
+select public.create_manual_campaign('fs a', null, array['0000000b-0000-0000-0000-000000000000-6@g.us', '0000000b-0000-0000-0000-000000000000-7@g.us', '0000000b-0000-0000-0000-000000000000-8@g.us']) as fa \gset
+reset role; update campaigns set created_at = now() - interval '10 seconds' where id = :'fa';
+update arms set status = 'offline' where id = '00000000-0000-0000-0002-00000000000b';
+set role anon; select testkit.as_engine();
+select campaign_id as fa1 from public.claim_target_engine('00000000-0000-0000-0001-00000000000b') \gset
+set role anon; select testkit.as_station('tok-b');
+select public.create_manual_campaign('fs b', null, array['0000000b-0000-0000-0000-000000000000-9@g.us', '0000000b-0000-0000-0000-000000000000-10@g.us']) as fb \gset
+select testkit.as_engine();
+select wa_group_id as fsg from public.claim_target_engine('00000000-0000-0000-0001-00000000000b') \gset
+select campaign_id as fback from public.claim_target_engine('00000000-0000-0000-0001-00000000000b') \gset
+select testkit.check(:'fsg' = '0000000b-0000-0000-0000-000000000000-9@g.us', 'fast start: a new ride goes to its fast-start group at once, even when every arm is busy');
+select testkit.check(:'fback' = :'fa', 'fast start: … then the handler goes straight back to its own ride');
+reset role;
+update arms set status = 'online' where station_id = '0000000b-0000-0000-0000-000000000000';
+update app_settings set fast_start_groups = '{}' where station_id = '0000000b-0000-0000-0000-000000000000';
+update campaigns set status = 'completed' where station_id = '0000000b-0000-0000-0000-000000000000';
+-- measured speed
+update arms set rate_per_min = null where station_id = '0000000b-0000-0000-0000-000000000000';
+select public.update_arm_rates();
+select testkit.check((select rate_per_min from arms where id = '00000000-0000-0000-0002-00000000000b') >= 1, 'v2: each arm''s real speed is measured from its sends');
+update campaigns set status = 'completed' where station_id = '0000000b-0000-0000-0000-000000000000';
+delete from groups where wa_group_id in ('0000000b-0000-0000-0000-000000000000-31@g.us', '0000000b-0000-0000-0000-000000000000-32@g.us');
+update arms set rate_per_min = null where station_id = '0000000b-0000-0000-0000-000000000000';
 -- an arm limited to some groups sends only there
 update arms set status = 'online', sent_today = 0 where station_id = '0000000b-0000-0000-0000-000000000000';
 update campaigns set status = 'completed' where station_id = '0000000b-0000-0000-0000-000000000000';
@@ -179,31 +271,6 @@ update campaigns set created_at = '2026-11-16 09:40+00' where id in (select id f
 select public.apply_arm_schedule('00000000-0000-0000-0001-00000000000b', array['0000000b-0000-0000-0000-000000000000-12@g.us'], '2026-11-16 10:00+00');
 select testkit.check((select only_groups from arms where id = '00000000-0000-0000-0001-00000000000b') = array['schedule-off'], 'rush: calm again – it turns off by itself');
 select testkit.check(public.apply_arm_schedule('00000000-0000-0000-0001-00000000000b', array['0000000b-0000-0000-0000-000000000000-12@g.us'], '2026-11-13 11:00+00'), 'rush: Friday hours – on even without rush');
--- rush: every ride gets at most 3 minutes, then the arms move on and its remaining groups are skipped
-update campaigns set status = 'completed' where station_id = '0000000b-0000-0000-0000-000000000000';
-update arms set status = 'online', sent_today = 0, only_groups = '{}' where station_id = '0000000b-0000-0000-0000-000000000000';
-set role anon; select testkit.as_station('tok-b');
-select public.create_manual_campaign('slow', null, array(select '0000000b-0000-0000-0000-000000000000-' || g || '@g.us' from generate_series(11, 13) g)) as slow \gset
-create temp table rush2 as select public.create_manual_campaign('busy ' || g, null, array['0000000b-0000-0000-0000-000000000000-11@g.us']) as id from generate_series(1, 6) g;
-reset role;
-update campaigns set status = 'completed' where id in (select id from rush2);
-update campaigns set kind = 'quote', status = 'running', started_at = now() - interval '4 minutes' where id = :'slow';
-select public.update_rush();
-select testkit.check((select rush from app_settings where station_id = '0000000b-0000-0000-0000-000000000000'), 'rush 3 min: 7 rides in 10 minutes – the station is in rush');
-select testkit.as_engine();
-select testkit.check((select count(*) from public.claim_target_engine('00000000-0000-0000-0002-00000000000b')) = 0, 'rush 3 min: a ride older than 3 minutes is not taken any more');
-reset role;
-select public.close_slow_rides() as closed \gset
-select testkit.check(:closed = 3 and (select count(*) from campaign_targets where campaign_id = :'slow' and status = 'skipped') = 3, 'rush 3 min: its groups not sent yet are skipped');
-update campaign_targets set status = 'pending', error = null where campaign_id = :'slow';
-update campaigns set created_at = now() - interval '1 hour' where station_id = '0000000b-0000-0000-0000-000000000000';
-select public.update_rush();
-select testkit.check(not (select rush from app_settings where station_id = '0000000b-0000-0000-0000-000000000000'), 'rush 3 min: calm again – rush is off by itself');
-select testkit.check(public.close_slow_rides() = 0, 'rush 3 min: in quiet hours nothing is skipped');
-select testkit.as_engine();
-select testkit.check((select count(*) from public.claim_target_engine('00000000-0000-0000-0002-00000000000b')) = 1, 'rush 3 min: in quiet hours an old ride still goes to all its groups');
-reset role;
-update campaigns set status = 'completed' where station_id = '0000000b-0000-0000-0000-000000000000';
 -- 055-441-5398's schedule (Israel time; Nov = UTC+2)
 select testkit.check(public.arm_schedule_on('2026-11-13 10:30+00') and not public.arm_schedule_on('2026-11-13 09:59+00') and not public.arm_schedule_on('2026-11-13 15:00+00'), 'schedule: Friday 12:00–17:00 only');
 select testkit.check(public.arm_schedule_on('2026-11-14 15:00+00') and not public.arm_schedule_on('2026-11-14 14:59+00') and public.arm_schedule_on('2026-11-15 00:59+00') and not public.arm_schedule_on('2026-11-15 01:00+00'), 'schedule: מוצ"ש 17:00 – Sunday 03:00');
